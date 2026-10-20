@@ -1,5 +1,5 @@
 [package]
-name = "fusor-ai-team"
+name = "team"
 description = "An SPMD thread team for inference kernels: one Rayon broadcast per call, static splits and barriers inside."
 version.workspace = true
 edition.workspace = true

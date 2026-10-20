@@ -1,6 +1,6 @@
 //! A linear layer (`y = x·Wᵀ + b`) and the team-split projection built on it.
 
-use fusor_ai_team::{Ctx, SharedBuf};
+use team::{Ctx, SharedBuf};
 
 use crate::Error;
 use crate::matmul::{QuantizedRows, matmul};

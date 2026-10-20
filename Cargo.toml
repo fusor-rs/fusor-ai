@@ -1,10 +1,10 @@
 [workspace]
 members = [
-    "crates/fusor-ai-team",
-    "crates/fusor-ai-kernels",
-    "crates/fusor-ai-nn",
-    "crates/fusor-ai-bundle",
-    "crates/fusor-ai-compile",
+    "crates/team",
+    "crates/kernels",
+    "crates/nn",
+    "crates/bundle",
+    "crates/compile",
 ]
 resolver = "2"
 
@@ -41,11 +41,11 @@ excessive_nesting = "deny"
 undocumented_unsafe_blocks = "deny"
 
 [workspace.dependencies]
-fusor-ai-team = { path = "crates/fusor-ai-team", version = "=0.1.0" }
-fusor-ai-kernels = { path = "crates/fusor-ai-kernels", version = "=0.1.0" }
-fusor-ai-nn = { path = "crates/fusor-ai-nn", version = "=0.1.0" }
-fusor-ai-bundle = { path = "crates/fusor-ai-bundle", version = "=0.1.0" }
-fusor-ai-compile = { path = "crates/fusor-ai-compile", version = "=0.1.0" }
+team = { path = "crates/team", version = "=0.1.0" }
+kernels = { path = "crates/kernels", version = "=0.1.0" }
+nn = { path = "crates/nn", version = "=0.1.0" }
+bundle = { path = "crates/bundle", version = "=0.1.0" }
+compile = { path = "crates/compile", version = "=0.1.0" }
 rayon = "=1.12.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"

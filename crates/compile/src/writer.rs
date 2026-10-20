@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use fusor_ai_bundle::{FORMAT, Manifest, Part, Source, TensorEntry};
-use fusor_ai_kernels::Tensor;
+use bundle::{FORMAT, Manifest, Part, Source, TensorEntry};
+use kernels::Tensor;
 
 use crate::Error;
 
@@ -100,8 +100,8 @@ impl BundleWriter {
 mod tests {
     use std::path::Path;
 
-    use fusor_ai_bundle::{Error, Source, Store};
-    use fusor_ai_kernels::{DType, Tensor};
+    use bundle::{Error, Source, Store};
+    use kernels::{DType, Tensor};
 
     use super::BundleWriter;
 
@@ -114,11 +114,7 @@ mod tests {
     }
 
     /// Pushes every part in `chunk`-byte writes, the way a streaming loader does.
-    fn load(
-        dir: &Path,
-        manifest: &fusor_ai_bundle::Manifest,
-        chunk: usize,
-    ) -> Result<Store, Error> {
+    fn load(dir: &Path, manifest: &bundle::Manifest, chunk: usize) -> Result<Store, Error> {
         let mut store = Store::new(manifest.clone())?;
         for (index, part) in manifest.parts.iter().enumerate() {
             let bytes = std::fs::read(dir.join(&part.file)).unwrap();

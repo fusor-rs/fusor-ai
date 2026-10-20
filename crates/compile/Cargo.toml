@@ -1,5 +1,5 @@
 [package]
-name = "fusor-ai-compile"
+name = "compile"
 description = "Native model compilation for fusor-ai: read safetensors checkpoints, encode tensors, write hashed bundle parts and the manifest."
 version.workspace = true
 edition.workspace = true
@@ -8,8 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-fusor-ai-bundle.workspace = true
-fusor-ai-kernels.workspace = true
+bundle.workspace = true
+kernels.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 blake3.workspace = true

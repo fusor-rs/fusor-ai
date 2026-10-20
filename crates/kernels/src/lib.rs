@@ -4,7 +4,7 @@
 //! Weights are f32 or quantized per block of 32 (`Q7b32`, `Q4b32`, see `tensor`); activations
 //! are quantized to int8 per block on the fly, and `matmul` multiplies them with the target's
 //! dot-product instructions (`arch`). `Linear` and `project_residual` split the output columns
-//! over a `fusor_ai_team` run.
+//! over a `team` run.
 
 mod arch;
 mod blob;

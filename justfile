@@ -5,8 +5,8 @@ check: lint wasm host
 
 lint:
     cargo fmt --all -- --check
-    cargo test --workspace --features fusor-ai-team/threads --locked
-    cargo clippy --workspace --all-targets --features fusor-ai-team/threads --locked -- -D warnings
+    cargo test --workspace --features team/threads --locked
+    cargo clippy --workspace --all-targets --features team/threads --locked -- -D warnings
     cargo doc --workspace --no-deps --locked
 
 # The kernels compile a different backend per target feature set: lint each.

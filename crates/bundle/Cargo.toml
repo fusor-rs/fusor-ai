@@ -1,6 +1,6 @@
 [package]
-name = "fusor-ai-kernels"
-description = "Block-quantized weights, int8 SIMD matrix multiply (wasm relaxed SIMD / SIMD128, NEON sdot, scalar) and the f32 operations of transformer inference."
+name = "bundle"
+description = "Model bundles: a manifest of hashed parts and a store that streams parts straight into their tensors."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,8 +8,10 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-fusor-ai-team.workspace = true
+kernels.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+blake3.workspace = true
 thiserror.workspace = true
 
 [lints]

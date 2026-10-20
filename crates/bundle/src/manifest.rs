@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use fusor_ai_kernels::DType;
+use kernels::DType;
 use serde::{Deserialize, Serialize};
 
 use crate::Error;

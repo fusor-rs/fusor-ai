@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use fusor_ai_kernels::Tensor;
+use kernels::Tensor;
 
 use crate::Error;
 use crate::manifest::{Manifest, Part};

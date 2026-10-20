@@ -5,11 +5,11 @@
 //! and cache writes by heads; attention by query heads; output projection plus residual by
 //! columns; gate/up plus SiLU by intermediate columns; down projection plus residual by columns.
 
-use fusor_ai_kernels::ops::{attend, rms_norm, rope_angles, rope_half, rope_inv_freq, silu};
-use fusor_ai_kernels::{
+use kernels::ops::{attend, rms_norm, rope_angles, rope_half, rope_inv_freq, silu};
+use kernels::{
     COLUMN_ALIGN, Error, Linear, QuantizedRows, SharedRows, Tensor, matmul, project_residual,
 };
-use fusor_ai_team::{Ctx, PerThread, SharedBuf};
+use team::{Ctx, PerThread, SharedBuf};
 
 /// The dimensions of one Qwen2 stack.
 #[derive(Debug, Clone, Copy, PartialEq)]

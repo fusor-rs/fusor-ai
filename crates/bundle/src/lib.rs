@@ -22,8 +22,8 @@ pub enum Error {
     Integrity(String),
 }
 
-impl From<fusor_ai_kernels::Error> for Error {
-    fn from(error: fusor_ai_kernels::Error) -> Self {
+impl From<kernels::Error> for Error {
+    fn from(error: kernels::Error) -> Self {
         Error::Format(error.to_string())
     }
 }

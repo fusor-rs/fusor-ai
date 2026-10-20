@@ -11,13 +11,13 @@ tensor framework: no graph IR, no dynamic shapes, no operator registry.
 
 ## Repository
 
-- `crates/fusor-ai-team`: the SPMD thread team (`Team`, `Ctx`, `SharedBuf`,
+- `crates/team`: the SPMD thread team (`Team`, `Ctx`, `SharedBuf`,
   `PerThread`).
-- `crates/fusor-ai-kernels`: tensors and their block-quantized formats, the int8
+- `crates/kernels`: tensors and their block-quantized formats, the int8
   matmul with its per-target `arch` backends, f32 operations, `Linear`.
-- `crates/fusor-ai-nn`: transformer stacks shared by models (Qwen2).
-- `crates/fusor-ai-bundle`: the bundle manifest and the streaming `Store`.
-- `crates/fusor-ai-compile`: native compilation (safetensors reader,
+- `crates/nn`: transformer stacks shared by models (Qwen2).
+- `crates/bundle`: the bundle manifest and the streaming `Store`.
+- `crates/compile`: native compilation (safetensors reader,
   `BundleWriter`).
 - `packages/host`: the browser side (`loader.js`, `compute.js`,
   `thread-host.js`).
@@ -37,12 +37,12 @@ Constraints that hold everywhere:
   feature newer than it outside the aarch64 backend). Don't move the pin without
   saying why in the change.
 - `unsafe` is denied workspace-wide and allowed only in the modules that carry
-  `#![expect(unsafe_code, reason = "…")]`: the `arch` backends and `matmul` in
-  `fusor-ai-kernels` (SIMD and unchecked block loads after one bounds assertion
-  per call), `blob` (aligned byte and f32 views) and `shared` in
-  `fusor-ai-team` (interior mutability under the barrier discipline). Every
-  unsafe block carries a `// SAFETY:` comment stating the invariant it relies
-  on. Adding a module to that list is a design change; say so.
+  `#![expect(unsafe_code, reason = "…")]`: in `kernels`, the `arch` backends
+  and `matmul` (SIMD and unchecked block loads after one bounds assertion per
+  call) and `blob` (aligned byte and f32 views); in `team`, `shared` (interior
+  mutability under the barrier discipline). Every unsafe block carries a
+  `// SAFETY:` comment stating the invariant it relies on. Adding a module to
+  that list is a design change; say so.
 - Shared buffers follow one discipline: between two barriers, each element is
   either only read or written by exactly one thread. Every new phase states
   which buffers it reads and which ranges it writes.
@@ -229,7 +229,7 @@ guaranteed to", "may or may not").
 - No clone, `to_vec`, `collect` or `String` allocation added just to satisfy the
   borrow checker or to iterate once more. Borrow, or restructure.
 - No `async`, `Arc`, `Mutex` or threads unless the task needs concurrency.
-  Parallel work goes through `fusor-ai-team` (one `Team::run` per component
+  Parallel work goes through `team` (one `Team::run` per component
   call, barriers inside), never a Rayon region per matmul.
 - No allocation in a per-row or per-block kernel loop.
 - No optimization without a measurement, and no pessimization either: don't

@@ -24,8 +24,8 @@ computes its share of the output columns; barriers separate the phases that depe
 other. Here, a projection plus residual, as every transformer layer does twice:
 
 ```rust
-use fusor_ai_kernels::{Linear, QuantizedRows, SharedRows, project_residual};
-use fusor_ai_team::{PerThread, SharedBuf, Team};
+use kernels::{Linear, QuantizedRows, SharedRows, project_residual};
+use team::{PerThread, SharedBuf, Team};
 
 fn project(team: &Team, layer: &Linear, input: &SharedBuf, residual: &SharedBuf, rows: usize) {
     let scratch = PerThread::new(team.threads(), QuantizedRows::default);
@@ -60,21 +60,21 @@ git submodule add https://github.com/fusor-rs/fusor-ai vendor/fusor-ai
 exclude = ["vendor"]
 
 [workspace.dependencies]
-fusor-ai-team = { path = "vendor/fusor-ai/crates/fusor-ai-team" }
-fusor-ai-kernels = { path = "vendor/fusor-ai/crates/fusor-ai-kernels" }
-fusor-ai-nn = { path = "vendor/fusor-ai/crates/fusor-ai-nn" }
-fusor-ai-bundle = { path = "vendor/fusor-ai/crates/fusor-ai-bundle" }
-fusor-ai-compile = { path = "vendor/fusor-ai/crates/fusor-ai-compile" }
+team = { path = "vendor/fusor-ai/crates/team" }
+kernels = { path = "vendor/fusor-ai/crates/kernels" }
+nn = { path = "vendor/fusor-ai/crates/nn" }
+bundle = { path = "vendor/fusor-ai/crates/bundle" }
+compile = { path = "vendor/fusor-ai/crates/compile" }
 ```
 
 A model built on fusor-ai has three parts, as in ming-wasm:
 
-1. **A compiler** (native): reads the checkpoint with `fusor_ai_compile::Checkpoint`, keeps,
+1. **A compiler** (native): reads the checkpoint with `compile::Checkpoint`, keeps,
    renames and fuses the tensors it needs, picks a dtype per tensor
-   (`fusor_ai_kernels::Tensor::encode`) and writes the bundle with `BundleWriter`.
-2. **A runtime crate** (`cdylib`): builds the model from a `fusor_ai_bundle::Store`, exposes
+   (`kernels::Tensor::encode`) and writes the bundle with `BundleWriter`.
+2. **A runtime crate** (`cdylib`): builds the model from a `bundle::Store`, exposes
    `write_part`, `end_part` and `restart_part` plus its own inference calls through
-   wasm-bindgen, and has a `threads` feature that enables `fusor-ai-team/threads` and
+   wasm-bindgen, and has a `threads` feature that enables `team/threads` and
    re-exports `wasm_bindgen_rayon::init_thread_pool`.
 3. **A page**: a module worker that calls `startRuntime` and `loadParts` from
    `packages/host/loader.js`, and a page that hands compute workers to
@@ -117,11 +117,11 @@ node vendor/fusor-ai/scripts/serve.mjs --mount /=web --mount /model/=dist/model
 
 | Crate or package | Holds |
 | --- | --- |
-| `fusor-ai-team` | `Team`, `Ctx` (`split`, `barrier`), `SharedBuf`, `PerThread` |
-| `fusor-ai-kernels` | `Tensor` and its formats, `matmul` and its per-target backends, `ops` (RMSNorm, RoPE, GELU, SiLU, `exp`, attention), `Linear` |
-| `fusor-ai-nn` | `qwen2`: the Qwen2 decoder stack with a causal or sliding-window KV cache |
-| `fusor-ai-bundle` | `Manifest`, `Store` (streaming, hashed parts; tensors and blobs) |
-| `fusor-ai-compile` | `Checkpoint` (safetensors), `BundleWriter` |
+| `team` | `Team`, `Ctx` (`split`, `barrier`), `SharedBuf`, `PerThread` |
+| `kernels` | `Tensor` and its formats, `matmul` and its per-target backends, `ops` (RMSNorm, RoPE, GELU, SiLU, `exp`, attention), `Linear` |
+| `nn` | `qwen2`: the Qwen2 decoder stack with a causal or sliding-window KV cache |
+| `bundle` | `Manifest`, `Store` (streaming, hashed parts; tensors and blobs) |
+| `compile` | `Checkpoint` (safetensors), `BundleWriter` |
 | `packages/host` | `loader.js` (build choice, part streaming, OPFS cache), `compute.js` (the compute-worker pool), `thread-host.js` |
 | `scripts/` | `build-runtime.sh`, `check-wasm-imports.mjs`, `serve.mjs`, `install-tools.sh` |
 
