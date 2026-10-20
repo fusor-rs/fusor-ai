@@ -5,182 +5,178 @@
   </picture>
 </p>
 
-# Compile AI models into sealed WebAssembly runtimes
+# Build AI runtimes with Rust and WebAssembly
 
-Ship a model as static files. The browser downloads a bundle of quantized weights and a
-3 MB runtime compiled from Rust, and runs inference on the device's CPU with WebAssembly SIMD
-and threads. No server, no API keys, no WebGPU required, and no way for the runtime to reach
-the network.
+Compile a model into a small WebAssembly runtime and a bundle of quantized weights, and run it on the device's CPU. No server, no API keys, no GPU required, and no way for the runtime to reach the network.
 
-fusor-ai holds the toolkit and the models built on it: Ming-3.0-tts-0.5B text-to-speech runs
-in Chrome faster than real time ([docs/ming](docs/ming/README.md)). It is the pattern behind
-SealedKB's in-browser question answering too, and sits next to
-[fusor](https://github.com/fusor-rs/fusor): it reuses fusor's thread recipe for workers that
-share one WebAssembly memory.
+fusor-ai is a toolkit for on-device inference: SIMD kernels for quantized weights, a thread team for WebAssembly workers, reusable model blocks, a streamed and hashed weight format, and the browser side that loads it all. It sits next to [fusor](https://github.com/fusor-rs/fusor) and uses its recipe for workers that share one WebAssembly memory.
 
-**In development · v0.1**: this is experimental software. APIs will change; don't rely on it for
-production yet. See [status and known limitations](#status-and-known-limitations).
+**In development · v0.1**: this is experimental software. APIs will change; don't rely on it for production yet. See [status and known limitations](#status-and-known-limitations).
 
-[Get started](#get-started) · [How it works](#how-it-works) · [Layers](#layers) ·
-[Models](#models) · [Status](#status-and-known-limitations) · [Contributing](CONTRIBUTING.md)
+[Get started](#get-started) · [How it works](#how-it-works) · [The toolkit](#the-toolkit) · [Models](#models) · [Status](#status-and-known-limitations) · [Contributing](CONTRIBUTING.md)
 
-## A model component in one function
+## A model in one file
 
-A component of a model is one function that every thread of the team runs. Each thread
-computes its share of the output columns; barriers separate the phases that depend on each
-other. Here, a projection plus residual, as every transformer layer does twice:
+A model is ordinary Rust over the toolkit's blocks. Here, a Qwen2-0.5B language model that loads its weights from a bundle and runs one token through every layer:
 
 ```rust
-use kernels::{Linear, QuantizedRows, SharedRows, project_residual};
-use team::{PerThread, SharedBuf, Team};
+use blocks::qwen2::{Buffers, KvCache, Mask, Qwen2, Shape, Span};
+use bundle::{Load, Store};
+use kernels::Tensor;
+use team::Team;
 
-fn project(team: &Team, layer: &Linear, input: &SharedBuf, residual: &SharedBuf, rows: usize) {
-    let scratch = PerThread::new(team.threads(), QuantizedRows::default);
-    team.run(|ctx| {
-        let input = SharedRows { values: input, rows };
-        project_residual(ctx, layer, input, residual, scratch.get(ctx));
-        ctx.barrier();
-        // the next phase may now read every column of `residual`
-    });
+const QWEN2_0_5B: Shape = Shape {
+    hidden: 896,
+    layers: 24,
+    heads: 14,
+    kv_heads: 2,
+    head_dim: 64,
+    intermediate: 4864,
+    rope_base: 1e6,
+};
+
+pub struct LanguageModel {
+    embed: Tensor,
+    body: Qwen2,
+}
+
+impl LanguageModel {
+    pub fn load(store: &mut Store) -> Result<Self, bundle::Error> {
+        Ok(Self {
+            embed: Tensor::load(store, "embed", ())?,
+            body: Qwen2::load(store, "llm", QWEN2_0_5B)?,
+        })
+    }
+
+    /// The hidden state after `token` at `position`, the positions before it already cached.
+    pub fn step(&self, team: &Team, cache: &KvCache, buffers: &mut Buffers, token: u32, position: usize) -> Vec<f32> {
+        let row = &mut buffers.hidden.get_mut()[..QWEN2_0_5B.hidden];
+        self.embed.matrix().expect("embed is a matrix").dequantize_row(token as usize, row);
+        let span = Span { rows: 1, first: position, mask: Mask::Causal };
+        team.run(|ctx| self.body.forward(ctx, cache, buffers, span));
+        let mut state = vec![0.0; QWEN2_0_5B.hidden];
+        self.body.final_norm(buffers, 0, &mut state);
+        state
+    }
 }
 ```
 
-`project_residual` quantizes the input rows to int8 per block of 32 and multiplies them with
-the 7- or 4-bit weights using the target's dot-product instruction: relaxed SIMD or SIMD128 in
-WebAssembly, `sdot` on Apple silicon. The same function is the single-threaded build when the
-`threads` feature is off.
+`Qwen2::load` reads the stack's tensors under the `llm` prefix and checks them against the shape. `forward` runs inside one `Team::run`: every thread takes its share of each layer's heads and columns, with barriers between the phases that depend on each other. The matrix products quantize activations to int8 on the fly and use the target's dot-product instruction: relaxed SIMD or SIMD128 in WebAssembly, `sdot` on Apple silicon, scalar code elsewhere. The same file builds natively, for single-threaded WebAssembly, and for WebAssembly workers that share memory.
 
 ## Get started
 
-You need Rust 1.99 or newer ([rustup](https://rustup.rs)), Node.js 20 or newer,
-[`just`](https://github.com/casey/just), and, for threaded runtimes, the `nightly-2025-11-15`
-toolchain with `rust-src` (`just tools` installs it with the pinned wasm-bindgen and binaryen).
+You need Rust 1.99 or newer, installed with [rustup](https://rustup.rs), Node.js 20 or newer and [`just`](https://github.com/casey/just). Threaded WebAssembly builds also need the `nightly-2025-11-15` toolchain with `rust-src`; `scripts/install-tools.sh` installs the pinned wasm-bindgen and binaryen beside it. No release is published yet; until the first one, work from a checkout.
 
-Run Ming in the browser: about 4 GB of disk for the checkpoint and the bundle, and 5 GB of free
-RAM while the model compiles.
+### Run a model
+
+[Ming-3.0-tts-0.5B](https://huggingface.co/inclusionAI/Ming-3.0-tts-0.5B), text to speech, is the first model built with fusor-ai. Its app, [ming-wasm](https://github.com/fusor-rs/ming-wasm), uses this repository as a submodule. It needs about 4 GB of disk and 5 GB of free RAM while the model compiles:
 
 ```sh
-git clone https://github.com/fusor-rs/fusor-ai && cd fusor-ai
-just ming-build    # tools, native CLI, downloads and compiles the model (850 MB), four browser runtimes
-just ming-serve    # http://localhost:8787/
+git clone --recurse-submodules https://github.com/fusor-rs/ming-wasm && cd ming-wasm
+just build    # downloads the checkpoint, compiles an 850 MB bundle, builds four browser runtimes
+just serve    # http://localhost:8787/
 ```
 
-Without Rust, a release has the `ming` CLI and the prebuilt page:
-[Run a release](docs/ming/README.md#run-a-release).
+Type some text and press Generate: the page speaks it, 1.5–2× faster than real time in Chrome on an Apple M4 Pro, and makes no network requests after the model has loaded.
 
-A model is four crates and a page, each in its layer (see [Layers](#layers)):
+### Build a model
 
-1. **The model** (`crates/models/<model>`): its dimensions, its wiring of blocks and its
-   sampling loop. Each component loads itself from a `bundle::Store` (`bundle::Load`) under
-   the names its compiler writes.
-2. **The compiler** (`crates/models/<model>-compile`): reads the checkpoint with
-   `compile::Checkpoint`, keeps, renames and fuses the tensors the model needs, picks a dtype
-   per tensor (`kernels::Tensor::encode`) and writes the bundle with `BundleWriter`.
-3. **The runtime** (`crates/hosts/<model>-runtime`, a `cdylib`): exposes `write_part`,
-   `end_part` and `restart_part` plus the model's inference calls through wasm-bindgen, and has
-   a `threads` feature that enables `team/threads` and re-exports
-   `wasm_bindgen_rayon::init_thread_pool`. A native CLI (`crates/hosts/<model>-cli`) compiles,
-   benchmarks and checks parity.
-4. **The page** (`packages/<model>-web`): a module worker that calls `startRuntime` and
-   `loadParts` from `packages/host/loader.js`, and a page that hands compute workers to
-   `packages/host/compute.js`.
+A model is a library here and an app in its own repository. The library lives in [the models layer](#the-toolkit):
 
-`scripts/build-runtime.sh <runtime crate> <variant> <dist>` builds each of the four runtime
-variants, and `scripts/check-wasm-imports.mjs` checks each one is sealed; the `ming-runtimes`
-recipe in the `justfile` shows both.
+1. **The model** (`crates/models/<model>`): its dimensions, its wiring of blocks and its sampling loop, with each component loading itself from a `bundle::Store`.
+2. **The compiler** (`crates/models/<model>-compile`): reads the checkpoint with `compile::Checkpoint`, keeps, renames and fuses the tensors the model needs, picks a format per tensor and writes the bundle with `BundleWriter`.
+
+The app depends on fusor-ai as a submodule and holds the rest:
+
+3. **The runtime**: a wasm-bindgen `cdylib` that takes the bundle's parts and runs inference. `scripts/build-runtime.sh` builds its four variants and `scripts/check-wasm-imports.mjs` proves each one is sealed.
+4. **The page**: a worker that loads the runtime with `packages/host/loader.js`, and a page that hands it compute workers with `packages/host/compute.js`.
+5. **A native CLI** that compiles bundles, benchmarks the model and checks parity with the reference implementation.
+
+ming-wasm is a complete worked example, and [AGENTS.md](AGENTS.md#repository) says where each piece of new code goes.
 
 ## How it works
 
-- **Ahead of time.** The compiler decides everything a framework would decide at run time: which
-  tensors exist, their fused layout, their quantization. The runtime is model code over a
-  handful of kernels, with no graph, no dispatcher and no dynamic shapes.
-- **Quantized by block.** Weights are 7-bit (`Q7b32`) or 4-bit (`Q4b32`, the ggml Q4_0 layout)
-  with one f32 scale per 32 values; activations are quantized to int8 per block on the fly. The
-  7-bit layout keeps every weight byte inside the defined range of relaxed SIMD's
-  `i32x4.relaxed_dot_i8x16_i7x16_add_s`, so results agree across engines.
-- **One thread start per component.** A `Team::run` is one Rayon broadcast; inside it, static
-  column splits and spin barriers. Small matrices (a few rows, as in autoregressive decoding or
-  a diffusion sampler) stay fast because nothing forks per matmul.
-- **Streamed and verified.** A bundle is a manifest of parts with BLAKE3 hashes. The loader
-  streams parts into the runtime as they download, the runtime copies each byte range straight
-  into its tensor and checks the hash, and verified parts are cached in the browser's
-  origin-private storage for the next visit.
-- **Sealed.** A runtime imports only wasm-bindgen intrinsics (plus shared memory and the worker
-  handles in threaded builds): `scripts/check-wasm-imports.mjs` proves it has no network,
-  storage, clock or entropy capability.
-- **Four builds, picked by the browser.** Threads when the page is cross-origin isolated,
-  relaxed SIMD when the engine validates it, plain SIMD128 everywhere else.
+- **Ahead of time.** The compiler decides everything a framework would decide at run time: which tensors exist, their fused layout, their quantization. The runtime is model code over a handful of kernels, with no graph, no dispatcher and no dynamic shapes.
+- **Quantized by block.** Weights are 7-bit (`Q7b32`) or 4-bit (`Q4b32`, the ggml Q4_0 layout) with one f32 scale per 32 values; activations are quantized to int8 per block on the fly. The 7-bit layout keeps every weight byte inside the defined range of relaxed SIMD's `i32x4.relaxed_dot_i8x16_i7x16_add_s`, so results agree across engines.
+- **One thread start per component.** A `Team::run` is one Rayon broadcast; inside it, static column splits and spin barriers. Small matrices, as in autoregressive decoding or a diffusion sampler, stay fast because nothing forks per matrix product.
+- **Streamed and verified.** A bundle is a manifest of parts with BLAKE3 hashes. The loader streams parts into the runtime as they download, the runtime copies each byte range straight into its tensor and checks the hash, and verified parts are cached in the browser's origin-private storage for the next visit.
+- **Sealed.** A runtime imports only wasm-bindgen intrinsics, plus shared memory and the worker handles in threaded builds: `scripts/check-wasm-imports.mjs` proves it has no network, storage, clock or entropy capability.
+- **Four builds, picked by the browser.** Threads when the page is cross-origin isolated, relaxed SIMD when the engine validates it, plain SIMD128 everywhere else.
+- **Layers that point down.** Primitives know no architecture, blocks know no model, and models know no host. A block names no tensor and fixes no dimension, so the next model reuses it unchanged; `just check` enforces the direction.
 
-## Layers
-
-Every crate depends only on its own layer or lower ones; `just check` enforces it. On
-crates.io each crate is `fusor-ai-<name>` (`fusor-ai-kernels`), and its library keeps the
-short name (`use kernels::…`).
+## The toolkit
 
 | Layer | Crate or package | Holds |
 | --- | --- | --- |
 | Primitives | `team` | `Team`, `Ctx` (`split`, `barrier`), `SharedBuf`, `PerThread` |
 | | `kernels` | `Tensor` and its formats, `matmul` over per-target backends, `ops` (RMSNorm, RoPE, GELU, SiLU, `exp`, attention), `Linear`, `rng` |
-| | `bundle` | `Manifest`, `Store` (streaming, hashed parts; tensors and blobs), the `Load` trait |
+| | `bundle` | `Manifest`, `Store` (streamed, hashed parts; tensors and blobs), the `Load` trait |
 | | `compile` | `Checkpoint` (safetensors), `BundleWriter` |
-| Blocks | `blocks` | `qwen2` (the Qwen2 decoder stack, causal or sliding-window KV cache), `dit` (diffusion-transformer blocks), `flow` (flow-matching Euler steps with classifier-free guidance, sway sampling), `istft` (streaming inverse STFT) |
-| Models | `ming`, `ming-compile` | Ming-3.0-tts-0.5B and its compiler |
-| Hosts | `ming-runtime`, `ming-cli` | Ming's wasm-bindgen surface and native CLI |
-| | `packages/host` | `loader.js` (build choice, part streaming, OPFS cache), `compute.js` (the compute-worker pool), `thread-host.js` |
-| | `packages/ming-web` | Ming's page and engine worker |
+| Blocks | `blocks` | `qwen2` (the Qwen2 decoder stack, causal or sliding-window KV cache), `dit` (diffusion-transformer blocks), `flow` (flow-matching Euler steps with classifier-free guidance), `istft` (streaming inverse STFT) |
+| Models | `ming`, `ming-compile` | Ming-3.0-tts-0.5B and the compiler that writes its bundles |
+| Browser | `packages/host` | `loader.js` (build choice, part streaming, OPFS cache), `compute.js` (the compute-worker pool), `thread-host.js` |
+| Tools | `scripts/` | `build-runtime.sh`, `check-wasm-imports.mjs`, `check-layers.mjs`, `serve.mjs`, `install-tools.sh` |
 
-`scripts/` holds `build-runtime.sh`, `check-wasm-imports.mjs`, `check-layers.mjs`, `serve.mjs`
-and `install-tools.sh`; `scripts/ming/` the checkpoint download, the goldens and the Node
-smoke test.
+On crates.io each crate is `fusor-ai-<name>`, such as `fusor-ai-kernels`, and its library keeps the short name (`use kernels::…`).
 
 ## Models
 
-- [Ming-3.0-tts-0.5B](docs/ming/README.md): text-to-speech (a Qwen2 LLM, a
-  diffusion-transformer flow head and a streaming VAE vocoder) in the browser, with parity
-  checks against the PyTorch reference.
+| Model | Task | Blocks | In the browser |
+| --- | --- | --- | --- |
+| Ming-3.0-tts-0.5B: `ming`, `ming-compile`; app in [ming-wasm](https://github.com/fusor-rs/ming-wasm) | Text to speech, 44.1 kHz | `qwen2`, `dit`, `flow`, `istft` | 1.5–2× faster than real time in Chrome on an Apple M4 Pro; 850 MB bundle |
+
+Each model's library lives in `crates/models/`. Its runtime, CLI, page, documentation and releases live in its app's repository.
+
+## Documentation
+
+| Guide | Covers |
+| --- | --- |
+| [ming-wasm](https://github.com/fusor-rs/ming-wasm) | Running the text-to-speech page, the `ming` CLI, releases, and the design, decisions and measurements of the first model |
+| [Repository rules](AGENTS.md) | The layers, where new code goes, and the rules every change follows |
+| [Contributing](CONTRIBUTING.md) | Setup, checks and releasing |
+| [Brand](assets/brand/BRANDING.md) | The logo, its construction and its colors |
 
 ## Status and known limitations
 
-fusor-ai is v0.1 and experimental. Until 1.0, each minor release may change the crates' APIs and
-the bundle format.
+fusor-ai is v0.1 and experimental. Until 1.0, each minor release may change the crates' APIs and the bundle format.
+
+### Platform status
 
 | Platform or capability | Status |
 | --- | --- |
-| Chrome / Edge, threads + relaxed SIMD | Headless Chrome end-to-end check (`just ming-e2e`) |
-| Browsers without relaxed SIMD (Safari, older Firefox) | SIMD128 builds; exercised in Node |
-| Pages without COOP/COEP | Single-threaded builds |
-| Native (aarch64 `sdot`, scalar elsewhere) | Unit tests; the compiler and parity tools run natively |
+| macOS on Apple silicon (NEON `sdot`) | CI gate |
+| Linux on x86-64 (scalar kernels) | CI gate |
+| Runtime builds and the sealed-import check | CI gate in ming-wasm |
+| Chrome and Edge, threads and relaxed SIMD | Headless Chrome end-to-end check in ming-wasm, run before each change to a kernel, block or model |
+| Browsers without relaxed SIMD (Safari, older Firefox) | SIMD128 builds, exercised in Node by ming-wasm |
+| Pages without cross-origin isolation | Single-threaded builds |
+| x86 SIMD natively | Scalar kernels only |
 | WebGPU | Not implemented |
-| x86 SIMD natively | Scalar fallback only |
 
 **Not supported yet:**
 
-- Models above roughly 1.5B parameters: wasm32 memory is capped at 4 GiB (threaded builds
-  reserve 2 GiB), and on that scale WebGPU runtimes are much faster.
+- Models above roughly 1.5B parameters: wasm32 memory is capped at 4 GiB (threaded builds reserve 2 GiB), and at that scale WebGPU runtimes are much faster.
+- Loading an architecture from a checkpoint alone. Each model is its own crate, written against the blocks.
 - GGUF checkpoints; only safetensors (bf16 or f32) are read.
 - Signed bundles. Parts are content-hashed, but the manifest is not signed yet.
 
 ## How is this different from ONNX Runtime Web and transformers.js?
 
-They run a model graph through a general-purpose executor shipped as a large WebAssembly
-module, and support many architectures without per-model work. fusor-ai compiles each model to
-its own small runtime: there is no graph to interpret, so small-batch work such as a diffusion
-sampler's ten passes per audio frame does not pay per-operator dispatch, and the runtime's
-import section proves what it cannot do. The cost is per-model engineering.
+[ONNX Runtime Web](https://onnxruntime.ai/docs/tutorials/web/) and [transformers.js](https://github.com/huggingface/transformers.js) run a model graph through a general-purpose executor shipped as a large WebAssembly module, and support many architectures without per-model work. fusor-ai compiles each model to its own small runtime: there is no graph to interpret, so small-batch work such as a diffusion sampler's ten passes per audio frame does not pay per-operator dispatch, and the runtime's import section proves what it cannot do. The cost is per-model engineering, which the blocks keep small.
 
 ## How is this different from WebLLM?
 
-WebLLM runs large language models on the GPU through WebGPU and is much faster for models of
-several billion parameters. fusor-ai targets models up to about 1.5B that must run on any
-device, including those without WebGPU, offline and with an auditable runtime.
+[WebLLM](https://github.com/mlc-ai/web-llm) runs large language models on the GPU through WebGPU and is much faster for models of several billion parameters. fusor-ai targets models up to about 1.5B that must run on any device, including those without WebGPU, offline and with an auditable runtime.
+
+## How is this different from Candle and Burn?
+
+[Candle](https://github.com/huggingface/candle) and [Burn](https://github.com/tracel-ai/burn) are Rust machine-learning frameworks with a tensor type, operators dispatched at run time and several backends, and both compile to WebAssembly. fusor-ai has no tensor framework: model code calls a few kernels directly, splits each one across a thread team that shares WebAssembly memory, and reads weights in formats chosen ahead of time for the browser's SIMD instructions.
 
 ## Contributing
 
-fusor-ai is an open source project in early development. The [contributing guide](CONTRIBUTING.md)
-covers the setup, checks and workflow.
+fusor-ai is an open source project in early development. The [contributing guide](CONTRIBUTING.md) covers the setup, checks and workflow. The toolkit lives in `crates/`, `packages/host` and `scripts/`, and the model libraries in `crates/models`.
 
-fusor-ai is built with the help of AI tools, mainly Claude Code, under the same rules the
-project asks of contributors: see [Using AI tools](CONTRIBUTING.md#using-ai-tools).
+fusor-ai is built with the help of AI tools, mainly Claude Code, under the same rules the project asks of contributors: see [Using AI tools](CONTRIBUTING.md#using-ai-tools).
 
 ## License
 

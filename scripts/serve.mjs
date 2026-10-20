@@ -2,7 +2,7 @@
 // so the page is cross-origin isolated (shared memory, hence threaded runtimes) and answers
 // Range requests. Nothing is computed here.
 //
-//   node scripts/serve.mjs --port 8787 --mount /=packages/ming-web --mount /model/=dist/ming/model
+//   node serve.mjs --port 8787 --mount /=packages/web --mount /model/=dist/model
 //
 // Mount directories are relative to the working directory; the longest matching prefix wins.
 

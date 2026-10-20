@@ -1,8 +1,7 @@
 #!/usr/bin/env node
-// Enforces the crate layers of AGENTS.md: hosts → models → blocks → primitives, never upwards.
-// A model may depend on its own family (`ming-compile` → `ming`), never on another model; a host
-// never on another host. Blocks must not name tensors or hard-code dimensions: those belong to
-// a model.
+// Enforces the crate layers of AGENTS.md: models → blocks → primitives, never upwards. A model
+// may depend on its own family (`ming-compile` → `ming`), never on another model. Blocks must
+// not name tensors or hard-code dimensions: those belong to a model.
 
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
@@ -12,7 +11,6 @@ const LAYERS = [
   { name: "primitive", match: /^crates\/(team|kernels|bundle|compile)$/ },
   { name: "block", match: /^crates\/blocks$/ },
   { name: "model", match: /^crates\/models\/[^/]+$/ },
-  { name: "host", match: /^crates\/hosts\/[^/]+$/ },
 ];
 const BLOCK_SOURCES = "crates/blocks/src";
 const LITMUS = [
@@ -56,9 +54,6 @@ for (const { pkg, layer, family } of crates.values()) {
     const sameLayer = target.layer === layer;
     if (sameLayer && LAYERS[layer].name === "model" && family !== target.family) {
       failures.push(`${from} depends on ${to}: a model never depends on another model`);
-    }
-    if (sameLayer && LAYERS[layer].name === "host") {
-      failures.push(`${from} depends on ${to}: a host never depends on another host`);
     }
   }
 }

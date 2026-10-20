@@ -3,9 +3,4 @@
 .DS_Store
 /.tools/
 /.cache/
-/dist/
-/packages/*/dist/
-/fixtures/goldens/**/*.safetensors
-/e2e/node_modules/
-/e2e/results/
 .idea/

@@ -1,9 +1,8 @@
 name: Release
-# Publishing a GitHub release tagged vX.Y.Z runs Check, builds the `ming` CLI
-# archives (macOS on Apple silicon, Linux on x86-64) and the Ming page with its
-# four runtimes, installs each CLI archive with install.sh, attaches everything
-# to the release and publishes the crates to crates.io. Running the workflow by
-# hand only builds and tests the archives. See "Releasing" in CONTRIBUTING.md.
+# Publishing a GitHub release tagged vX.Y.Z runs Check, checks that the tag
+# matches the crates' version and publishes the crates to crates.io. Running the
+# workflow by hand packages and verifies the crates without publishing. See
+# "Releasing" in CONTRIBUTING.md.
 on:
   release:
     types: [published]
@@ -24,94 +23,34 @@ jobs:
   version:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    outputs:
-      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.99.0
-      - name: Read and validate the version
-        id: version
+      - name: Check that the tag matches the version
         env:
           EVENT_NAME: ${{ github.event_name }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           version=$(cargo metadata --locked --no-deps --format-version 1 |
-            jq -er '.packages[] | select(.name == "fusor-ai-ming-cli") | .version')
+            jq -er '.packages[] | select(.name == "fusor-ai-kernels") | .version')
           if [ "$EVENT_NAME" = release ] && [ "$RELEASE_TAG" != "v$version" ]; then
             echo "::error::Release tag $RELEASE_TAG must match Cargo.toml version v$version"
             exit 1
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-  cli:
+  package:
     needs: [check, version]
-    strategy:
-      matrix:
-        include:
-          - { os: macos-15, target: aarch64-apple-darwin }
-          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.99.0
-        with:
-          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@just
-      - run: just archive
-      - run: just archive-check
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ming-${{ matrix.target }}
-          path: target/release-archives/v${{ needs.version.outputs.version }}/*
-          if-no-files-found: error
-          compression-level: 0
-
-  web:
-    needs: [check, version]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@just
-      - run: just tools
-      - run: just ming-web-archive
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ming-web
-          path: target/release-archives/v${{ needs.version.outputs.version }}/*
-          if-no-files-found: error
-          compression-level: 0
-
-  attach:
-    if: github.event_name == 'release'
-    needs: [cli, web]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-      - name: Attach the release archives
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" artifacts/* --clobber --repo "$GITHUB_REPOSITORY"
+      - run: cargo publish --workspace --locked --dry-run
 
   crates-io:
     if: github.event_name == 'release'
-    needs: [cli, web]
+    needs: package
     runs-on: ubuntu-24.04
     # Holds the CARGO_REGISTRY_TOKEN secret. Add required reviewers to this
     # environment to approve each release before it uploads.
@@ -121,7 +60,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.99.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo publish --workspace --locked --dry-run
       # Skip crates already on crates.io at this version, so a rerun finishes a
       # release that stopped halfway; `cargo publish` refuses to republish.
       - name: Publish unreleased crates
@@ -159,18 +97,3 @@ jobs:
           else
             cargo publish --workspace --locked "${skip[@]}"
           fi
-
-  # install.sh goes up last: its presence marks the release complete.
-  ready:
-    if: github.event_name == 'release'
-    needs: [attach, crates-io]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Mark the release ready
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" install.sh --clobber --repo "$GITHUB_REPOSITORY"

@@ -19,12 +19,15 @@ The crates are layers. A crate depends only on its own layer or the ones below i
 | Primitives | `crates/team`, `crates/kernels`, `crates/bundle`, `crates/compile` | the SPMD thread team; tensors and their block-quantized formats, the int8 matmul over per-target `arch` backends, f32 operations, `Linear`, `rng`; the bundle manifest, the streaming `Store` and the `Load` trait; the safetensors reader and `BundleWriter` |
 | Blocks | `crates/blocks` | architecture pieces parameterized by a shape: `qwen2`, `dit`, `flow` (flow-matching integration), `istft` |
 | Models | `crates/models/<model>`, `crates/models/<model>-compile` | one model: its dimensions, tensor names, wiring, sampler settings, prompts and text frontend; its compiler |
-| Hosts | `crates/hosts/<model>-runtime`, `crates/hosts/<model>-cli` | a model's wasm-bindgen surface and its native CLI |
 
-Beside the crates: `packages/host` (the browser side every model shares: `loader.js`,
-`compute.js`, `thread-host.js`) and `packages/<model>-web` (a model's page); `scripts/` (the
-runtime build, the import and layer checks, the dev server, the pinned tool installer) and
-`scripts/<model>/`; `docs/<model>/`, `fixtures/goldens/<model>/` and `e2e/<model>.mjs`.
+Beside the crates: `packages/host`, the browser side every model shares (`loader.js`,
+`compute.js`, `thread-host.js`), and `scripts/`: the runtime build, the import and layer
+checks, the dev server and the pinned tool installer.
+
+A model's products live in its own repository, which consumes fusor-ai as the git submodule
+`vendor/fusor-ai`: its wasm-bindgen runtime, its native CLI, its page, its goldens and
+end-to-end checks, its documentation and its releases. Ming's is
+[ming-wasm](https://github.com/fusor-rs/ming-wasm).
 
 Where code goes, asked in order:
 
@@ -35,8 +38,8 @@ Where code goes, asked in order:
    arrives.
 3. Is it math or plumbing with no architecture in it? It is a primitive.
 
-Dependencies point down: hosts → models → blocks → primitives. A model never depends on another
-model (only its own compiler depends on it), and a host never on another host. Blocks may
+Dependencies point down: models → blocks → primitives. A model never depends on another model
+(only its own compiler depends on it). Blocks may
 depend on `bundle` so that each block loads itself (`impl Load`), but never name a tensor or
 hard-code a dimension: names arrive as a prefix, dimensions as a `Shape`.
 
@@ -53,8 +56,7 @@ Constraints that hold everywhere:
   `#![expect(unsafe_code, reason = "…")]`: in `kernels`, the `arch` backends
   and `matmul` (SIMD and unchecked block loads after one bounds assertion per
   call) and `blob` (aligned byte and f32 views); in `team`, `shared` (interior
-  mutability under the barrier discipline); in `ming-runtime`, `entropy`
-  (getrandom's custom backend, an unmangled extern function). Every unsafe block carries a
+  mutability under the barrier discipline). Every unsafe block carries a
   `// SAFETY:` comment stating the invariant it relies on. Adding a module to
   that list is a design change; say so.
 - Shared buffers follow one discipline: between two barriers, each element is
@@ -64,9 +66,9 @@ Constraints that hold everywhere:
   storage, a clock or entropy. `scripts/check-wasm-imports.mjs` is the check;
   never widen its allowlists to make a build pass.
 - Kernels must agree across targets: a change to an `arch` backend is not done
-  until the f64 reference test passes for every backend natively and the Ming
+  until the f64 reference test passes for every backend natively and Ming's
   runtimes (both SIMD128 and relaxed SIMD) produce the same result they did
-  before (`just ming-smoke`, `just ming-e2e`).
+  before (`just smoke` and `just e2e` in ming-wasm, its submodule at the change).
 - Every crate shares the version in `[workspace.package]`.
 
 ## The standard
@@ -307,9 +309,10 @@ just check
 It runs formatting, the workspace tests, Clippy natively and for
 `wasm32-unknown-unknown` (SIMD128 and relaxed SIMD), docs, the host package and
 import-check self-test, and the layer check. A change to a primitive, a block or
-a model also needs that model's runtime build and checks; for Ming:
-`just ming-runtimes`, `just ming-smoke`, `just ming-parity` (the same numbers as
-before unless the change is meant to move them) and `just ming-e2e`.
+a model also needs that model's runtime build and checks, run in the model's
+repository with its `vendor/fusor-ai` submodule at the change; for Ming, in
+ming-wasm: `just runtimes`, `just smoke`, `just parity` (the same numbers as
+before unless the change is meant to move them) and `just e2e`.
 
 ## Final review
 
