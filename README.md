@@ -1,3 +1,10 @@
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/fusor-ai-horizontal-dark.svg">
+    <img src="assets/brand/fusor-ai-horizontal.svg" alt="fusor-ai" width="260">
+  </picture>
+</p>
+
 # Compile AI models into sealed WebAssembly runtimes
 
 Ship a model as static files. The browser downloads a bundle of quantized weights and a
