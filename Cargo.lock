@@ -336,6 +336,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "fusor-ai-phonon"
+version = "0.1.0"
+dependencies = [
+ "fusor-ai-blocks",
+ "fusor-ai-bundle",
+ "fusor-ai-kernels",
+ "fusor-ai-team",
+ "serde",
+ "thiserror",
+ "tokenizers",
+]
+
+[[package]]
+name = "fusor-ai-phonon-compile"
+version = "0.1.0"
+dependencies = [
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-kernels",
+ "fusor-ai-phonon",
+]
+
+[[package]]
 name = "fusor-ai-team"
 version = "0.1.0"
 dependencies = [

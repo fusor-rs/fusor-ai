@@ -1,0 +1,23 @@
+[package]
+name = "fusor-ai-phonon-compile"
+description = "Compiles the phonon-31m-en checkpoint and its voices into a bundle: renames, compile-time folds and the dtype of every tensor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../../README.md"
+keywords = ["fusor", "tts", "safetensors", "quantization", "wasm"]
+categories = ["development-tools", "multimedia::audio"]
+
+[lib]
+name = "phonon_compile"
+
+[dependencies]
+phonon.workspace = true
+bundle.workspace = true
+compile.workspace = true
+kernels.workspace = true
+
+[lints]
+workspace = true

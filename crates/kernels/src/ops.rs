@@ -17,6 +17,21 @@ pub fn rms_norm(x: &[f32], weight: &[f32], out: &mut [f32]) {
     }
 }
 
+/// `out = (x − mean(x)) · rsqrt(var(x) + eps) · weight + bias` for every row of `x` (rows of
+/// `weight.len()`; the variance is the biased one, as `nn.LayerNorm`).
+pub fn layer_norm(x: &[f32], weight: &[f32], bias: &[f32], eps: f32, out: &mut [f32]) {
+    let dim = weight.len();
+    for (row, out_row) in x.chunks_exact(dim).zip(out.chunks_exact_mut(dim)) {
+        let mean = row.iter().sum::<f32>() / dim as f32;
+        let variance = row.iter().map(|value| (value - mean).powi(2)).sum::<f32>() / dim as f32;
+        let inverse = 1.0 / (variance + eps).sqrt();
+        let affine = weight.iter().zip(bias);
+        for ((output, value), (scale, shift)) in out_row.iter_mut().zip(row).zip(affine) {
+            *output = (value - mean) * inverse * scale + shift;
+        }
+    }
+}
+
 /// RoPE frequencies `base^(−2i/head_dim)` for `i < head_dim / 2`, computed in f32 like
 /// `1 / base ** (arange(0, d, 2).float() / d)`.
 pub fn rope_inv_freq(base: f32, head_dim: usize) -> Vec<f32> {
@@ -84,6 +99,48 @@ pub fn gelu_tanh(x: f32) -> f32 {
     x / (1.0 + exp(-2.0 * inner))
 }
 
+/// `erf(x)` within about 2e-7 absolute, branch-free: the odd rational approximation on
+/// `[−4, 4]` that Eigen and XLA use for f32 (`erf` is ±1 in f32 beyond).
+#[inline(always)]
+pub fn erf(x: f32) -> f32 {
+    const NUMERATOR: [f32; 7] = [
+        -2.726_142_3e-10,
+        2.770_681_4e-8,
+        -2.101_024e-6,
+        -5.692_506_4e-5,
+        -7.349_906_3e-4,
+        -2.954_600_1e-3,
+        -1.609_603_3e-2,
+    ];
+    const DENOMINATOR: [f32; 5] = [
+        -1.456_607_2e-5,
+        -2.133_740_6e-4,
+        -1.682_827e-3,
+        -7.373_329_2e-3,
+        -1.426_474e-2,
+    ];
+    let x = x.clamp(-4.0, 4.0);
+    let square = x * x;
+    let numerator = NUMERATOR.iter().fold(0.0, |sum, &term| sum * square + term);
+    let denominator = DENOMINATOR
+        .iter()
+        .fold(0.0, |sum, &term| sum * square + term);
+    x * numerator / denominator
+}
+
+/// GELU with the exact erf (`nn.GELU()`): `x · (1 + erf(x / √2)) / 2`.
+#[inline(always)]
+pub fn gelu_erf(x: f32) -> f32 {
+    0.5 * x * (1.0 + erf(x * std::f32::consts::FRAC_1_SQRT_2))
+}
+
+/// ELU with `α = 1`: `x` for `x > 0`, `eˣ − 1` otherwise.
+#[inline(always)]
+pub fn elu(x: f32) -> f32 {
+    let negative = exp(x.min(0.0)) - 1.0;
+    if x > 0.0 { x } else { negative }
+}
+
 #[inline(always)]
 pub fn silu(x: f32) -> f32 {
     x / (1.0 + exp(-x))
@@ -120,7 +177,7 @@ pub fn attend<'cache>(
 
 #[cfg(test)]
 mod tests {
-    use super::{exp, gelu_tanh};
+    use super::{elu, exp, gelu_erf, gelu_tanh, layer_norm};
 
     #[test]
     fn exp_and_gelu_match_libm() {
@@ -128,11 +185,42 @@ mod tests {
             let x = i as f32 / 100.0;
             let want = f64::from(x).exp();
             assert!(((f64::from(exp(x)) - want) / want).abs() < 4e-7, "exp({x})");
+            let elu_want = if x > 0.0 { f64::from(x) } else { want - 1.0 };
+            assert!((f64::from(elu(x)) - elu_want).abs() < 1e-7, "elu({x})");
             let wide = f64::from(x);
             let gelu =
                 0.5 * wide * (1.0 + (0.797_884_6 * (wide + 0.044_715 * wide.powi(3))).tanh());
             let error = (f64::from(gelu_tanh(x)) - gelu).abs();
             assert!(error < 1e-6 * (1.0 + gelu.abs()), "gelu({x})");
+        }
+        let erf_gelu = [
+            (-3.0, -0.004_049_694_950_713),
+            (-1.0, -0.158_655_253_931_457),
+            (-0.5, -0.154_268_769_362_993),
+            (0.5, 0.345_731_230_637_007),
+            (1.0, 0.841_344_746_068_543),
+            (2.0, 1.954_499_736_103_642),
+            (5.0, 4.999_998_566_734_9),
+        ];
+        for (x, want) in erf_gelu {
+            let error = (f64::from(gelu_erf(x as f32)) - want).abs();
+            assert!(error < 3e-7 * (1.0 + want.abs()), "gelu_erf({x})");
+        }
+    }
+
+    #[test]
+    fn layer_norm_centers_scales_and_shifts() {
+        let mut out = [0.0; 4];
+        layer_norm(
+            &[0.0, 0.0, 2.0, 2.0],
+            &[1.0, 2.0, 1.0, 1.0],
+            &[0.0, 0.0, 1.0, 0.0],
+            0.0,
+            &mut out,
+        );
+        let want = [-1.0, -2.0, 2.0, 1.0];
+        for (got, want) in out.iter().zip(want) {
+            assert!((got - want).abs() < 1e-6, "{out:?}");
         }
     }
 }

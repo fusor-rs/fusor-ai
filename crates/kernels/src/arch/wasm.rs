@@ -48,6 +48,7 @@ impl super::Backend for Wasm {
     type Weights = Weights;
     type Activations = Activations;
     type Sums = v128;
+    const TILE: usize = 4;
 
     /// # Safety
     /// 32 readable bytes at `at`.
@@ -155,5 +156,29 @@ impl super::Backend for Wasm {
         }
         let tail = left[chunks * 4..].iter().zip(&right[chunks * 4..]);
         Self::sum(sums) + tail.map(|(x, y)| x * y).sum::<f32>()
+    }
+
+    fn dot_f32_4(left: &[f32], rights: [&[f32]; 4]) -> [f32; 4] {
+        assert!(
+            rights.iter().all(|right| right.len() == left.len()),
+            "dot products of equal lengths"
+        );
+        let mut sums = [f32x4_splat(0.0); 4];
+        let chunks = left.len() / 4;
+        for i in 0..chunks {
+            // SAFETY: i·4 + 4 ≤ len for every slice (asserted equal); v128.load is unaligned.
+            let x = unsafe { v128_load(left.as_ptr().add(i * 4).cast()) };
+            for (sum, right) in sums.iter_mut().zip(rights) {
+                // SAFETY: as above.
+                let y = unsafe { v128_load(right.as_ptr().add(i * 4).cast()) };
+                *sum = f32x4_add(*sum, f32x4_mul(x, y));
+            }
+        }
+        let mut out = [0.0; 4];
+        for ((value, sum), right) in out.iter_mut().zip(sums).zip(rights) {
+            let tail = left[chunks * 4..].iter().zip(&right[chunks * 4..]);
+            *value = Self::sum(sum) + tail.map(|(x, y)| x * y).sum::<f32>();
+        }
+        out
     }
 }

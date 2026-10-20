@@ -13,7 +13,7 @@ pub mod prompt;
 pub mod session;
 mod text;
 pub mod vocoder;
-pub mod wav;
+pub use kernels::wav;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

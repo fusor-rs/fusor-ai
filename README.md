@@ -109,11 +109,12 @@ ming-wasm is a complete worked example, and [AGENTS.md](AGENTS.md#repository) sa
 | Layer | Crate or package | Holds |
 | --- | --- | --- |
 | Primitives | `team` | `Team`, `Ctx` (`split`, `barrier`), `SharedBuf`, `PerThread` |
-| | `kernels` | `Tensor` and its formats, `matmul` over per-target backends, `ops` (RMSNorm, RoPE, GELU, SiLU, `exp`, attention), `Linear`, `rng` |
+| | `kernels` | `Tensor` and its formats, `matmul` over per-target backends, `ops` (RMSNorm, LayerNorm, RoPE, GELU, SiLU, ELU, `exp`, `erf`, attention), `Linear`, `rng`, `wav` (16-bit PCM WAV encoding) |
 | | `bundle` | `Manifest`, `Store` (streamed, hashed parts; tensors and blobs), the `Load` trait |
 | | `compile` | `Checkpoint` (safetensors), `BundleWriter` |
-| Blocks | `blocks` | `qwen2` (the Qwen2 decoder stack, causal or sliding-window KV cache), `dit` (diffusion-transformer blocks), `flow` (flow-matching Euler steps with classifier-free guidance), `istft` (streaming inverse STFT) |
+| Blocks | `blocks` | `qwen2` (the Qwen2 decoder stack, causal or sliding-window KV cache), `kyutai` (Kyutai's streaming transformer: LayerNorm, interleaved RoPE, causal or sliding-window KV cache, GELU MLP), `dit` (diffusion-transformer blocks), `adaln_mlp` (the adaLN residual MLP of MAR-style flow heads), `flow` (flow-matching Euler steps with classifier-free guidance), `istft` (streaming inverse STFT), `seanet` (SEANet's streaming decoder, every conv one matrix) |
 | Models | `ming`, `ming-compile` | Ming-3.0-tts-0.5B and the compiler that writes its bundles |
+| | `phonon`, `phonon-compile` | Phonon-31m-en and the compiler that writes its bundles |
 | Browser | `packages/host` | `loader.js` (build choice, part streaming, OPFS cache), `compute.js` (the compute-worker pool), `thread-host.js` |
 | Tools | `scripts/` | `build-runtime.sh`, `check-wasm-imports.mjs`, `check-layers.mjs`, `serve.mjs`, `install-tools.sh` |
 
@@ -124,6 +125,7 @@ On crates.io each crate is `fusor-ai-<name>`, such as `fusor-ai-kernels`, and it
 | Model | Task | Blocks | In the browser |
 | --- | --- | --- | --- |
 | Ming-3.0-tts-0.5B: `ming`, `ming-compile`; app in [ming-wasm](https://github.com/fusor-rs/ming-wasm) | Text to speech, 44.1 kHz | `qwen2`, `dit`, `flow`, `istft` | 1.5–2× faster than real time in Chrome on an Apple M4 Pro; 850 MB bundle |
+| Phonon-31m-en: `phonon`, `phonon-compile`; app in [phonon-wasm](https://github.com/fusor-rs/phonon-wasm) | Text to speech, 24 kHz, English | `kyutai`, `adaln_mlp`, `seanet` | 9× faster than real time on one thread and 40× on eight in Chrome on an Apple M4 Pro; 46 MB bundle |
 
 Each model's library lives in `crates/models/`. Its runtime, CLI, page, documentation and releases live in its app's repository.
 

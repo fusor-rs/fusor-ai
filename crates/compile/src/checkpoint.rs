@@ -81,14 +81,27 @@ impl Checkpoint {
     }
 
     pub fn i32(&self, name: &str) -> Result<Vec<i32>, Error> {
+        self.integers(name, "I32", i32::from_le_bytes)
+    }
+
+    pub fn i64(&self, name: &str) -> Result<Vec<i64>, Error> {
+        self.integers(name, "I64", i64::from_le_bytes)
+    }
+
+    fn integers<const BYTES: usize, T>(
+        &self,
+        name: &str,
+        dtype: &str,
+        decode: fn([u8; BYTES]) -> T,
+    ) -> Result<Vec<T>, Error> {
         let entry = self.entry(name)?;
-        if entry.dtype != "I32" {
+        if entry.dtype != dtype {
             return Err(Error::Format(format!(
-                "{name}: expected I32, got {}",
+                "{name}: expected {dtype}, got {}",
                 entry.dtype
             )));
         }
-        let words = self.data(entry).as_chunks::<4>().0;
-        Ok(words.iter().map(|word| i32::from_le_bytes(*word)).collect())
+        let words = self.data(entry).as_chunks::<BYTES>().0;
+        Ok(words.iter().map(|word| decode(*word)).collect())
     }
 }

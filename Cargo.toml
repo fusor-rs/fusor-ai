@@ -7,6 +7,8 @@ members = [
     "crates/compile",
     "crates/models/ming",
     "crates/models/ming-compile",
+    "crates/models/phonon",
+    "crates/models/phonon-compile",
 ]
 resolver = "2"
 
@@ -50,6 +52,8 @@ bundle = { package = "fusor-ai-bundle", path = "crates/bundle", version = "=0.1.
 compile = { package = "fusor-ai-compile", path = "crates/compile", version = "=0.1.0" }
 ming = { package = "fusor-ai-ming", path = "crates/models/ming", version = "=0.1.0" }
 ming-compile = { package = "fusor-ai-ming-compile", path = "crates/models/ming-compile", version = "=0.1.0" }
+phonon = { package = "fusor-ai-phonon", path = "crates/models/phonon", version = "=0.1.0" }
+phonon-compile = { package = "fusor-ai-phonon-compile", path = "crates/models/phonon-compile", version = "=0.1.0" }
 rayon = "=1.12.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"

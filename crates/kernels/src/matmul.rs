@@ -132,14 +132,18 @@ fn f32_matmul<B: Backend>(
     mut store: impl FnMut(usize, usize, f32),
 ) {
     let width = weights.cols;
+    let activation = |row: usize| &x[row * width..(row + 1) * width];
+    let grouped = rows - rows % 4;
     for col in cols {
         let weight_row = &weights.values[col * width..(col + 1) * width];
-        for row in 0..rows {
-            store(
-                row,
-                col,
-                B::dot_f32(weight_row, &x[row * width..(row + 1) * width]),
-            );
+        for first in (0..grouped).step_by(4) {
+            let group = std::array::from_fn(|offset| activation(first + offset));
+            for (offset, value) in B::dot_f32_4(weight_row, group).into_iter().enumerate() {
+                store(first + offset, col, value);
+            }
+        }
+        for row in grouped..rows {
+            store(row, col, B::dot_f32(weight_row, activation(row)));
         }
     }
 }
@@ -150,9 +154,6 @@ struct QuantWeights<'tensor> {
     scales: &'tensor [f32],
     cols: usize,
 }
-
-/// Rows per tile: each weight block is unpacked once for up to this many activation rows.
-const TILE: usize = 8;
 
 fn quant_matmul<B: Backend>(
     weights: &QuantWeights,
@@ -173,8 +174,8 @@ fn quant_matmul<B: Backend>(
         "activations cover the rows"
     );
     let q4 = weights.dtype == DType::Q4b32;
-    for start in (0..rows).step_by(TILE) {
-        let tile = (rows - start).min(TILE);
+    for start in (0..rows).step_by(B::TILE) {
+        let tile = (rows - start).min(B::TILE);
         let mut store_tile = |row: usize, col: usize, value: f32| store(start + row, col, value);
         let span = TileSpan {
             first_row: start,
@@ -189,11 +190,11 @@ fn quant_matmul<B: Backend>(
                     ($rows, true) => {
                         quant_tile::<$rows, true, B>(weights, x, &span, &mut store_tile)
                     })*
-                    _ => unreachable!("tile is 1..=TILE"),
+                    _ => unreachable!("a backend's TILE is at most 6"),
                 }
             };
         }
-        dispatch!(1 2 3 4 5 6 7 8);
+        dispatch!(1 2 3 4 5 6);
     }
 }
 
@@ -234,15 +235,27 @@ fn quant_tile<const ROWS: usize, const Q4: bool, B: Backend>(
         let mut second_sums = [B::zero(); ROWS];
         for block in 0..blocks {
             let (first_weights, second_weights) = (load(col, block), load(second, block));
-            let first_scale = weights.scales[col * blocks + block];
-            let second_scale = weights.scales[second * blocks + block];
+            // SAFETY: both scales lie within the asserted weight scales (above).
+            let (first_scale, second_scale) = unsafe {
+                (
+                    *weights.scales.get_unchecked(col * blocks + block),
+                    *weights.scales.get_unchecked(second * blocks + block),
+                )
+            };
             let sums = first_sums.iter_mut().zip(second_sums.iter_mut());
             for (row, (first_sum, second_sum)) in sums.enumerate() {
                 let index = (span.first_row + row) * blocks + block;
                 // SAFETY: the block lies within the asserted activation bytes (above).
                 let activations =
                     unsafe { B::load_activations(x.quants.as_ptr().add(index * BLOCK)) };
-                let (correction, scale) = (x.corrections[index], x.scales[index]);
+                // SAFETY: `quantize` sizes `corrections` as `scales`, which covers the asserted
+                // activation blocks (above).
+                let (correction, scale) = unsafe {
+                    (
+                        *x.corrections.get_unchecked(index),
+                        *x.scales.get_unchecked(index),
+                    )
+                };
                 *first_sum = B::accumulate(
                     *first_sum,
                     &activations,

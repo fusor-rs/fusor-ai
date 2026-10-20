@@ -42,6 +42,10 @@ pub(crate) trait Backend {
     /// Four f32 partial sums.
     type Sums: Copy;
 
+    /// Activation rows per matmul tile (each weight block is unpacked once for all of them): as
+    /// many as the target keeps in registers, measured per instruction set (at most 6).
+    const TILE: usize;
+
     /// # Safety
     /// 32 readable bytes at `at`.
     unsafe fn load_q7(at: *const u8) -> Self::Weights;
@@ -71,6 +75,11 @@ pub(crate) trait Backend {
     fn sum(sums: Self::Sums) -> f32;
 
     fn dot_f32(left: &[f32], right: &[f32]) -> f32;
+
+    /// `dot_f32(left, right)` for four `rights`, each summed in exactly its order.
+    fn dot_f32_4(left: &[f32], rights: [&[f32]; 4]) -> [f32; 4] {
+        rights.map(|right| Self::dot_f32(left, right))
+    }
 }
 
 /// The dot product of two f32 slices with the target's SIMD.

@@ -12,6 +12,7 @@ impl super::Backend for Scalar {
     type Weights = Weights;
     type Activations = Activations;
     type Sums = f32;
+    const TILE: usize = 4;
 
     /// # Safety
     /// 32 readable bytes at `at`.

@@ -13,6 +13,7 @@ mod matmul;
 pub mod ops;
 pub mod rng;
 mod tensor;
+pub mod wav;
 
 pub use arch::dot_f32;
 pub use linear::{COLUMN_ALIGN, Linear, NARROW_COLUMN_ALIGN, SharedRows, project_residual};

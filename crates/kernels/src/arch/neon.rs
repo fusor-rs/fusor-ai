@@ -17,6 +17,7 @@ impl super::Backend for Neon {
     type Weights = Weights;
     type Activations = Activations;
     type Sums = float32x4_t;
+    const TILE: usize = 6;
 
     /// # Safety
     /// 32 readable bytes at `at`.
@@ -125,5 +126,30 @@ impl super::Backend for Neon {
         };
         let tail = left[chunks * 4..].iter().zip(&right[chunks * 4..]);
         head + tail.map(|(x, y)| x * y).sum::<f32>()
+    }
+
+    fn dot_f32_4(left: &[f32], rights: [&[f32]; 4]) -> [f32; 4] {
+        assert!(
+            rights.iter().all(|right| right.len() == left.len()),
+            "dot products of equal lengths"
+        );
+        let chunks = left.len() / 4;
+        // SAFETY: i·4 + 4 ≤ len for every slice (asserted equal); NEON loads are unaligned.
+        let heads = unsafe {
+            let mut sums = [vdupq_n_f32(0.0); 4];
+            for i in 0..chunks {
+                let x = vld1q_f32(left.as_ptr().add(i * 4));
+                for (sum, right) in sums.iter_mut().zip(rights) {
+                    *sum = vfmaq_f32(*sum, x, vld1q_f32(right.as_ptr().add(i * 4)));
+                }
+            }
+            sums.map(|sum| vaddvq_f32(sum))
+        };
+        let mut out = [0.0; 4];
+        for ((value, head), right) in out.iter_mut().zip(heads).zip(rights) {
+            let tail = left[chunks * 4..].iter().zip(&right[chunks * 4..]);
+            *value = head + tail.map(|(x, y)| x * y).sum::<f32>();
+        }
+        out
     }
 }

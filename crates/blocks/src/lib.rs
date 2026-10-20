@@ -5,7 +5,10 @@
 //! Every block loads itself from a bundle with `bundle::Load`, under the tensor names relative to
 //! a prefix that its documentation lists.
 
+pub mod adaln_mlp;
 pub mod dit;
 pub mod flow;
 pub mod istft;
+pub mod kyutai;
 pub mod qwen2;
+pub mod seanet;

@@ -1,0 +1,30 @@
+[package]
+name = "fusor-ai-phonon"
+description = "Phonon-31m-en text to speech: the flow LM, its flow head, the Mimi decoder, the synthesis loop and the English text frontend. No I/O; builds for native and wasm32."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../../README.md"
+keywords = ["fusor", "tts", "speech", "wasm", "inference"]
+categories = ["multimedia::audio", "science", "wasm"]
+
+[lib]
+name = "phonon"
+
+[dependencies]
+team.workspace = true
+kernels.workspace = true
+blocks.workspace = true
+bundle.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokenizers.workspace = true
+
+[features]
+# Run the thread team on Rayon's pool (native, and the threaded browser runtimes).
+threads = ["team/threads"]
+
+[lints]
+workspace = true
