@@ -131,7 +131,7 @@ Each model's library lives in `crates/models/`. Its runtime, CLI, page, document
 
 | Guide | Covers |
 | --- | --- |
-| [ming-wasm](https://github.com/fusor-rs/ming-wasm) | Running the text-to-speech page, the `ming` CLI, releases, and the design, decisions and measurements of the first model |
+| [ming-wasm](https://github.com/fusor-rs/ming-wasm) | Running the text-to-speech page and the `ming` CLI, releases, and benchmarks of the first model against PyTorch and other runtimes |
 | [Repository rules](AGENTS.md) | The layers, where new code goes, and the rules every change follows |
 | [Contributing](CONTRIBUTING.md) | Setup, checks and releasing |
 | [Brand](assets/brand/BRANDING.md) | The logo, its construction and its colors |
