@@ -31,8 +31,11 @@ Constraints that hold everywhere:
 
 - Rust 1.99 (edition 2024) is the minimum: the NEON dot-product intrinsics the
   aarch64 kernels use are stable from there. Threaded runtimes build with
-  `nightly-2025-11-15` and build-std, the toolchain Fusor pins for its workers;
-  don't move that pin without saying why in the change.
+  `nightly-2025-11-15` and build-std, the toolchain Fusor pins for its workers,
+  which predates 1.99; `build-runtime.sh` passes `--ignore-rust-version` for
+  them, so the wasm code path must keep building on that nightly (no library
+  feature newer than it outside the aarch64 backend). Don't move the pin without
+  saying why in the change.
 - `unsafe` is denied workspace-wide and allowed only in the modules that carry
   `#![expect(unsafe_code, reason = "…")]`: the `arch` backends and `matmul` in
   `fusor-ai-kernels` (SIMD and unchecked block loads after one bounds assertion

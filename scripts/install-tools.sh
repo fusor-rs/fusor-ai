@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Installs the pinned wasm-bindgen CLI (must match the wasm-bindgen crate in Cargo.lock) and,
-# optionally, binaryen's wasm-opt into ./.tools/bin. Nothing is installed globally.
+# optionally, binaryen's wasm-opt into .tools/bin of the working directory (the consumer's
+# repository). Nothing is installed globally.
 set -euo pipefail
 WB_VERSION="${1:-0.2.129}"
 BINARYEN_VERSION="${2:-version_133}"
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$PWD"
 BIN="$ROOT/.tools/bin"
 mkdir -p "$BIN"
 TMP="$(mktemp -d)"

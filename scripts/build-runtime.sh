@@ -32,7 +32,9 @@ opt=(-O3 --enable-simd --enable-bulk-memory --enable-sign-ext --enable-nontrappi
   --enable-mutable-globals --enable-reference-types --enable-multivalue)
 if [[ "$VARIANT" == *threaded* ]]; then
   cargo=(cargo "+$THREADS_TOOLCHAIN")
-  args+=(--features threads -Z build-std=std,panic_abort)
+  # The crates' rust-version (1.99) is what their aarch64 `sdot` kernels need; the wasm path
+  # builds with the pinned nightly, which predates it.
+  args+=(--features threads -Z build-std=std,panic_abort --ignore-rust-version)
   flags+=('"-C", "target-feature=+atomics,+bulk-memory"' '"-C", "link-arg=--shared-memory"'
     "\"-C\", \"link-arg=--max-memory=$MAX_MEMORY\"" '"-C", "link-arg=--import-memory"'
     '"-C", "link-arg=--export=__wasm_init_tls"' '"-C", "link-arg=--export=__tls_size"'
