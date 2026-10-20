@@ -55,45 +55,62 @@ jobs:
     # Holds the CARGO_REGISTRY_TOKEN secret. Add required reviewers to this
     # environment to approve each release before it uploads.
     environment: crates-io
-    timeout-minutes: 30
+    # A first release waits out crates.io's limit on brand-new crates.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.99.0
       - uses: Swatinem/rust-cache@v2
-      # Skip crates already on crates.io at this version, so a rerun finishes a
-      # release that stopped halfway; `cargo publish` refuses to republish.
       - name: Publish unreleased crates
         shell: bash
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        # crates.io allows 5 brand-new crates in a burst, then 1 every 10 minutes
+        # (https://crates.io/docs/rate-limits), and `cargo publish` refuses to
+        # republish a version. So publish in rounds, as fusor's release does: skip
+        # what is on crates.io, and wait when crates.io answers 429. A rerun
+        # finishes a release that stopped halfway; later releases only update
+        # existing crates and finish in one round.
         run: |
+          set -o pipefail
           packages=$(cargo metadata --locked --no-deps --format-version 1 |
             jq -r '.packages[] | select(.publish != []) | [.name, .version] | @tsv')
-          skip=()
-          remaining=0
-          while IFS=$'\t' read -r name version; do
-            index="$RUNNER_TEMP/$name-index.json"
+          published() {
+            local name=$1 version=$2 index="$RUNNER_TEMP/$1-index.json" status
             status=$(curl --silent --show-error --output "$index" --write-out '%{http_code}' \
               "https://index.crates.io/${name:0:2}/${name:2:2}/$name")
             case "$status" in
-              200)
-                published=$(jq --slurp --arg version "$version" \
-                  'any(.[]; .vers == $version)' "$index")
-                if [ "$published" = true ]; then
-                  skip+=(--exclude "$name")
-                  continue
-                fi
-                ;;
-              404) ;;
+              200) jq --slurp --exit-status --arg version "$version" 'any(.[]; .vers == $version)' "$index" > /dev/null ;;
+              404) return 1 ;;
               *)
                 echo "::error::Registry lookup for $name failed with HTTP $status"
                 exit 1
                 ;;
             esac
-            remaining=$((remaining + 1))
-          done <<< "$packages"
-          if [ "$remaining" -eq 0 ]; then
-            echo "Every workspace crate version is already published."
-          else
-            cargo publish --workspace --locked "${skip[@]}"
-          fi
+          }
+          for round in $(seq 1 12); do
+            skip=()
+            remaining=0
+            while IFS=$'\t' read -r name version; do
+              if published "$name" "$version"; then
+                skip+=(--exclude "$name")
+              else
+                remaining=$((remaining + 1))
+              fi
+            done <<< "$packages"
+            if [ "$remaining" -eq 0 ]; then
+              echo "Every workspace crate version is on crates.io."
+              exit 0
+            fi
+            if cargo publish --workspace --locked "${skip[@]}" 2>&1 | tee "$RUNNER_TEMP/publish.log"; then
+              continue
+            fi
+            if ! grep -q '429 Too Many Requests' "$RUNNER_TEMP/publish.log"; then
+              echo "::error::cargo publish failed for a reason other than crates.io's rate limit"
+              exit 1
+            fi
+            echo "crates.io is limiting new crates; waiting 10 minutes (round $round)."
+            sleep 600
+          done
+          echo "::error::crates.io was still rate-limiting after 12 rounds; rerun this job to finish"
+          exit 1
