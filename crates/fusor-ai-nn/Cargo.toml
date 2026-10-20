@@ -1,0 +1,15 @@
+[package]
+name = "fusor-ai-nn"
+description = "Transformer stacks on fusor-ai kernels and thread team: a Qwen2-family decoder with KV cache, causal or sliding-window."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fusor-ai-kernels.workspace = true
+fusor-ai-team.workspace = true
+
+[lints]
+workspace = true

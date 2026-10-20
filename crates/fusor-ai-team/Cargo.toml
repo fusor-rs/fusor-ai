@@ -1,0 +1,19 @@
+[package]
+name = "fusor-ai-team"
+description = "An SPMD thread team for inference kernels: one Rayon broadcast per call, static splits and barriers inside."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rayon = { workspace = true, optional = true }
+
+[features]
+# Run the team on Rayon's global pool (native, and threaded wasm builds whose pool is started by
+# wasm-bindgen-rayon). Without it the team is the calling thread alone.
+threads = ["dep:rayon"]
+
+[lints]
+workspace = true

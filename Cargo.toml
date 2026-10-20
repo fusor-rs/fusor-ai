@@ -1,0 +1,53 @@
+[workspace]
+members = [
+    "crates/fusor-ai-team",
+    "crates/fusor-ai-kernels",
+    "crates/fusor-ai-nn",
+    "crates/fusor-ai-bundle",
+    "crates/fusor-ai-compile",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+repository = "https://github.com/fusor-rs/fusor-ai"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused = { level = "deny", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
+redundant_clone = "deny"
+needless_pass_by_value = "deny"
+too_many_lines = "deny"
+cognitive_complexity = "deny"
+wildcard_imports = "deny"
+min_ident_chars = "deny"
+match_same_arms = "deny"
+branches_sharing_code = "deny"
+fn_params_excessive_bools = "deny"
+struct_excessive_bools = "deny"
+excessive_nesting = "deny"
+undocumented_unsafe_blocks = "deny"
+
+[workspace.dependencies]
+fusor-ai-team = { path = "crates/fusor-ai-team", version = "=0.1.0" }
+fusor-ai-kernels = { path = "crates/fusor-ai-kernels", version = "=0.1.0" }
+fusor-ai-nn = { path = "crates/fusor-ai-nn", version = "=0.1.0" }
+fusor-ai-bundle = { path = "crates/fusor-ai-bundle", version = "=0.1.0" }
+fusor-ai-compile = { path = "crates/fusor-ai-compile", version = "=0.1.0" }
+rayon = "=1.12.0"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+blake3 = { version = "=1.8.7", default-features = false, features = ["std"] }
+thiserror = "=2.0.21"
