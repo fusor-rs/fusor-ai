@@ -29,8 +29,8 @@ advancing.
 
 Every crate shares one version: `version` under `[workspace.package]` in the root
 `Cargo.toml`. A release publishes every crate to crates.io under its `fusor-ai-*` package
-name; the library names stay `team`, `kernels`, `blocks`, `bundle`, `compile`, `ming` and
-`ming_compile`. A model's CLI, page and installer are released from its own repository.
+name; the library names stay `team`, `kernels`, `blocks`, `bundle`, `compile`, `ming`,
+`ming_compile`, `phonon` and `phonon_compile`. A model's CLI, page and installer are released from its own repository.
 
 1. Bump `version` and the `=x.y.z` pins under `[workspace.dependencies]`, run `just check`
    so `Cargo.lock` follows, and merge that to `main` with CI passing.
