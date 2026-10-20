@@ -1,5 +1,5 @@
-//! The prompt the checkpoint was trained on (plan §1.1; `prompt_contract.build_input_ids` and
-//! `tts_tasks` in the reference). Every piece is tokenized on its own, without special tokens
+//! The prompt the checkpoint was trained on (`prompt_contract.build_input_ids` and `tts_tasks`
+//! in the reference). Every piece is tokenized on its own, without special tokens
 //! added, and the pieces are concatenated:
 //!
 //! ```text

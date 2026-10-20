@@ -1,6 +1,5 @@
 //! Ming-3.0-tts-0.5B on the CPU, for native hosts and WebAssembly, built on fusor-ai's kernels,
-//! thread team, blocks and bundle format. "Plan §" references are to the design in ming-wasm's
-//! `docs/plan.md`.
+//! thread team, blocks and bundle format.
 //!
 //! The model: a Qwen2-0.5B LLM whose last hidden state conditions a DiT flow-matching head that
 //! samples one 64-d latent per 80 ms frame; an aggregator turns each latent into the LLM's next

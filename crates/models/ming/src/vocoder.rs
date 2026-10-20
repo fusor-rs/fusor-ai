@@ -1,4 +1,4 @@
-//! The VAE decoder as a streaming vocoder (plan §1.6): latents in, 44.1 kHz samples out, equal
+//! The VAE decoder as a streaming vocoder: latents in, 44.1 kHz samples out, equal
 //! to the reference's one-shot `AudioVAE.decode` of the whole utterance.
 //!
 //! Per latent frame `i`: `h_i = fc1(latent_i)`, linear upsampling ×4 (`align_corners=False`)

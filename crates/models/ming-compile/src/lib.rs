@@ -1,4 +1,4 @@
-//! `ming compile`: the checkpoint (`model.safetensors`, bf16) → a browser bundle (plan §5).
+//! `ming compile`: the checkpoint (`model.safetensors`, bf16) → a browser bundle.
 //!
 //! Keeps only what synthesis with built-in or described voices needs (no VAE encoder, no speaker
 //! projection, no tied LM head), renames to the runtime's vocabulary (`ming::model`), fuses
@@ -23,7 +23,7 @@ pub enum Profile {
     F32,
     /// 7-bit weights for every large matrix.
     Q7,
-    /// 4-bit LLM layers and VAE decoder, 7-bit flow head, aggregator and embeddings (plan §3).
+    /// 4-bit LLM layers and VAE decoder, 7-bit flow head, aggregator and embeddings.
     Mix,
 }
 

@@ -1,4 +1,4 @@
-//! The synthesis loop (plan §6.3 "Generator"): one `step` per 80 ms frame.
+//! The synthesis loop: one `step` per 80 ms frame.
 //!
 //! Per text fragment: prefill the prompt; then per frame `z → flow head → latent`, the stop
 //! head on `z` (stop when `logit₁ > logit₀` after frame 3, keeping that frame), the latent into
@@ -34,7 +34,7 @@ const DEFAULT_SEED: u64 = 1895;
 /// EPSS knots in units of 1/32 (`fm/CFM.py`).
 const EPSS_10: [u32; 11] = [0, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32];
 const EPSS_7: [u32; 8] = [0, 2, 4, 6, 8, 16, 24, 32];
-/// Guidance interval of the faster presets (plan §3: CFG only for `t ∈ [0.05, 0.8)`).
+/// Guidance interval of the faster presets: CFG only for `t ∈ [0.05, 0.8)`.
 const GUIDED: std::ops::Range<f32> = 0.05..0.8;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
