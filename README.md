@@ -65,6 +65,9 @@ just ming-build    # tools, native CLI, downloads and compiles the model (850 MB
 just ming-serve    # http://localhost:8787/
 ```
 
+Without Rust, a release has the `ming` CLI and the prebuilt page:
+[Run a release](docs/ming/README.md#run-a-release).
+
 A model is four crates and a page, each in its layer (see [Layers](#layers)):
 
 1. **The model** (`crates/models/<model>`): its dimensions, its wiring of blocks and its
@@ -110,7 +113,9 @@ recipe in the `justfile` shows both.
 
 ## Layers
 
-Every crate depends only on its own layer or lower ones; `just check` enforces it.
+Every crate depends only on its own layer or lower ones; `just check` enforces it. On
+crates.io each crate is `fusor-ai-<name>` (`fusor-ai-kernels`), and its library keeps the
+short name (`use kernels::…`).
 
 | Layer | Crate or package | Holds |
 | --- | --- | --- |

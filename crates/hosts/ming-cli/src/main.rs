@@ -2,7 +2,7 @@
 //!
 //! - `compile`: checkpoint → bundle (the `ming-compile` crate).
 //! - `say`: text → WAV with a bundle, printing the real-time factor.
-//! - `parity`: every component against the PyTorch goldens (`scripts/dump_goldens.py`).
+//! - `parity`: every component against the PyTorch goldens (`scripts/ming/dump_goldens.py`).
 //! - `bench`: milliseconds per frame of each component.
 
 mod bench;
@@ -18,6 +18,7 @@ use ming::prompt::Voice;
 use ming::session::{Engine, Preset, Request, SAMPLE_RATE};
 
 #[derive(Parser)]
+#[command(name = "ming", version)]
 struct Cli {
     /// Compute threads (default: min(8, cores − 2)).
     #[arg(long, global = true)]

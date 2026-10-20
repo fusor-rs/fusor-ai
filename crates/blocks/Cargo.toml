@@ -1,11 +1,17 @@
 [package]
-name = "blocks"
+name = "fusor-ai-blocks"
 description = "Architecture blocks built on fusor-ai's kernels and thread team: the Qwen2 decoder stack, DiT blocks, flow-matching integration and a streaming inverse STFT."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "../../README.md"
+keywords = ["fusor", "wasm", "transformer", "diffusion", "inference"]
+categories = ["science", "wasm"]
+
+[lib]
+name = "blocks"
 
 [dependencies]
 kernels.workspace = true

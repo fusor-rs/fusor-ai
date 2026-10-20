@@ -29,19 +29,24 @@ const metadata = JSON.parse(
 const root = metadata.workspace_root;
 const failures = [];
 
-function layerOf(manifestPath) {
-  const dir = relative(root, manifestPath).replace(/\/Cargo\.toml$/, "");
+const directoryOf = (pkg) => relative(root, pkg.manifest_path).replace(/\/Cargo\.toml$/, "");
+
+function layerOf(dir) {
   const layer = LAYERS.findIndex(({ match }) => match.test(dir));
   if (layer < 0) failures.push(`${dir}: not in a layer directory (see AGENTS.md)`);
   return layer;
 }
 
-const family = (name) => name.split("-")[0];
+// `crates/models/ming-compile` belongs to the `ming` family.
+const familyOf = (dir) => dir.split("/").pop().split("-")[0];
 const crates = new Map(
-  metadata.packages.map((pkg) => [pkg.name, { pkg, layer: layerOf(pkg.manifest_path) }]),
+  metadata.packages.map((pkg) => {
+    const dir = directoryOf(pkg);
+    return [pkg.name, { pkg, layer: layerOf(dir), family: familyOf(dir) }];
+  }),
 );
 
-for (const { pkg, layer } of crates.values()) {
+for (const { pkg, layer, family } of crates.values()) {
   for (const dep of pkg.dependencies) {
     const target = crates.get(dep.name);
     if (!target || dep.kind === "dev") continue;
@@ -49,7 +54,7 @@ for (const { pkg, layer } of crates.values()) {
     const to = `${LAYERS[target.layer]?.name} ${dep.name}`;
     if (target.layer > layer) failures.push(`${from} depends on ${to}, a higher layer`);
     const sameLayer = target.layer === layer;
-    if (sameLayer && LAYERS[layer].name === "model" && family(pkg.name) !== family(dep.name)) {
+    if (sameLayer && LAYERS[layer].name === "model" && family !== target.family) {
       failures.push(`${from} depends on ${to}: a model never depends on another model`);
     }
     if (sameLayer && LAYERS[layer].name === "host") {

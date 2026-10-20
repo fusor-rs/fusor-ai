@@ -1,11 +1,17 @@
 [package]
-name = "ming"
+name = "fusor-ai-ming"
 description = "Ming-3.0-tts-0.5B: the model (LLM, flow head, aggregator, vocoder), the synthesis loop, prompt and text frontend. No I/O; builds for native and wasm32."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "../../../README.md"
+keywords = ["fusor", "tts", "speech", "wasm", "inference"]
+categories = ["multimedia::audio", "science", "wasm"]
+
+[lib]
+name = "ming"
 
 [dependencies]
 team.workspace = true

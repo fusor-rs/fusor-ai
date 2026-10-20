@@ -8,7 +8,29 @@ model has loaded the page makes no network requests.
 On an Apple M4 Pro, Chrome generates speech 1.5–2× faster than real time (8 threads, relaxed
 SIMD); the numbers for every build are in [`results.md`](results.md).
 
-## Run it
+## Run a release
+
+A release holds the `ming` CLI (macOS on Apple silicon, Linux on x86-64) and
+`ming-web-<version>.tar.gz`: the page with its four runtimes, a dev server and the checkpoint
+download. Without Rust, with Node.js ≥ 20, curl, about 4 GB of disk and 5 GB of free RAM:
+
+```sh
+curl -fsSL https://github.com/fusor-rs/fusor-ai/releases/latest/download/install.sh | sh
+version=0.1.0
+curl -fsSL https://github.com/fusor-rs/fusor-ai/releases/download/v$version/ming-web-$version.tar.gz | tar -xz
+cd ming-web-$version
+./fetch-checkpoint.sh checkpoint    # 3 GB, sha256-checked
+ming compile checkpoint model       # the 850 MB bundle the page loads from model/
+node serve.mjs --mount /=.          # http://localhost:8787/
+```
+
+`install.sh` puts `ming` in `~/.fusor-ai/bin` (`FUSOR_AI_INSTALL` changes it) and takes a
+version (`sh install.sh v0.1.0`); rerunning it upgrades. Any static server works in place of
+`serve.mjs` if it sends `Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: require-corp` (without them the page uses the single-threaded
+builds).
+
+## Run it from source
 
 Prerequisites: Rust via [rustup](https://rustup.rs) (`rust-toolchain.toml` pins 1.99.0; the
 threaded builds use `nightly-2025-11-15` with `rust-src`, installed by `just tools`), Node.js

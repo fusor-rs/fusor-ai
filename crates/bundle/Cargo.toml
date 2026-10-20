@@ -1,11 +1,17 @@
 [package]
-name = "bundle"
+name = "fusor-ai-bundle"
 description = "Model bundles: a manifest of hashed parts and a store that streams parts straight into their tensors."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "../../README.md"
+keywords = ["fusor", "wasm", "weights", "streaming", "inference"]
+categories = ["encoding", "wasm"]
+
+[lib]
+name = "bundle"
 
 [dependencies]
 kernels.workspace = true

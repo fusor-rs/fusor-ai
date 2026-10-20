@@ -1,11 +1,14 @@
 [package]
-name = "ming-cli"
+name = "fusor-ai-ming-cli"
 description = "The native Ming host: compile the checkpoint, synthesize, benchmark, and check parity with the PyTorch goldens."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "../../../README.md"
+keywords = ["fusor", "tts", "speech", "cli", "wasm"]
+categories = ["command-line-utilities", "multimedia::audio"]
 
 [[bin]]
 name = "ming"

@@ -1,11 +1,17 @@
 [package]
-name = "kernels"
+name = "fusor-ai-kernels"
 description = "Block-quantized weights, int8 SIMD matrix multiply (wasm relaxed SIMD / SIMD128, NEON sdot, scalar) and the f32 operations of transformer inference."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "../../README.md"
+keywords = ["fusor", "wasm", "simd", "quantization", "inference"]
+categories = ["science", "wasm"]
+
+[lib]
+name = "kernels"
 
 [dependencies]
 team.workspace = true

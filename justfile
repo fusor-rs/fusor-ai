@@ -5,8 +5,8 @@ check: lint wasm host layers
 
 lint:
     cargo fmt --all -- --check
-    cargo test --workspace --features team/threads --locked
-    cargo clippy --workspace --all-targets --features team/threads --locked -- -D warnings
+    cargo test --workspace --features fusor-ai-team/threads --locked
+    cargo clippy --workspace --all-targets --features fusor-ai-team/threads --locked -- -D warnings
     cargo doc --workspace --no-deps --locked
 
 # The kernels compile a different backend per target feature set: lint each.
@@ -16,6 +16,7 @@ wasm:
       --config 'target.wasm32-unknown-unknown.rustflags=["-C", "target-feature=+simd128,+relaxed-simd"]' -- -D warnings
 
 host:
+    sh -n install.sh
     node --check packages/host/loader.js
     node --check packages/host/compute.js
     node --check packages/host/thread-host.js
@@ -49,7 +50,7 @@ tools:
     scripts/install-tools.sh {{wasm_bindgen_version}} > /dev/null
 
 ming-native:
-    {{nice}} cargo build --release -p ming-cli
+    {{nice}} cargo build --release -p fusor-ai-ming-cli
 
 # Downloads the pinned checkpoint (3 GB) unless it is already there, then compiles the bundle.
 ming-model: ming-native
@@ -88,3 +89,71 @@ ming-smoke:
 ming-e2e:
     cd e2e && npm install --no-audit --no-fund --silent && npx playwright install chromium
     PORT={{port}} node e2e/ming.mjs
+
+# Releases (CONTRIBUTING.md, "Releasing"): archives in target/release-archives/v<version>/.
+
+version := `v=$(cargo pkgid -p fusor-ai-ming-cli); echo "${v##*[#@]}"`
+
+# The `ming` CLI for this machine's target.
+archive:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    target=$(rustc -vV | sed -n 's/^host: //p')
+    # .cargo/config.toml tunes aarch64 builds for this machine's CPU; a release runs on every
+    # Apple silicon Mac.
+    if [ "$target" = aarch64-apple-darwin ]; then export RUSTFLAGS="-C target-cpu=apple-m1"; fi
+    cargo build --locked --release --target "$target" -p fusor-ai-ming-cli
+    name="ming-{{version}}-$target"
+    staging="target/release-archives/$name"
+    out="target/release-archives/v{{version}}"
+    rm -rf "$staging"
+    mkdir -p "$staging/bin" "$out"
+    cp "target/$target/release/ming" "$staging/bin/"
+    cp LICENSE README.md "$staging/"
+    COPYFILE_DISABLE=1 tar -czf "$out/$name.tar.gz" -C target/release-archives "$name"
+    (cd "$out" && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
+    echo "$out/$name.tar.gz"
+
+# Installs the archive from `just archive` with install.sh and checks that a corrupt download
+# is refused.
+archive-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    target=$(rustc -vV | sed -n 's/^host: //p')
+    archives="$PWD/target/release-archives"
+    archive="$archives/v{{version}}/ming-{{version}}-$target.tar.gz"
+    work=$(mktemp -d)
+    trap 'rm -r "$work"' EXIT
+    export FUSOR_AI_DOWNLOAD_BASE="file://$archives"
+    export FUSOR_AI_INSTALL="$work/installed fusor-ai"
+    sh install.sh "v{{version}}"
+    test "$("$FUSOR_AI_INSTALL/bin/ming" --version)" = "ming {{version}}"
+    cp "$archive" "$work/intact.tar.gz"
+    printf 'corrupt download' >> "$archive"
+    if sh install.sh "v{{version}}" > "$work/rejected.log" 2>&1; then
+        mv "$work/intact.tar.gz" "$archive"
+        echo "install.sh accepted a corrupt archive" >&2
+        exit 1
+    fi
+    mv "$work/intact.tar.gz" "$archive"
+    grep -Fx 'error: checksum mismatch; download the release again' "$work/rejected.log"
+
+# The Ming page with its four runtimes, the dev server and how to run them.
+ming-web-archive: ming-runtimes
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name="ming-web-{{version}}"
+    staging="target/release-archives/$name"
+    out="target/release-archives/v{{version}}"
+    rm -rf "$staging"
+    mkdir -p "$staging" "$out"
+    cp -R {{ming_web}}/index.html {{ming_web}}/src {{ming_web}}/dist "$staging/"
+    cp scripts/serve.mjs scripts/ming/fetch-checkpoint.sh LICENSE "$staging/"
+    cp docs/ming/README.md "$staging/README.md"
+    COPYFILE_DISABLE=1 tar -czf "$out/$name.tar.gz" -C target/release-archives "$name"
+    (cd "$out" && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
+    listing=$(tar -tzf "$out/$name.tar.gz")
+    for variant in {{variants}}; do
+        grep -qx "$name/dist/$variant/ming_runtime_bg.wasm" <<< "$listing"
+    done
+    echo "$out/$name.tar.gz"

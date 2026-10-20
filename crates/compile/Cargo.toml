@@ -1,11 +1,17 @@
 [package]
-name = "compile"
+name = "fusor-ai-compile"
 description = "Native model compilation for fusor-ai: read safetensors checkpoints, encode tensors, write hashed bundle parts and the manifest."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "../../README.md"
+keywords = ["fusor", "safetensors", "quantization", "wasm", "inference"]
+categories = ["development-tools", "science"]
+
+[lib]
+name = "compile"
 
 [dependencies]
 bundle.workspace = true

@@ -1,11 +1,17 @@
 [package]
-name = "ming-compile"
+name = "fusor-ai-ming-compile"
 description = "Compiles the Ming-3.0-tts-0.5B checkpoint into a bundle: what to keep, renames, q/k/v fusion and the dtype of every tensor."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "../../../README.md"
+keywords = ["fusor", "tts", "safetensors", "quantization", "wasm"]
+categories = ["development-tools", "multimedia::audio"]
+
+[lib]
+name = "ming_compile"
 
 [dependencies]
 ming.workspace = true
