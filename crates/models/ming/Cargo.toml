@@ -1,0 +1,24 @@
+[package]
+name = "ming"
+description = "Ming-3.0-tts-0.5B: the model (LLM, flow head, aggregator, vocoder), the synthesis loop, prompt and text frontend. No I/O; builds for native and wasm32."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+team.workspace = true
+kernels.workspace = true
+nn.workspace = true
+bundle.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokenizers.workspace = true
+realfft.workspace = true
+regex.workspace = true
+
+[features]
+# Run the thread team on Rayon's pool (native, and the threaded browser runtimes).
+threads = ["team/threads"]

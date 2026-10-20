@@ -1,0 +1,16 @@
+[package]
+name = "ming-compile"
+description = "Compiles the Ming-3.0-tts-0.5B checkpoint into a bundle: what to keep, renames, q/k/v fusion and the dtype of every tensor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ming.workspace = true
+bundle.workspace = true
+compile.workspace = true
+kernels.workspace = true
+anyhow.workspace = true
+clap.workspace = true
