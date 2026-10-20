@@ -8,12 +8,13 @@
 
 use serde::{Deserialize, Serialize};
 
+use blocks::qwen2::{self, KvCache, Mask, Span};
 use bundle::Store;
-use nn::qwen2::{self, KvCache, Mask, Span};
+use kernels::rng::Rng;
 use team::Team;
 
 use crate::Error;
-use crate::dit::{self, LATENT, Schedule};
+use crate::flow_head::{self, LATENT, Steps};
 use crate::model::{HIDDEN, Model, QWEN2_SHAPE, TOKENIZER_PART};
 use crate::prompt::{self, Prompt, Prompter, Voice};
 use crate::text::{self, Segmentation};
@@ -49,7 +50,7 @@ pub enum Preset {
 }
 
 impl Preset {
-    const ALL: [Preset; 3] = [Preset::Quality, Preset::Balanced, Preset::Fast];
+    pub const ALL: [Preset; 3] = [Preset::Quality, Preset::Balanced, Preset::Fast];
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -86,9 +87,9 @@ pub struct Engine {
     team: Team,
     llm_cache: KvCache,
     llm: qwen2::Buffers,
-    dit: dit::Buffers,
+    flow: flow_head::Buffers,
     vocoder: VocoderState,
-    schedules: Vec<(Preset, Schedule)>,
+    schedules: Vec<(Preset, Steps)>,
     job: Option<Job>,
     audio: Vec<f32>,
 }
@@ -123,15 +124,16 @@ impl Engine {
         let threads = team.threads();
         let schedules = Preset::ALL
             .iter()
-            .map(|&p| (p, schedule(&model, p)))
+            .map(|&preset| (preset, schedule(&model, preset)))
             .collect();
+        let vocoder = VocoderState::new(&model.vocoder, threads);
         Ok(Self {
             model,
             prompter,
             llm_cache: KvCache::new(QWEN2_SHAPE, LLM_CAPACITY),
             llm: qwen2::Buffers::new(QWEN2_SHAPE, PREFILL_ROWS, threads),
-            dit: dit::Buffers::new(threads),
-            vocoder: VocoderState::new(threads),
+            flow: flow_head::Buffers::new(threads),
+            vocoder,
             team,
             schedules,
             job: None,
@@ -144,7 +146,7 @@ impl Engine {
     }
 
     pub fn start(&mut self, mut request: Request) -> Result<Plan, Error> {
-        request.language = request.language.filter(|l| !l.trim().is_empty());
+        request.language = request.language.filter(|name| !name.trim().is_empty());
         let segmentation = match (&request.voice, &request.language) {
             (_, Some(language)) if prompt::is_multilingual(language) => Segmentation::Verbatim,
             (Voice::Builtin(_), _) => Segmentation::Sentences,
@@ -269,12 +271,17 @@ impl Engine {
         for first in (0..prompt.ids.len()).step_by(PREFILL_ROWS) {
             let rows = (prompt.ids.len() - first).min(PREFILL_ROWS);
             let hidden = self.llm.hidden.get_mut();
-            for r in 0..rows {
-                let row = &mut hidden[r * HIDDEN..(r + 1) * HIDDEN];
-                if first + r == prompt.speaker_row {
+            for (offset, row) in hidden[..rows * HIDDEN]
+                .as_chunks_mut::<HIDDEN>()
+                .0
+                .iter_mut()
+                .enumerate()
+            {
+                let position = first + offset;
+                if position == prompt.speaker_row {
                     row.fill(0.0);
                 } else {
-                    embeddings.dequantize_row(prompt.ids[first + r] as usize, row);
+                    embeddings.dequantize_row(prompt.ids[position] as usize, row);
                 }
             }
             self.llm_forward(Span {
@@ -318,16 +325,13 @@ impl Engine {
         let schedule = &self
             .schedules
             .iter()
-            .find(|(p, _)| *p == preset)
+            .find(|(candidate, _)| *candidate == preset)
             .expect("every preset has a schedule")
             .1;
-        let input = dit::FrameInput { z, history, noise };
-        self.team.run(|ctx| {
-            self.model
-                .flow
-                .sample(ctx, &self.dit, &input, schedule, CFG_SCALE)
-        });
-        self.dit.output(LATENT).to_vec()
+        let input = flow_head::FrameInput { z, history, noise };
+        self.team
+            .run(|ctx| self.model.flow.sample(ctx, &self.flow, &input, schedule));
+        self.flow.output(LATENT).to_vec()
     }
 
     /// The stop head's `[continue, stop]` logits.
@@ -342,8 +346,8 @@ impl Engine {
     /// The aggregator: a frame latent → the LLM's next input embedding.
     pub fn aggregate(&self, latent: &[f32]) -> Vec<f32> {
         self.team
-            .run(|ctx| self.model.aggregator.embed(ctx, &self.dit, latent));
-        self.dit.output(HIDDEN).to_vec()
+            .run(|ctx| self.model.aggregator.embed(ctx, &self.flow, latent));
+        self.flow.output(HIDDEN).to_vec()
     }
 
     /// Decodes a whole latent sequence (`frames × 64`) to audio, without silence trimming.
@@ -362,61 +366,15 @@ impl Engine {
     }
 }
 
-fn schedule(model: &Model, preset: Preset) -> Schedule {
+fn schedule(model: &Model, preset: Preset) -> Steps {
     match preset {
-        Preset::Quality => model.flow.schedule(&EPSS_10, |_, _| true),
-        Preset::Balanced => model.flow.schedule(&EPSS_10, |_, t| GUIDED.contains(&t)),
-        Preset::Fast => model.flow.schedule(&EPSS_7, |_, t| GUIDED.contains(&t)),
-    }
-}
-
-/// xoshiro256** seeded through SplitMix64; normals by Box–Muller.
-struct Rng {
-    state: [u64; 4],
-}
-
-impl Rng {
-    fn new(seed: u64) -> Self {
-        let mut s = seed;
-        let mut next = || {
-            s = s.wrapping_add(0x9E37_79B9_7F4A_7C15);
-            let mut z = s;
-            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-            z ^ (z >> 31)
-        };
-        Self {
-            state: [next(), next(), next(), next()],
-        }
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        let s = &mut self.state;
-        let result = s[1].wrapping_mul(5).rotate_left(7).wrapping_mul(9);
-        let t = s[1] << 17;
-        s[2] ^= s[0];
-        s[3] ^= s[1];
-        s[1] ^= s[2];
-        s[0] ^= s[3];
-        s[2] ^= t;
-        s[3] = s[3].rotate_left(45);
-        result
-    }
-
-    /// Uniform in (0, 1].
-    fn uniform(&mut self) -> f64 {
-        ((self.next_u64() >> 11) + 1) as f64 / (1u64 << 53) as f64
-    }
-
-    fn fill_normal(&mut self, out: &mut [f32]) {
-        for pair in out.chunks_mut(2) {
-            let radius = (-2.0 * self.uniform().ln()).sqrt();
-            let angle = std::f64::consts::TAU * self.uniform();
-            pair[0] = (radius * angle.cos()) as f32;
-            if let Some(second) = pair.get_mut(1) {
-                *second = (radius * angle.sin()) as f32;
-            }
-        }
+        Preset::Quality => model.flow.steps(&EPSS_10, |_, _| true, CFG_SCALE),
+        Preset::Balanced => model
+            .flow
+            .steps(&EPSS_10, |_, time| GUIDED.contains(&time), CFG_SCALE),
+        Preset::Fast => model
+            .flow
+            .steps(&EPSS_7, |_, time| GUIDED.contains(&time), CFG_SCALE),
     }
 }
 
@@ -435,12 +393,13 @@ struct SilenceGate {
 
 impl SilenceGate {
     fn push(&mut self, samples: &[f32], out: &mut Vec<f32>) {
-        for &s in samples {
-            self.chunk.push(s);
+        for &sample in samples {
+            self.chunk.push(sample);
             if self.chunk.len() < CHUNK {
                 continue;
             }
-            let loud = self.chunk.iter().map(|v| v.abs()).sum::<f32>() / CHUNK as f32 > SILENCE;
+            let loud =
+                self.chunk.iter().map(|sample| sample.abs()).sum::<f32>() / CHUNK as f32 > SILENCE;
             if loud {
                 out.append(&mut self.held);
                 out.append(&mut self.chunk);

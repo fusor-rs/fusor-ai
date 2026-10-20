@@ -11,10 +11,11 @@ mod blob;
 mod linear;
 mod matmul;
 pub mod ops;
+pub mod rng;
 mod tensor;
 
 pub use arch::dot_f32;
-pub use linear::{COLUMN_ALIGN, Linear, SharedRows, project_residual};
+pub use linear::{COLUMN_ALIGN, Linear, NARROW_COLUMN_ALIGN, SharedRows, project_residual};
 pub use matmul::{Input, QuantizedRows, matmul};
 pub use tensor::{BLOCK, DType, Matrix, MatrixStorage, Tensor};
 

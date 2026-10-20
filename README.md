@@ -5,17 +5,17 @@ Ship a model as static files. The browser downloads a bundle of quantized weight
 and threads. No server, no API keys, no WebGPU required, and no way for the runtime to reach
 the network.
 
-fusor-ai is the toolkit behind [ming-wasm](https://github.com/fusor-rs/ming-wasm), which runs
-the Ming-3.0-tts-0.5B speech model in Chrome faster than real time, and the pattern behind
-SealedKB's in-browser question answering. It sits next to
+fusor-ai holds the toolkit and the models built on it: Ming-3.0-tts-0.5B text-to-speech runs
+in Chrome faster than real time ([docs/ming](docs/ming/README.md)). It is the pattern behind
+SealedKB's in-browser question answering too, and sits next to
 [fusor](https://github.com/fusor-rs/fusor): it reuses fusor's thread recipe for workers that
 share one WebAssembly memory.
 
 **In development · v0.1**: this is experimental software. APIs will change; don't rely on it for
 production yet. See [status and known limitations](#status-and-known-limitations).
 
-[Get started](#get-started) · [How it works](#how-it-works) · [Crates](#crates) ·
-[Examples](#examples) · [Status](#status-and-known-limitations) · [Contributing](CONTRIBUTING.md)
+[Get started](#get-started) · [How it works](#how-it-works) · [Layers](#layers) ·
+[Models](#models) · [Status](#status-and-known-limitations) · [Contributing](CONTRIBUTING.md)
 
 ## A model component in one function
 
@@ -45,51 +45,39 @@ WebAssembly, `sdot` on Apple silicon. The same function is the single-threaded b
 
 ## Get started
 
-You need Rust 1.99 or newer ([rustup](https://rustup.rs)), Node.js 20 or newer, and, for
-threaded runtimes, the `nightly-2025-11-15` toolchain with `rust-src`. fusor-ai is not on
-crates.io yet: add it to your model's repository as a submodule, so the crates and the host
-scripts move together.
+You need Rust 1.99 or newer ([rustup](https://rustup.rs)), Node.js 20 or newer,
+[`just`](https://github.com/casey/just), and, for threaded runtimes, the `nightly-2025-11-15`
+toolchain with `rust-src` (`just tools` installs it with the pinned wasm-bindgen and binaryen).
+
+Run Ming in the browser: about 4 GB of disk for the checkpoint and the bundle, and 5 GB of free
+RAM while the model compiles.
 
 ```sh
-git submodule add https://github.com/fusor-rs/fusor-ai vendor/fusor-ai
+git clone https://github.com/fusor-rs/fusor-ai && cd fusor-ai
+just ming-build    # tools, native CLI, downloads and compiles the model (850 MB), four browser runtimes
+just ming-serve    # http://localhost:8787/
 ```
 
-```toml
-# Cargo.toml of your workspace
-[workspace]
-exclude = ["vendor"]
+A model is four crates and a page, each in its layer (see [Layers](#layers)):
 
-[workspace.dependencies]
-team = { path = "vendor/fusor-ai/crates/team" }
-kernels = { path = "vendor/fusor-ai/crates/kernels" }
-nn = { path = "vendor/fusor-ai/crates/nn" }
-bundle = { path = "vendor/fusor-ai/crates/bundle" }
-compile = { path = "vendor/fusor-ai/crates/compile" }
-```
-
-A model built on fusor-ai has three parts, as in ming-wasm:
-
-1. **A compiler** (native): reads the checkpoint with `compile::Checkpoint`, keeps,
-   renames and fuses the tensors it needs, picks a dtype per tensor
-   (`kernels::Tensor::encode`) and writes the bundle with `BundleWriter`.
-2. **A runtime crate** (`cdylib`): builds the model from a `bundle::Store`, exposes
-   `write_part`, `end_part` and `restart_part` plus its own inference calls through
-   wasm-bindgen, and has a `threads` feature that enables `team/threads` and
-   re-exports `wasm_bindgen_rayon::init_thread_pool`.
-3. **A page**: a module worker that calls `startRuntime` and `loadParts` from
-   `packages/host/loader.js`, and a page that hands compute workers to
+1. **The model** (`crates/models/<model>`): its dimensions, its wiring of blocks and its
+   sampling loop. Each component loads itself from a `bundle::Store` (`bundle::Load`) under
+   the names its compiler writes.
+2. **The compiler** (`crates/models/<model>-compile`): reads the checkpoint with
+   `compile::Checkpoint`, keeps, renames and fuses the tensors the model needs, picks a dtype
+   per tensor (`kernels::Tensor::encode`) and writes the bundle with `BundleWriter`.
+3. **The runtime** (`crates/hosts/<model>-runtime`, a `cdylib`): exposes `write_part`,
+   `end_part` and `restart_part` plus the model's inference calls through wasm-bindgen, and has
+   a `threads` feature that enables `team/threads` and re-exports
+   `wasm_bindgen_rayon::init_thread_pool`. A native CLI (`crates/hosts/<model>-cli`) compiles,
+   benchmarks and checks parity.
+4. **The page** (`packages/<model>-web`): a module worker that calls `startRuntime` and
+   `loadParts` from `packages/host/loader.js`, and a page that hands compute workers to
    `packages/host/compute.js`.
 
-Build the four runtime variants and serve the page:
-
-```sh
-vendor/fusor-ai/scripts/install-tools.sh            # pinned wasm-bindgen and wasm-opt into .tools/
-for variant in web-single web-single-relaxed web-threaded web-threaded-relaxed; do
-  vendor/fusor-ai/scripts/build-runtime.sh my-model-runtime $variant web/dist
-done
-node vendor/fusor-ai/scripts/check-wasm-imports.mjs web/dist/web-single/my_model_runtime_bg.wasm --no-relaxed
-node vendor/fusor-ai/scripts/serve.mjs --mount /=web --mount /model/=dist/model
-```
+`scripts/build-runtime.sh <runtime crate> <variant> <dist>` builds each of the four runtime
+variants, and `scripts/check-wasm-imports.mjs` checks each one is sealed; the `ming-runtimes`
+recipe in the `justfile` shows both.
 
 ## How it works
 
@@ -113,23 +101,31 @@ node vendor/fusor-ai/scripts/serve.mjs --mount /=web --mount /model/=dist/model
 - **Four builds, picked by the browser.** Threads when the page is cross-origin isolated,
   relaxed SIMD when the engine validates it, plain SIMD128 everywhere else.
 
-## Crates
+## Layers
 
-| Crate or package | Holds |
-| --- | --- |
-| `team` | `Team`, `Ctx` (`split`, `barrier`), `SharedBuf`, `PerThread` |
-| `kernels` | `Tensor` and its formats, `matmul` and its per-target backends, `ops` (RMSNorm, RoPE, GELU, SiLU, `exp`, attention), `Linear` |
-| `nn` | `qwen2`: the Qwen2 decoder stack with a causal or sliding-window KV cache |
-| `bundle` | `Manifest`, `Store` (streaming, hashed parts; tensors and blobs) |
-| `compile` | `Checkpoint` (safetensors), `BundleWriter` |
-| `packages/host` | `loader.js` (build choice, part streaming, OPFS cache), `compute.js` (the compute-worker pool), `thread-host.js` |
-| `scripts/` | `build-runtime.sh`, `check-wasm-imports.mjs`, `serve.mjs`, `install-tools.sh` |
+Every crate depends only on its own layer or lower ones; `just check` enforces it.
 
-## Examples
+| Layer | Crate or package | Holds |
+| --- | --- | --- |
+| Primitives | `team` | `Team`, `Ctx` (`split`, `barrier`), `SharedBuf`, `PerThread` |
+| | `kernels` | `Tensor` and its formats, `matmul` over per-target backends, `ops` (RMSNorm, RoPE, GELU, SiLU, `exp`, attention), `Linear`, `rng` |
+| | `bundle` | `Manifest`, `Store` (streaming, hashed parts; tensors and blobs), the `Load` trait |
+| | `compile` | `Checkpoint` (safetensors), `BundleWriter` |
+| Blocks | `blocks` | `qwen2` (the Qwen2 decoder stack, causal or sliding-window KV cache), `dit` (diffusion-transformer blocks), `flow` (flow-matching Euler steps with classifier-free guidance, sway sampling), `istft` (streaming inverse STFT) |
+| Models | `ming`, `ming-compile` | Ming-3.0-tts-0.5B and its compiler |
+| Hosts | `ming-runtime`, `ming-cli` | Ming's wasm-bindgen surface and native CLI |
+| | `packages/host` | `loader.js` (build choice, part streaming, OPFS cache), `compute.js` (the compute-worker pool), `thread-host.js` |
+| | `packages/ming-web` | Ming's page and engine worker |
 
-- [ming-wasm](https://github.com/fusor-rs/ming-wasm): Ming-3.0-tts-0.5B text-to-speech (a Qwen2
-  LLM, a diffusion-transformer flow head and a streaming VAE vocoder) in the browser, with
-  parity checks against the PyTorch reference.
+`scripts/` holds `build-runtime.sh`, `check-wasm-imports.mjs`, `check-layers.mjs`, `serve.mjs`
+and `install-tools.sh`; `scripts/ming/` the checkpoint download, the goldens and the Node
+smoke test.
+
+## Models
+
+- [Ming-3.0-tts-0.5B](docs/ming/README.md): text-to-speech (a Qwen2 LLM, a
+  diffusion-transformer flow head and a streaming VAE vocoder) in the browser, with parity
+  checks against the PyTorch reference.
 
 ## Status and known limitations
 
@@ -138,7 +134,7 @@ the bundle format.
 
 | Platform or capability | Status |
 | --- | --- |
-| Chrome / Edge, threads + relaxed SIMD | Headless Chrome end-to-end gate in ming-wasm |
+| Chrome / Edge, threads + relaxed SIMD | Headless Chrome end-to-end check (`just ming-e2e`) |
 | Browsers without relaxed SIMD (Safari, older Firefox) | SIMD128 builds; exercised in Node |
 | Pages without COOP/COEP | Single-threaded builds |
 | Native (aarch64 `sdot`, scalar elsewhere) | Unit tests; the compiler and parity tools run natively |

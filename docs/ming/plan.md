@@ -1,5 +1,9 @@
 # Ming-3.0-tts-0.5B in the browser: engineering plan
 
+The plan the implementation started from. Its repository layout and commands (§4) are those of
+the original standalone repository; [README.md](README.md) has the current ones, and
+[decisions.md](decisions.md) records where the implementation departed from the plan.
+
 Target: `inclusionAI/Ming-3.0-tts-0.5B` (HF revision `e5bd8da31ecf1b9276cdbdda821fa891068f1368`,
 GitHub reference `inclusionAI/Ming-3.0-tts` @ `e999c39`) running entirely on the CPU in Rust compiled to
 WebAssembly, with WASM threads (shared memory + Rayon workers, the fusor recipe SealedKB already uses).

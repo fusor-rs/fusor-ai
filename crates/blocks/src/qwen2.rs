@@ -4,7 +4,11 @@
 //! `forward` runs inside a team run: per layer five phases separated by barriers — QKV, RoPE
 //! and cache writes by heads; attention by query heads; output projection plus residual by
 //! columns; gate/up plus SiLU by intermediate columns; down projection plus residual by columns.
+//!
+//! Tensors under a prefix `p`: `p.layers.{i}.{input_norm, qkv, o, post_norm, gate, up, down}`
+//! (q, k and v fused into `qkv` with its bias) and `p.norm`.
 
+use bundle::{Load, Store};
 use kernels::ops::{attend, rms_norm, rope_angles, rope_half, rope_inv_freq, silu};
 use kernels::{
     COLUMN_ALIGN, Error, Linear, QuantizedRows, SharedRows, Tensor, matmul, project_residual,
@@ -341,5 +345,34 @@ impl Qwen2 {
                 *gated = silu(*gated) * up_value;
             }
         }
+    }
+}
+
+impl Load for Layer {
+    type Shape = ();
+
+    fn load(store: &mut Store, prefix: &str, (): ()) -> Result<Self, bundle::Error> {
+        let name = |part: &str| format!("{prefix}.{part}");
+        Ok(Self {
+            input_norm: Tensor::load(store, &name("input_norm"), ())?,
+            qkv: Linear::load(store, &name("qkv"), ())?,
+            output: Linear::load(store, &name("o"), ())?,
+            post_norm: Tensor::load(store, &name("post_norm"), ())?,
+            gate: Linear::load(store, &name("gate"), ())?,
+            up: Linear::load(store, &name("up"), ())?,
+            down: Linear::load(store, &name("down"), ())?,
+        })
+    }
+}
+
+impl Load for Qwen2 {
+    type Shape = Shape;
+
+    fn load(store: &mut Store, prefix: &str, shape: Shape) -> Result<Self, bundle::Error> {
+        let layers = (0..shape.layers)
+            .map(|i| Layer::load(store, &format!("{prefix}.layers.{i}"), ()))
+            .collect::<Result<_, _>>()?;
+        let norm = Tensor::load(store, &format!("{prefix}.norm"), ())?;
+        Ok(Self::new(shape, layers, norm)?)
     }
 }

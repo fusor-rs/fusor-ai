@@ -8,114 +8,122 @@ use std::arch::aarch64::{
     vshrq_n_u8, vst1q_s8,
 };
 
-pub struct Weights(int8x16_t, int8x16_t);
-pub struct Activations(int8x16_t, int8x16_t);
+pub(crate) struct Weights(int8x16_t, int8x16_t);
+pub(crate) struct Activations(int8x16_t, int8x16_t);
 
-/// # Safety
-/// 32 readable bytes at `at`.
-#[inline(always)]
-pub unsafe fn load_q7(at: *const u8) -> Weights {
-    // SAFETY: the caller guarantees 32 readable bytes; NEON loads are unaligned. Stored values
-    // are ≤ 127, so reading them as i8 keeps them.
-    unsafe { Weights(vld1q_s8(at.cast()), vld1q_s8(at.add(16).cast())) }
-}
+pub(crate) struct Neon;
 
-/// # Safety
-/// 16 readable bytes at `at`.
-#[inline(always)]
-pub unsafe fn load_q4(at: *const u8) -> Weights {
-    // SAFETY: the caller guarantees 16 readable bytes; NEON loads are unaligned.
-    unsafe {
-        let packed = vld1q_u8(at);
-        Weights(
-            vreinterpretq_s8_u8(vandq_u8(packed, vdupq_n_u8(0x0f))),
-            vreinterpretq_s8_u8(vshrq_n_u8::<4>(packed)),
-        )
+impl super::Backend for Neon {
+    type Weights = Weights;
+    type Activations = Activations;
+    type Sums = float32x4_t;
+
+    /// # Safety
+    /// 32 readable bytes at `at`.
+    #[inline(always)]
+    unsafe fn load_q7(at: *const u8) -> Self::Weights {
+        // SAFETY: the caller guarantees 32 readable bytes; NEON loads are unaligned. Stored values
+        // are ≤ 127, so reading them as i8 keeps them.
+        unsafe { Weights(vld1q_s8(at.cast()), vld1q_s8(at.add(16).cast())) }
     }
-}
 
-/// # Safety
-/// 32 readable bytes at `at`.
-#[inline(always)]
-pub unsafe fn load_activations(at: *const i8) -> Activations {
-    // SAFETY: the caller guarantees 32 readable bytes; NEON loads are unaligned.
-    unsafe { Activations(vld1q_s8(at), vld1q_s8(at.add(16))) }
-}
-
-#[inline(always)]
-pub fn zero() -> float32x4_t {
-    // SAFETY: NEON is always available on aarch64.
-    unsafe { vdupq_n_f32(0.0) }
-}
-
-/// Quantizes 32 values to int8 (`round_ties_even(x / d)`); returns `(d, Σq)`.
-pub fn quantize_block(x: &[f32], out: &mut [i8]) -> (f32, i32) {
-    assert!(
-        x.len() >= 32 && out.len() >= 32,
-        "one block in, one block out"
-    );
-    // SAFETY: 32 readable f32s and 32 writable bytes (asserted); NEON loads and stores are
-    // unaligned.
-    unsafe {
-        let lanes: [float32x4_t; 8] = std::array::from_fn(|i| vld1q_f32(x.as_ptr().add(4 * i)));
-        let max = lanes.iter().fold(vdupq_n_f32(0.0), |max, &lane| {
-            vmaxq_f32(max, vabsq_f32(lane))
-        });
-        let scale = super::activation_scale(vmaxvq_f32(max));
-        let levels: [int32x4_t; 8] = std::array::from_fn(|i| {
-            vcvtq_s32_f32(vrndnq_f32(vdivq_f32(lanes[i], vdupq_n_f32(scale))))
-        });
-        let narrow = |quarter: &[int32x4_t]| {
-            vcombine_s8(
-                vqmovn_s16(vcombine_s16(vqmovn_s32(quarter[0]), vqmovn_s32(quarter[1]))),
-                vqmovn_s16(vcombine_s16(vqmovn_s32(quarter[2]), vqmovn_s32(quarter[3]))),
+    /// # Safety
+    /// 16 readable bytes at `at`.
+    #[inline(always)]
+    unsafe fn load_q4(at: *const u8) -> Self::Weights {
+        // SAFETY: the caller guarantees 16 readable bytes; NEON loads are unaligned.
+        unsafe {
+            let packed = vld1q_u8(at);
+            Weights(
+                vreinterpretq_s8_u8(vandq_u8(packed, vdupq_n_u8(0x0f))),
+                vreinterpretq_s8_u8(vshrq_n_u8::<4>(packed)),
             )
-        };
-        vst1q_s8(out.as_mut_ptr(), narrow(&levels[..4]));
-        vst1q_s8(out.as_mut_ptr().add(16), narrow(&levels[4..]));
-        let sums = levels
-            .iter()
-            .fold(vdupq_n_s32(0), |sums, &level| vaddq_s32(sums, level));
-        (scale, vaddvq_s32(sums))
-    }
-}
-
-#[inline(always)]
-pub fn accumulate(
-    sums: float32x4_t,
-    activations: &Activations,
-    weights: &Weights,
-    correction: i32,
-    scale: f32,
-) -> float32x4_t {
-    // SAFETY: `dotprod` is enabled for this module (cfg); no memory is accessed.
-    unsafe {
-        let seed = vsetq_lane_s32::<0>(correction, vdupq_n_s32(0));
-        let low = vdotq_s32(seed, activations.0, weights.0);
-        let dot = vdotq_s32(low, activations.1, weights.1);
-        vfmaq_n_f32(sums, vcvtq_f32_s32(dot), scale)
-    }
-}
-
-#[inline(always)]
-pub fn sum(sums: float32x4_t) -> f32 {
-    // SAFETY: NEON is always available on aarch64.
-    unsafe { vaddvq_f32(sums) }
-}
-
-pub fn dot_f32(left: &[f32], right: &[f32]) -> f32 {
-    assert_eq!(left.len(), right.len(), "dot product of equal lengths");
-    let chunks = left.len() / 4;
-    // SAFETY: i·4 + 4 ≤ len for both slices (asserted equal); NEON loads are unaligned.
-    let head = unsafe {
-        let mut sums = vdupq_n_f32(0.0);
-        for i in 0..chunks {
-            let x = vld1q_f32(left.as_ptr().add(i * 4));
-            let y = vld1q_f32(right.as_ptr().add(i * 4));
-            sums = vfmaq_f32(sums, x, y);
         }
-        vaddvq_f32(sums)
-    };
-    let tail = left[chunks * 4..].iter().zip(&right[chunks * 4..]);
-    head + tail.map(|(x, y)| x * y).sum::<f32>()
+    }
+
+    /// # Safety
+    /// 32 readable bytes at `at`.
+    #[inline(always)]
+    unsafe fn load_activations(at: *const i8) -> Self::Activations {
+        // SAFETY: the caller guarantees 32 readable bytes; NEON loads are unaligned.
+        unsafe { Activations(vld1q_s8(at), vld1q_s8(at.add(16))) }
+    }
+
+    #[inline(always)]
+    fn zero() -> float32x4_t {
+        // SAFETY: NEON is always available on aarch64.
+        unsafe { vdupq_n_f32(0.0) }
+    }
+
+    /// Quantizes 32 values to int8 (`round_ties_even(x / d)`); returns `(d, Σq)`.
+    fn quantize_block(x: &[f32], out: &mut [i8]) -> (f32, i32) {
+        assert!(
+            x.len() >= 32 && out.len() >= 32,
+            "one block in, one block out"
+        );
+        // SAFETY: 32 readable f32s and 32 writable bytes (asserted); NEON loads and stores are
+        // unaligned.
+        unsafe {
+            let lanes: [float32x4_t; 8] = std::array::from_fn(|i| vld1q_f32(x.as_ptr().add(4 * i)));
+            let max = lanes.iter().fold(vdupq_n_f32(0.0), |max, &lane| {
+                vmaxq_f32(max, vabsq_f32(lane))
+            });
+            let scale = super::activation_scale(vmaxvq_f32(max));
+            let levels: [int32x4_t; 8] = std::array::from_fn(|i| {
+                vcvtq_s32_f32(vrndnq_f32(vdivq_f32(lanes[i], vdupq_n_f32(scale))))
+            });
+            let narrow = |quarter: &[int32x4_t]| {
+                vcombine_s8(
+                    vqmovn_s16(vcombine_s16(vqmovn_s32(quarter[0]), vqmovn_s32(quarter[1]))),
+                    vqmovn_s16(vcombine_s16(vqmovn_s32(quarter[2]), vqmovn_s32(quarter[3]))),
+                )
+            };
+            vst1q_s8(out.as_mut_ptr(), narrow(&levels[..4]));
+            vst1q_s8(out.as_mut_ptr().add(16), narrow(&levels[4..]));
+            let sums = levels
+                .iter()
+                .fold(vdupq_n_s32(0), |sums, &level| vaddq_s32(sums, level));
+            (scale, vaddvq_s32(sums))
+        }
+    }
+
+    #[inline(always)]
+    fn accumulate(
+        sums: float32x4_t,
+        activations: &Self::Activations,
+        weights: &Self::Weights,
+        correction: i32,
+        scale: f32,
+    ) -> float32x4_t {
+        // SAFETY: `dotprod` is enabled for this module (cfg); no memory is accessed.
+        unsafe {
+            let seed = vsetq_lane_s32::<0>(correction, vdupq_n_s32(0));
+            let low = vdotq_s32(seed, activations.0, weights.0);
+            let dot = vdotq_s32(low, activations.1, weights.1);
+            vfmaq_n_f32(sums, vcvtq_f32_s32(dot), scale)
+        }
+    }
+
+    #[inline(always)]
+    fn sum(sums: float32x4_t) -> f32 {
+        // SAFETY: NEON is always available on aarch64.
+        unsafe { vaddvq_f32(sums) }
+    }
+
+    fn dot_f32(left: &[f32], right: &[f32]) -> f32 {
+        assert_eq!(left.len(), right.len(), "dot product of equal lengths");
+        let chunks = left.len() / 4;
+        // SAFETY: i·4 + 4 ≤ len for both slices (asserted equal); NEON loads are unaligned.
+        let head = unsafe {
+            let mut sums = vdupq_n_f32(0.0);
+            for i in 0..chunks {
+                let x = vld1q_f32(left.as_ptr().add(i * 4));
+                let y = vld1q_f32(right.as_ptr().add(i * 4));
+                sums = vfmaq_f32(sums, x, y);
+            }
+            vaddvq_f32(sums)
+        };
+        let tail = left[chunks * 4..].iter().zip(&right[chunks * 4..]);
+        head + tail.map(|(x, y)| x * y).sum::<f32>()
+    }
 }

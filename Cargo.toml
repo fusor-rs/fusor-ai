@@ -2,7 +2,7 @@
 members = [
     "crates/team",
     "crates/kernels",
-    "crates/nn",
+    "crates/blocks",
     "crates/bundle",
     "crates/compile",
     "crates/models/ming",
@@ -47,7 +47,7 @@ undocumented_unsafe_blocks = "deny"
 [workspace.dependencies]
 team = { path = "crates/team", version = "=0.1.0" }
 kernels = { path = "crates/kernels", version = "=0.1.0" }
-nn = { path = "crates/nn", version = "=0.1.0" }
+blocks = { path = "crates/blocks", version = "=0.1.0" }
 bundle = { path = "crates/bundle", version = "=0.1.0" }
 compile = { path = "crates/compile", version = "=0.1.0" }
 ming = { path = "crates/models/ming", version = "=0.1.0" }

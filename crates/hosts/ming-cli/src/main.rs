@@ -32,7 +32,7 @@ enum Command {
     Compile {
         checkpoint: PathBuf,
         out: PathBuf,
-        #[arg(long, value_enum, default_value = "mix")]
+        #[arg(long, default_value = "mix")]
         profile: ming_compile::Profile,
     },
     /// Synthesize `text` into a WAV file.
@@ -69,8 +69,8 @@ enum PresetArg {
 }
 
 impl From<PresetArg> for Preset {
-    fn from(p: PresetArg) -> Self {
-        match p {
+    fn from(preset: PresetArg) -> Self {
+        match preset {
             PresetArg::Quality => Preset::Quality,
             PresetArg::Balanced => Preset::Balanced,
             PresetArg::Fast => Preset::Fast,
@@ -80,7 +80,7 @@ impl From<PresetArg> for Preset {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let cores = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
     let threads = cli.threads.unwrap_or(8.min(cores.saturating_sub(2)).max(1));
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
@@ -93,7 +93,7 @@ fn main() -> Result<()> {
         } => {
             let start = Instant::now();
             let manifest = ming_compile::run(&checkpoint, &out, profile)?;
-            let mb = manifest.parts.iter().map(|p| p.bytes).sum::<u64>() as f64 / 1e6;
+            let mb = manifest.parts.iter().map(|part| part.bytes).sum::<u64>() as f64 / 1e6;
             println!(
                 "{} tensors, {} parts, {mb:.1} MB in {:.1}s",
                 manifest.tensors.len(),

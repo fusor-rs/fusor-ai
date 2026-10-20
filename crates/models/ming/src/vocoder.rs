@@ -4,26 +4,19 @@
 //! Per latent frame `i`: `h_i = fc1(latent_i)`, linear upsampling ×4 (`align_corners=False`)
 //! gives positions `4i + j` from `h_{i−1}, h_i, h_{i+1}` with edge clamping, so a frame's last two
 //! positions wait for the next frame; the Qwen2 backbone attends over a 64-position window;
-//! `head.out` gives `log|S|` and phase for 1765 bins; `irfft(n = 3528)` (1/n scaling) times the
-//! window is overlap-added at hop 882 and divided by the summed squared window, dropping
-//! `(3528 − 882) / 2` samples at both ends ("same" padding). A sample is final once the position
-//! covering its start has been added, which is what `push` emits.
+//! `head.out` gives `log|S|` and phase for 1765 bins, and `blocks::istft` turns each position into
+//! 882 new samples (`n_fft` 3528, "same" padding), streaming exactly what the one-shot decode
+//! gives.
 
-use std::sync::Arc;
-
-use realfft::num_complex::Complex;
-use realfft::{ComplexToReal, RealFftPlanner};
-
+use blocks::istft::{FftScratch, Istft, OverlapAdd};
+use blocks::qwen2::{Buffers, KvCache, Mask, Qwen2, Span};
+use bundle::{Load, Store};
 use kernels::{Linear, QuantizedRows, Tensor, matmul};
-use nn::qwen2::{Buffers, KvCache, Mask, Qwen2, Span};
-use team::{PerThread, SharedBuf, Team};
+use team::{Ctx, PerThread, SharedBuf, Team};
 
 use crate::model::{HIDDEN, QWEN2_SHAPE};
 
 const HOP: usize = 882;
-const N_FFT: usize = 4 * HOP;
-const BINS: usize = N_FFT / 2 + 1;
-const PAD: usize = (N_FFT - HOP) / 2;
 const UPSAMPLE: usize = 4;
 /// Samples per latent frame (80 ms at 44.1 kHz).
 pub const FRAME_SAMPLES: usize = UPSAMPLE * HOP;
@@ -38,205 +31,169 @@ const LATE: [(f32, f32); 2] = [(0.875, 0.125), (0.625, 0.375)];
 /// A frame after the first completes the previous frame's last two positions and starts its own.
 const LATE_THEN_EARLY: [(f32, f32); 4] = [LATE[0], LATE[1], EARLY[0], EARLY[1]];
 
-pub struct Vocoder {
-    pub fc1: Linear,
-    pub body: Qwen2,
-    pub head: Linear,
-    pub window: Tensor,
+pub(crate) struct Vocoder {
+    fc1: Linear,
+    body: Qwen2,
+    head: Linear,
+    istft: Istft,
 }
 
 /// One utterance's decoding state.
-pub struct VocoderState {
+pub(crate) struct VocoderState {
     cache: KvCache,
     buffers: Buffers,
     spectrum: SharedBuf,
     frames: SharedBuf,
-    fft: Arc<dyn ComplexToReal<f32>>,
     fft_scratch: PerThread<FftScratch>,
     quant: PerThread<(Vec<f32>, QuantizedRows)>,
     previous: Option<Vec<f32>>,
-    overlap: Overlap,
-}
-
-/// Overlap-add sums and squared-window sums; index 0 is padded sample `base`.
-#[derive(Default)]
-struct Overlap {
-    positions: usize,
-    sum: Vec<f32>,
-    envelope: Vec<f32>,
-    base: usize,
-}
-
-struct FftScratch {
-    input: Vec<Complex<f32>>,
-    scratch: Vec<Complex<f32>>,
-    output: Vec<f32>,
+    n_fft: usize,
+    overlap: OverlapAdd,
 }
 
 impl VocoderState {
-    pub fn new(threads: usize) -> Self {
-        let fft = RealFftPlanner::<f32>::new().plan_fft_inverse(N_FFT);
-        let scratch_len = fft.get_scratch_len();
-        let fft_scratch = PerThread::new(threads, || FftScratch {
-            input: vec![Complex::default(); BINS],
-            scratch: vec![Complex::default(); scratch_len],
-            output: vec![0.0; N_FFT],
-        });
+    pub(crate) fn new(vocoder: &Vocoder, threads: usize) -> Self {
+        let istft = &vocoder.istft;
         Self {
             cache: KvCache::new(QWEN2_SHAPE, RING),
             buffers: Buffers::new(QWEN2_SHAPE, UPSAMPLE, threads),
-            spectrum: SharedBuf::new(UPSAMPLE * 2 * BINS),
-            frames: SharedBuf::new(UPSAMPLE * N_FFT),
-            fft,
-            fft_scratch,
+            spectrum: SharedBuf::new(UPSAMPLE * 2 * istft.bins()),
+            frames: SharedBuf::new(UPSAMPLE * istft.n_fft()),
+            fft_scratch: PerThread::new(threads, || istft.scratch()),
             quant: PerThread::new(threads, Default::default),
             previous: None,
-            overlap: Overlap::default(),
+            n_fft: istft.n_fft(),
+            overlap: OverlapAdd::new(istft.n_fft(), HOP),
         }
     }
 
     /// Forgets the utterance (the KV ring needs no clearing: positions restart at 0 and every
     /// slot is written before it is read).
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.previous = None;
-        self.overlap = Overlap::default();
+        self.overlap = OverlapAdd::new(self.n_fft, HOP);
     }
 }
 
 impl Vocoder {
     /// Adds one latent frame; appends the samples that became final to `out`.
-    pub fn push(&self, team: &Team, state: &mut VocoderState, latent: &[f32], out: &mut Vec<f32>) {
-        let mut h = vec![0.0; HIDDEN];
-        self.fc1
-            .apply(latent, 1, &mut QuantizedRows::default(), &mut h);
+    pub(crate) fn push(
+        &self,
+        team: &Team,
+        state: &mut VocoderState,
+        latent: &[f32],
+        out: &mut Vec<f32>,
+    ) {
+        let mut current = vec![0.0; HIDDEN];
+        let mut quant = QuantizedRows::default();
+        self.fc1.apply(latent, 1, &mut quant, &mut current);
         // The first frame clamps h_{−1} to h_0 and has no earlier positions to complete.
         let (previous, weights) = match state.previous.take() {
-            None => (h.clone(), &EARLY[..]),
+            None => (current.clone(), &EARLY[..]),
             Some(previous) => (previous, &LATE_THEN_EARLY[..]),
         };
-        self.decode(
-            team,
-            state,
-            |r, c| weights[r].0 * previous[c] + weights[r].1 * h[c],
-            weights.len(),
-        );
-        state.previous = Some(h);
-        let limit = state.overlap.positions * HOP;
-        state.overlap.emit(limit, out);
+        let position = |row: usize, col: usize| {
+            let (previous_weight, current_weight) = weights[row];
+            previous_weight * previous[col] + current_weight * current[col]
+        };
+        self.decode(team, state, position, weights.len());
+        state.previous = Some(current);
+        state.overlap.emit_ready(out);
     }
 
     /// Flushes the last frame's two positions (h_T clamped to h_{T−1}) and the tail.
-    pub fn finish(&self, team: &Team, state: &mut VocoderState, out: &mut Vec<f32>) {
+    pub(crate) fn finish(&self, team: &Team, state: &mut VocoderState, out: &mut Vec<f32>) {
         let Some(last) = state.previous.take() else {
             return;
         };
-        self.decode(team, state, |_, c| last[c], LATE.len());
-        let limit = (state.overlap.positions - 1) * HOP + N_FFT - PAD;
-        state.overlap.emit(limit, out);
+        self.decode(team, state, |_, col| last[col], LATE.len());
+        state.overlap.finish(out);
     }
 
-    /// Runs `rows` upsampled positions (`row(r, c)` gives their values) through the backbone,
-    /// the head and the iFFT, then overlap-adds them.
+    /// Runs `rows` upsampled positions (`position(row, col)` gives their values) through the
+    /// backbone, the head and the inverse STFT, then overlap-adds them.
     fn decode(
         &self,
         team: &Team,
         state: &mut VocoderState,
-        row: impl Fn(usize, usize) -> f32,
+        position: impl Fn(usize, usize) -> f32,
         rows: usize,
     ) {
-        for (i, v) in state.buffers.hidden.get_mut()[..rows * HIDDEN]
-            .iter_mut()
-            .enumerate()
-        {
-            *v = row(i / HIDDEN, i % HIDDEN);
+        let hidden = state.buffers.hidden.get_mut();
+        for (index, value) in hidden[..rows * HIDDEN].iter_mut().enumerate() {
+            *value = position(index / HIDDEN, index % HIDDEN);
         }
         let span = Span {
             rows,
-            first: state.overlap.positions,
+            first: state.overlap.frames(),
             mask: Mask::Window(WINDOW),
         };
-        let state_ref = &*state;
+        let shared = &*state;
         team.run(|ctx| {
-            self.body
-                .forward(ctx, &state_ref.cache, &state_ref.buffers, span);
-            let (normed, quant) = state_ref.quant.get(ctx);
-            normed.resize(rows * HIDDEN, 0.0);
-            for r in 0..rows {
-                self.body.final_norm(
-                    &state_ref.buffers,
-                    r,
-                    &mut normed[r * HIDDEN..(r + 1) * HIDDEN],
-                );
-            }
-            let w = self.head.matrix();
-            let input = quant.input(&w, normed, rows);
-            let bias = self.head.bias().expect("head.out has a bias");
-            matmul(&w, &input, rows, ctx.split(2 * BINS, 2), |m, c, v| {
-                state_ref.spectrum.set(m * 2 * BINS + c, v + bias[c])
-            });
+            self.body.forward(ctx, &shared.cache, &shared.buffers, span);
+            self.spectrum(ctx, shared, rows);
             ctx.barrier();
-            for r in ctx.split(rows, 1) {
-                self.inverse_fft(state_ref, state_ref.fft_scratch.get(ctx), r);
-            }
+            self.frames(ctx, shared, rows);
         });
-        let window = self.window.values().expect("window is f32");
-        for frame in state.frames.read()[..rows * N_FFT].as_chunks::<N_FFT>().0 {
-            state.overlap.add(frame, window);
+        let n_fft = self.istft.n_fft();
+        for frame in state.frames.read()[..rows * n_fft].chunks_exact(n_fft) {
+            state.overlap.add(frame, self.istft.window());
         }
     }
 
-    fn inverse_fft(&self, state: &VocoderState, scratch: &mut FftScratch, row: usize) {
-        let spectrum = &state.spectrum.read()[row * 2 * BINS..(row + 1) * 2 * BINS];
-        let (log_magnitude, phase) = spectrum.split_at(BINS);
-        for ((c, &m), &p) in scratch.input.iter_mut().zip(log_magnitude).zip(phase) {
-            let magnitude = m.exp().min(MAX_MAGNITUDE);
-            *c = Complex::new(magnitude * p.cos(), magnitude * p.sin());
+    /// `spectrum[row, cols] = head(norm(hidden[row]))` for this thread's columns.
+    fn spectrum(&self, ctx: &Ctx, state: &VocoderState, rows: usize) {
+        let width = 2 * self.istft.bins();
+        let (normed, quant) = state.quant.get(ctx);
+        normed.resize(rows * HIDDEN, 0.0);
+        for (row, out) in normed.as_chunks_mut::<HIDDEN>().0.iter_mut().enumerate() {
+            self.body.final_norm(&state.buffers, row, out);
         }
-        // The inverse real FFT ignores the imaginary parts of the DC and Nyquist bins, like
-        // torch's irfft.
-        scratch.input[0].im = 0.0;
-        scratch.input[BINS - 1].im = 0.0;
-        state
-            .fft
-            .process_with_scratch(
-                &mut scratch.input,
-                &mut scratch.output,
-                &mut scratch.scratch,
-            )
-            .expect("buffer sizes come from the plan");
-        let window = self.window.values().expect("window is f32");
-        let out = state.frames.part(row * N_FFT..(row + 1) * N_FFT);
-        let scale = 1.0 / N_FFT as f32;
-        for ((o, &x), &w) in out.iter_mut().zip(&scratch.output).zip(window) {
-            *o = x * scale * w;
+        let matrix = self.head.matrix();
+        let input = quant.input(&matrix, normed, rows);
+        let bias = self.head.bias().expect("head.out has a bias");
+        matmul(
+            &matrix,
+            &input,
+            rows,
+            ctx.split(width, 2),
+            |row, col, value| {
+                state.spectrum.set(row * width + col, value + bias[col]);
+            },
+        );
+    }
+
+    /// The time frames of this thread's rows of `spectrum`.
+    fn frames(&self, ctx: &Ctx, state: &VocoderState, rows: usize) {
+        let (bins, n_fft) = (self.istft.bins(), self.istft.n_fft());
+        let spectrum = state.spectrum.read();
+        for row in ctx.split(rows, 1) {
+            let polar = spectrum[row * 2 * bins..(row + 1) * 2 * bins].split_at(bins);
+            let frame = state.frames.part(row * n_fft..(row + 1) * n_fft);
+            let scratch = state.fft_scratch.get(ctx);
+            self.istft.frame(polar, MAX_MAGNITUDE, scratch, frame);
         }
     }
 }
 
-impl Overlap {
-    /// Adds one windowed frame at the next position's padded offset.
-    fn add(&mut self, frame: &[f32], window: &[f32]) {
-        let start = self.positions * HOP - self.base;
-        let end = start + N_FFT;
-        if self.sum.len() < end {
-            self.sum.resize(end, 0.0);
-            self.envelope.resize(end, 0.0);
-        }
-        for ((t, &x), &w) in frame.iter().enumerate().zip(window) {
-            self.sum[start + t] += x;
-            self.envelope[start + t] += w * w;
-        }
-        self.positions += 1;
-    }
+/// `p.fc1`, the Qwen2 backbone under `p`, `p.head` and the iSTFT window `p.window`.
+impl Load for Vocoder {
+    type Shape = ();
 
-    /// Appends padded samples `[base, limit)` that lie past the leading padding, normalized by
-    /// the envelope, and drops them from the buffers.
-    fn emit(&mut self, limit: usize, out: &mut Vec<f32>) {
-        let take = limit - self.base;
-        let skip = PAD.saturating_sub(self.base).min(take);
-        out.extend((skip..take).map(|i| self.sum[i] / self.envelope[i]));
-        self.sum.drain(..take);
-        self.envelope.drain(..take);
-        self.base = limit;
+    fn load(store: &mut Store, prefix: &str, (): ()) -> Result<Self, bundle::Error> {
+        let window = Tensor::load(store, &format!("{prefix}.window"), ())?;
+        let istft = Istft::new(window.values()?.to_vec());
+        if istft.n_fft() != UPSAMPLE * HOP {
+            return Err(bundle::Error::Format(format!(
+                "an iSTFT window of {}",
+                istft.n_fft()
+            )));
+        }
+        Ok(Self {
+            fc1: Linear::load(store, &format!("{prefix}.fc1"), ())?,
+            body: Qwen2::load(store, prefix, QWEN2_SHAPE)?,
+            head: Linear::load(store, &format!("{prefix}.head"), ())?,
+            istft,
+        })
     }
 }

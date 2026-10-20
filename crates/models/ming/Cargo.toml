@@ -10,7 +10,7 @@ repository.workspace = true
 [dependencies]
 team.workspace = true
 kernels.workspace = true
-nn.workspace = true
+blocks.workspace = true
 bundle.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -22,3 +22,6 @@ regex.workspace = true
 [features]
 # Run the thread team on Rayon's pool (native, and the threaded browser runtimes).
 threads = ["team/threads"]
+
+[lints]
+workspace = true

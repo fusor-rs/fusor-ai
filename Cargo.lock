@@ -128,6 +128,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "blocks"
+version = "0.1.0"
+dependencies = [
+ "bundle",
+ "kernels",
+ "realfft",
+ "team",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -530,9 +540,9 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 name = "ming"
 version = "0.1.0"
 dependencies = [
+ "blocks",
  "bundle",
  "kernels",
- "nn",
  "realfft",
  "regex",
  "serde",
@@ -559,9 +569,7 @@ dependencies = [
 name = "ming-compile"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "bundle",
- "clap",
  "compile",
  "kernels",
  "ming",
@@ -607,14 +615,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "nn"
-version = "0.1.0"
-dependencies = [
- "kernels",
- "team",
 ]
 
 [[package]]

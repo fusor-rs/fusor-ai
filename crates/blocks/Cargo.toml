@@ -1,0 +1,17 @@
+[package]
+name = "blocks"
+description = "Architecture blocks built on fusor-ai's kernels and thread team: the Qwen2 decoder stack, DiT blocks, flow-matching integration and a streaming inverse STFT."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kernels.workspace = true
+team.workspace = true
+bundle.workspace = true
+realfft.workspace = true
+
+[lints]
+workspace = true

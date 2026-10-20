@@ -69,8 +69,8 @@ pub fn fragments(text: &str, segmentation: Segmentation) -> Vec<String> {
         .collect()
 }
 
-fn is_cjk(c: char) -> bool {
-    ('\u{4e00}'..='\u{9fa5}').contains(&c)
+fn is_cjk(ch: char) -> bool {
+    ('\u{4e00}'..='\u{9fa5}').contains(&ch)
 }
 
 fn has_cjk(text: &str) -> bool {
@@ -79,7 +79,8 @@ fn has_cjk(text: &str) -> bool {
 
 /// `text_segment_cut.is_chinese` (a wider range than `is_cjk`, as in the reference).
 fn is_chinese(text: &str) -> bool {
-    text.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+    text.chars()
+        .any(|ch| ('\u{4e00}'..='\u{9fff}').contains(&ch))
 }
 
 /// `toolkit.strip_markdown_code`: inline code marks removed.
@@ -111,13 +112,13 @@ fn add_period(text: &str) -> String {
 /// One CJK character or one run of Latin letters counts 1.
 fn semantic_length(text: &str) -> usize {
     static WORD: LazyLock<Regex> = LazyLock::new(|| regex(r"[a-zA-Z]+"));
-    text.chars().filter(|&c| is_cjk(c)).count() + WORD.find_iter(text).count()
+    text.chars().filter(|&ch| is_cjk(ch)).count() + WORD.find_iter(text).count()
 }
 
 /// Anything but ASCII punctuation and whitespace (Python's `string.punctuation + whitespace`).
 fn has_valid_content(text: &str) -> bool {
     text.chars()
-        .any(|c| !(c.is_ascii_punctuation() || " \t\n\r\x0b\x0c".contains(c)))
+        .any(|ch| !(ch.is_ascii_punctuation() || " \t\n\r\x0b\x0c".contains(ch)))
 }
 
 const DOT: &str = "##DOT##";
@@ -171,16 +172,19 @@ fn cut_by_semantic_length(text: &str) -> Vec<String> {
             i += 1;
         }
     }
-    fragments.into_iter().map(|f| f.replace(DOT, ".")).collect()
+    fragments
+        .into_iter()
+        .map(|fragment| fragment.replace(DOT, "."))
+        .collect()
 }
 
 /// Sentences ending in `。！？` (kept); the last one gets a `。` if it lacks an end mark.
 fn sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut current = String::new();
-    for c in text.chars() {
-        current.push(c);
-        if "。！？".contains(c) {
+    for ch in text.chars() {
+        current.push(ch);
+        if "。！？".contains(ch) {
             let sentence = current.trim();
             if !sentence.is_empty() {
                 sentences.push(sentence.to_string());
@@ -206,15 +210,15 @@ fn clauses(sentence: &str) -> Vec<String> {
         let clause = current.trim();
         if !clause.is_empty() && has_valid_content(clause) {
             clauses.push(clause.to_string());
-        } else if !clause.is_empty() {
-            if let Some(last) = clauses.last_mut() {
-                last.push_str(clause);
-            }
+        } else if !clause.is_empty()
+            && let Some(last) = clauses.last_mut()
+        {
+            last.push_str(clause);
         }
     };
-    for c in sentence.chars() {
-        current.push(c);
-        if "，;；".contains(c) {
+    for ch in sentence.chars() {
+        current.push(ch);
+        if "，;；".contains(ch) {
             push(&current, &mut clauses);
             current.clear();
         }
@@ -227,7 +231,7 @@ fn clauses(sentence: &str) -> Vec<String> {
 
 /// `append_text_fragment`: joins `text` to the last fragment while it fits.
 fn append_fragment(fragments: &mut Vec<String>, text: &str) {
-    let text = text.trim_start_matches(|c: char| "，,:;".contains(c) || c.is_whitespace());
+    let text = text.trim_start_matches(|ch: char| "，,:;".contains(ch) || ch.is_whitespace());
     if !has_valid_content(text) {
         return;
     }
@@ -245,7 +249,7 @@ fn append_fragment(fragments: &mut Vec<String>, text: &str) {
     let starts_alphanumeric = text
         .chars()
         .next()
-        .is_some_and(|c| c.is_ascii_alphanumeric());
+        .is_some_and(|ch| ch.is_ascii_alphanumeric());
     if !last.ends_with(' ') && starts_alphanumeric {
         last.push(' ');
     }
@@ -257,15 +261,15 @@ fn split_long_fragment(text: &str) -> Vec<String> {
     static BOUNDARY: LazyLock<Regex> = LazyLock::new(|| regex(r"[，、；。！？,;!?]|\s+[-•·]"));
     let mut pieces: Vec<String> = Vec::new();
     let mut start = 0;
-    for m in BOUNDARY.find_iter(text) {
-        if m.start() > start {
-            pieces.push(text[start..m.start()].to_string());
+    for boundary in BOUNDARY.find_iter(text) {
+        if boundary.start() > start {
+            pieces.push(text[start..boundary.start()].to_string());
         }
         match pieces.last_mut() {
-            Some(last) => last.push_str(m.as_str()),
-            None => pieces.push(m.as_str().to_string()),
+            Some(last) => last.push_str(boundary.as_str()),
+            None => pieces.push(boundary.as_str().to_string()),
         }
-        start = m.end();
+        start = boundary.end();
     }
     if start < text.len() {
         pieces.push(text[start..].to_string());
@@ -299,7 +303,7 @@ fn split_by_word(text: &str) -> Vec<String> {
     });
     let mut fragments = Vec::new();
     let mut current = String::new();
-    for token in TOKEN.find_iter(text).map(|m| m.as_str()) {
+    for token in TOKEN.find_iter(text).map(|token| token.as_str()) {
         let length = semantic_length(token);
         if semantic_length(&current) + length <= MAX_SEMANTIC_LENGTH {
             current.push_str(token);
@@ -386,16 +390,16 @@ fn normalize_text_kit(text: &str) -> String {
 
 /// `fallback_replace_non_alnum`: characters outside the TTS whitelist become one `，`.
 fn replace_outside_whitelist(text: &str) -> String {
-    let allowed = |c: char| {
-        ('\u{4e00}'..='\u{9fff}').contains(&c)
-            || c.is_ascii_alphanumeric()
-            || "，。！？；：、,.!?;: \u{2019}\u{2018}'\"()（）\u{201c}\u{201d}".contains(c)
+    let allowed = |ch: char| {
+        ('\u{4e00}'..='\u{9fff}').contains(&ch)
+            || ch.is_ascii_alphanumeric()
+            || "，。！？；：、,.!?;: \u{2019}\u{2018}'\"()（）\u{201c}\u{201d}".contains(ch)
     };
     let mut out = String::new();
-    for c in text.chars() {
-        let c = if allowed(c) { c } else { '，' };
-        if !(c == '，' && out.ends_with('，')) {
-            out.push(c);
+    for ch in text.chars() {
+        let kept = if allowed(ch) { ch } else { '，' };
+        if !(kept == '，' && out.ends_with('，')) {
+            out.push(kept);
         }
     }
     out.trim().to_string()
@@ -403,7 +407,7 @@ fn replace_outside_whitelist(text: &str) -> String {
 
 /// `clean_text_formatting`: leading punctuation dropped.
 fn clean_text_formatting(text: &str) -> String {
-    text.trim_start_matches(|c: char| "，。！？；：、…….!?-—".contains(c))
+    text.trim_start_matches(|ch: char| "，。！？；：、…….!?-—".contains(ch))
         .trim()
         .to_string()
 }
@@ -418,21 +422,40 @@ fn cjk_punctuation(text: &str) -> String {
     static SPACES: LazyLock<Regex> = LazyLock::new(|| regex(r"[ \t\x{a0}\x{3000}]+"));
     let urls: Vec<String> = URL
         .find_iter(text)
-        .map(|m| m.as_str().to_string())
+        .map(|url| url.as_str().to_string())
         .collect();
     let mut text = text.to_string();
     for (i, url) in urls.iter().enumerate() {
         text = text.replace(url, &format!("URLHOLDER{i}"));
     }
-    let chars: Vec<char> = text.replace("...", "……").chars().collect();
+    let out = ascii_to_cjk_punctuation(&text.replace("...", "……"));
+    let mut text = AROUND.replace_all(&out, "$1").into_owned();
+    loop {
+        let before = text.clone();
+        text = dedupe_punctuation(&text);
+        if text == before {
+            break;
+        }
+    }
+    let mut text = SPACES.replace_all(&text, " ").into_owned();
+    for (i, url) in urls.iter().enumerate() {
+        text = text.replace(&format!("URLHOLDER{i}"), url);
+    }
+    text
+}
+
+/// ASCII punctuation to its CJK form, alternating opening and closing quotes; a period between
+/// digits stays.
+fn ascii_to_cjk_punctuation(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
     let (mut double, mut single) = (0, 0);
     let mut out = String::new();
-    for (i, &c) in chars.iter().enumerate() {
-        let decimal = c == '.'
+    for (i, &ch) in chars.iter().enumerate() {
+        let decimal = ch == '.'
             && i > 0
             && chars[i - 1].is_ascii_digit()
             && chars.get(i + 1).is_some_and(char::is_ascii_digit);
-        let mapped = match c {
+        let mapped = match ch {
             '.' if decimal => ".",
             ',' => "，",
             '.' => "。",
@@ -456,25 +479,13 @@ fn cjk_punctuation(text: &str) -> String {
                 if single % 2 == 1 { "‘" } else { "’" }
             }
             _ => {
-                out.push(c);
+                out.push(ch);
                 continue;
             }
         };
         out.push_str(mapped);
     }
-    let mut text = AROUND.replace_all(&out, "$1").into_owned();
-    loop {
-        let before = text.clone();
-        text = dedupe_punctuation(&text);
-        if text == before {
-            break;
-        }
-    }
-    let mut text = SPACES.replace_all(&text, " ").into_owned();
-    for (i, url) in urls.iter().enumerate() {
-        text = text.replace(&format!("URLHOLDER{i}"), url);
-    }
-    text
+    out
 }
 
 /// One pass of `chinese_punc_en2cn`'s stacked-punctuation rules.
@@ -483,29 +494,29 @@ fn dedupe_punctuation(text: &str) -> String {
     const STRONG: &str = "。！？";
     const WEAK: &str = "，；、";
     let mut out: Vec<char> = Vec::new();
-    for c in text.chars() {
+    for ch in text.chars() {
         let Some(&previous) = out.last() else {
-            out.push(c);
+            out.push(ch);
             continue;
         };
-        let replaced = if c == previous && PUNCTUATION.contains(c) {
+        let replaced = if ch == previous && PUNCTUATION.contains(ch) {
             Some(previous)
-        } else if WEAK.contains(previous) && STRONG.contains(c) {
-            Some(c)
-        } else if STRONG.contains(previous) && (WEAK.contains(c) || STRONG.contains(c)) {
+        } else if WEAK.contains(previous) && STRONG.contains(ch) {
+            Some(ch)
+        } else if STRONG.contains(previous) && (WEAK.contains(ch) || STRONG.contains(ch)) {
             Some(previous)
-        } else if (previous == '、' && "，；".contains(c))
-            || ("，；".contains(previous) && c == '、')
+        } else if (previous == '、' && "，；".contains(ch))
+            || ("，；".contains(previous) && ch == '、')
         {
             Some('、')
-        } else if WEAK.contains(previous) && WEAK.contains(c) {
+        } else if WEAK.contains(previous) && WEAK.contains(ch) {
             Some(previous)
         } else {
             None
         };
         match replaced {
             Some(kept) => *out.last_mut().expect("checked above") = kept,
-            None => out.push(c),
+            None => out.push(ch),
         }
     }
     out.into_iter().collect()
@@ -528,34 +539,40 @@ fn normalize_numbers(text: &str) -> String {
         LazyLock::new(|| regex(r"\b([a-zA-Z]+)(-?)([0-9]+(?:\.[0-9]+)?)\b"));
     static NUMBER: LazyLock<Regex> = LazyLock::new(|| regex(r"\b-?[0-9]+(?:\.[0-9]+)?\b"));
 
-    let text = COMMA_NUMBER.replace_all(text, |c: &Captures| c[1].replace(',', ""));
-    let text = UNIT.replace_all(&text, |c: &Captures| {
-        let unit = unit_word(&c[2]);
-        quantity(&c[1]).map_or_else(
-            || format!(" {} {} ", &c[1], &c[2]),
-            |n| format!(" {n} {unit} "),
+    let text = COMMA_NUMBER.replace_all(text, |caps: &Captures| caps[1].replace(',', ""));
+    let text = UNIT.replace_all(&text, |caps: &Captures| {
+        let unit = unit_word(&caps[2]);
+        quantity(&caps[1]).map_or_else(
+            || format!(" {} {} ", &caps[1], &caps[2]),
+            |words| format!(" {words} {unit} "),
         )
     });
-    let text = POUNDS.replace_all(&text, |c: &Captures| currency(&c[1], "pound"));
-    let text = DOLLARS.replace_all(&text, |c: &Captures| currency(&c[1], "dollar"));
-    let text = FRACTION.replace_all(&text, |c: &Captures| {
-        fraction(&c[1], &c[2]).unwrap_or_else(|| c[0].to_string())
+    let text = POUNDS.replace_all(&text, |caps: &Captures| currency(&caps[1], "pound"));
+    let text = DOLLARS.replace_all(&text, |caps: &Captures| currency(&caps[1], "dollar"));
+    let text = FRACTION.replace_all(&text, |caps: &Captures| {
+        fraction(&caps[1], &caps[2]).unwrap_or_else(|| caps[0].to_string())
     });
-    let text = PERCENT.replace_all(&text, |c: &Captures| {
+    let text = PERCENT.replace_all(&text, |caps: &Captures| {
         format!(
             " {} percent ",
-            quantity(&c[1]).unwrap_or_else(|| c[1].to_string())
+            quantity(&caps[1]).unwrap_or_else(|| caps[1].to_string())
         )
     });
-    let text = ORDINAL.replace_all(&text, |c: &Captures| {
-        number_words(&c[1], AND).map_or_else(|| c[0].to_string(), |w| format!(" {w} "))
+    let text = ORDINAL.replace_all(&text, |caps: &Captures| {
+        number_words(&caps[1], AND)
+            .map_or_else(|| caps[0].to_string(), |words| format!(" {words} "))
     });
-    let text = VERSION.replace_all(&text, |c: &Captures| match decimal_words(&c[3], AND) {
-        Some(words) => format!("{} {words}", &c[1]),
-        None => c[0].to_string(),
+    let text = VERSION.replace_all(&text, |caps: &Captures| {
+        match decimal_words(&caps[3], AND) {
+            Some(words) => format!("{} {words}", &caps[1]),
+            None => caps[0].to_string(),
+        }
     });
-    let text = NUMBER.replace_all(&text, |c: &Captures| {
-        format!(" {} ", quantity(&c[0]).unwrap_or_else(|| c[0].to_string()))
+    let text = NUMBER.replace_all(&text, |caps: &Captures| {
+        format!(
+            " {} ",
+            quantity(&caps[0]).unwrap_or_else(|| caps[0].to_string())
+        )
     });
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -617,12 +634,12 @@ fn decimal_words(text: &str, andword: &str) -> Option<String> {
     } else {
         number_words(integer, andword)?
     };
-    if decimals.is_empty() || !decimals.bytes().all(|b| b.is_ascii_digit()) {
+    if decimals.is_empty() || !decimals.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
     let digits: Vec<&str> = decimals
         .bytes()
-        .map(|d| UNITS[usize::from(d - b'0')])
+        .map(|digit| UNITS[usize::from(digit - b'0')])
         .collect();
     Some(format!("{integer} point {}", digits.join(" ")))
 }
@@ -633,18 +650,21 @@ fn currency(text: &str, unit: &str) -> String {
     let Some(words) = quantity(text) else {
         return format!(" {clean} {unit}s ");
     };
-    let one = clean.parse::<f64>().is_ok_and(|v| v.abs() == 1.0);
+    let one = clean.parse::<f64>().is_ok_and(|value| value.abs() == 1.0);
     format!(" {words} {unit}{} ", if one { "" } else { "s" })
 }
 
 fn fraction(numerator: &str, denominator: &str) -> Option<String> {
-    let (n, d): (u64, u64) = (numerator.parse().ok()?, denominator.parse().ok()?);
+    let (count, parts): (u64, u64) = (numerator.parse().ok()?, denominator.parse().ok()?);
     let top = number_words(numerator, AND)?;
-    Some(match (n, d) {
+    Some(match (count, parts) {
         (1, 2) => " one half ".into(),
         (1, 4) => " one quarter ".into(),
-        (_, 2) => format!(" {top} {} ", if n == 1 { "half" } else { "halves" }),
-        (_, 4) => format!(" {top} {} ", if n == 1 { "quarter" } else { "quarters" }),
+        (_, 2) => format!(" {top} {} ", if count == 1 { "half" } else { "halves" }),
+        (_, 4) => format!(
+            " {top} {} ",
+            if count == 1 { "quarter" } else { "quarters" }
+        ),
         _ => format!(" {top} {} ", ordinal(&number_words(denominator, AND)?)),
     })
 }
@@ -680,7 +700,7 @@ const MILLS: [&str; 7] = [
 /// inflect's `number_to_words(n, andword=…)` for a string of digits: three-digit groups
 /// joined by ", ", and the final ", word" read as " and word" when it is a single word.
 fn number_words(digits: &str, andword: &str) -> Option<String> {
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
     let digits = digits.trim_start_matches('0');
@@ -696,7 +716,7 @@ fn number_words(digits: &str, andword: &str) -> Option<String> {
         groups.extend(
             digits.as_bytes()[head..]
                 .chunks(3)
-                .map(|c| std::str::from_utf8(c).expect("ASCII digits")),
+                .map(|chunk| std::str::from_utf8(chunk).expect("ASCII digits")),
         );
         groups
     };
@@ -706,34 +726,34 @@ fn number_words(digits: &str, andword: &str) -> Option<String> {
     let mut parts = Vec::new();
     for (i, group) in groups.iter().enumerate() {
         let value: usize = group.parse().expect("ASCII digits");
-        let (h, t, u) = (value / 100, value / 10 % 10, value % 10);
+        let (hundreds, tens, units) = (value / 100, value / 10 % 10, value % 10);
         let mill = MILLS[groups.len() - 1 - i];
-        let tens = if t == 1 {
-            TEENS[u].to_string()
+        let below_hundred = if tens == 1 {
+            TEENS[units].to_string()
         } else {
             format!(
                 "{}{}{}",
-                TENS[t],
-                if t > 0 && u > 0 { "-" } else { "" },
-                if u > 0 { UNITS[u] } else { "" }
+                TENS[tens],
+                if tens > 0 && units > 0 { "-" } else { "" },
+                if units > 0 { UNITS[units] } else { "" }
             )
         };
-        if h > 0 {
-            let rest = if t > 0 || u > 0 {
-                format!(" {andword} {tens}")
+        if hundreds > 0 {
+            let rest = if tens > 0 || units > 0 {
+                format!(" {andword} {below_hundred}")
             } else {
                 String::new()
             };
-            parts.push(format!("{} hundred{rest}{mill}", UNITS[h]));
+            parts.push(format!("{} hundred{rest}{mill}", UNITS[hundreds]));
         } else if value > 0 {
-            parts.push(format!("{tens}{mill}"));
+            parts.push(format!("{below_hundred}{mill}"));
         }
     }
     let mut words = parts.join(", ");
-    if let Some((head, last)) = words.rsplit_once(", ") {
-        if !last.contains(' ') {
-            words = format!("{head} {andword} {last}");
-        }
+    if let Some((head, last)) = words.rsplit_once(", ")
+        && !last.contains(' ')
+    {
+        words = format!("{head} {andword} {last}");
     }
     Some(words.split_whitespace().collect::<Vec<_>>().join(" "))
 }
@@ -750,8 +770,8 @@ fn ordinal(words: &str) -> String {
         "eight" => "eighth".to_string(),
         "nine" => "ninth".to_string(),
         "twelve" => "twelfth".to_string(),
-        w if w.ends_with('y') => format!("{}ieth", &w[..w.len() - 1]),
-        w => format!("{w}th"),
+        word if word.ends_with('y') => format!("{}ieth", &word[..word.len() - 1]),
+        word => format!("{word}th"),
     };
     format!("{head}{last}")
 }

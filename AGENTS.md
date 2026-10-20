@@ -11,21 +11,34 @@ tensor framework: no graph IR, no dynamic shapes, no operator registry.
 
 ## Repository
 
-- `crates/team`: the SPMD thread team (`Team`, `Ctx`, `SharedBuf`,
-  `PerThread`).
-- `crates/kernels`: tensors and their block-quantized formats, the int8
-  matmul with its per-target `arch` backends, f32 operations, `Linear`.
-- `crates/nn`: transformer stacks shared by models (Qwen2).
-- `crates/bundle`: the bundle manifest and the streaming `Store`.
-- `crates/compile`: native compilation (safetensors reader,
-  `BundleWriter`).
-- `packages/host`: the browser side (`loader.js`, `compute.js`,
-  `thread-host.js`).
-- `scripts/`: `build-runtime.sh` (the four runtime variants), the sealed-runtime
-  import check, the dev server and the pinned tool installer.
+The crates are layers. A crate depends only on its own layer or the ones below it, and
+`scripts/check-layers.mjs` (`just layers`) enforces it.
 
-Models live in their own repositories and consume these crates and files
-(`ming-wasm` is the reference consumer).
+| Layer | Path | Holds |
+| --- | --- | --- |
+| Primitives | `crates/team`, `crates/kernels`, `crates/bundle`, `crates/compile` | the SPMD thread team; tensors and their block-quantized formats, the int8 matmul over per-target `arch` backends, f32 operations, `Linear`, `rng`; the bundle manifest, the streaming `Store` and the `Load` trait; the safetensors reader and `BundleWriter` |
+| Blocks | `crates/blocks` | architecture pieces parameterized by a shape: `qwen2`, `dit`, `flow` (flow-matching integration), `istft` |
+| Models | `crates/models/<model>`, `crates/models/<model>-compile` | one model: its dimensions, tensor names, wiring, sampler settings, prompts and text frontend; its compiler |
+| Hosts | `crates/hosts/<model>-runtime`, `crates/hosts/<model>-cli` | a model's wasm-bindgen surface and its native CLI |
+
+Beside the crates: `packages/host` (the browser side every model shares: `loader.js`,
+`compute.js`, `thread-host.js`) and `packages/<model>-web` (a model's page); `scripts/` (the
+runtime build, the import and layer checks, the dev server, the pinned tool installer) and
+`scripts/<model>/`; `docs/<model>/`, `fixtures/goldens/<model>/` and `e2e/<model>.mjs`.
+
+Where code goes, asked in order:
+
+1. Does it know a tensor name, a checkpoint, a voice, a preset, a sample rate or a language?
+   It belongs to the model.
+2. Is it parameterized by a shape, and can you name a second model that would use it
+   unchanged? It is a block. If you cannot name that model, it stays in the model until one
+   arrives.
+3. Is it math or plumbing with no architecture in it? It is a primitive.
+
+Dependencies point down: hosts → models → blocks → primitives. A model never depends on another
+model (only its own compiler depends on it), and a host never on another host. Blocks may
+depend on `bundle` so that each block loads itself (`impl Load`), but never name a tensor or
+hard-code a dimension: names arrive as a prefix, dimensions as a `Shape`.
 
 Constraints that hold everywhere:
 
@@ -40,7 +53,8 @@ Constraints that hold everywhere:
   `#![expect(unsafe_code, reason = "…")]`: in `kernels`, the `arch` backends
   and `matmul` (SIMD and unchecked block loads after one bounds assertion per
   call) and `blob` (aligned byte and f32 views); in `team`, `shared` (interior
-  mutability under the barrier discipline). Every unsafe block carries a
+  mutability under the barrier discipline); in `ming-runtime`, `entropy`
+  (getrandom's custom backend, an unmangled extern function). Every unsafe block carries a
   `// SAFETY:` comment stating the invariant it relies on. Adding a module to
   that list is a design change; say so.
 - Shared buffers follow one discipline: between two barriers, each element is
@@ -50,8 +64,9 @@ Constraints that hold everywhere:
   storage, a clock or entropy. `scripts/check-wasm-imports.mjs` is the check;
   never widen its allowlists to make a build pass.
 - Kernels must agree across targets: a change to an `arch` backend is not done
-  until the f64 reference test passes natively and a consumer's wasm build
-  (both SIMD128 and relaxed SIMD) produces the same result it did before.
+  until the f64 reference test passes for every backend natively and the Ming
+  runtimes (both SIMD128 and relaxed SIMD) produce the same result they did
+  before (`just ming-smoke`, `just ming-e2e`).
 - Every crate shares the version in `[workspace.package]`.
 
 ## The standard
@@ -245,7 +260,7 @@ each function or for each branch are noise that hides the ones that matter.
   fix gets exactly one test that reproduces the bug.
 - Extend an existing test before adding a new one, and delete tests your change
   makes redundant. Kernels are tested against an f64 reference
-  (`matmul_matches_dequantized_product` and its neighbours); extend those rather
+  (`every_backend_matches_the_dequantized_product` and its neighbours); extend those rather
   than adding a parallel harness.
 - Test observable behavior through the public interface. Never test private
   helpers, internal state or the order of internal calls.
@@ -290,10 +305,11 @@ just check
 ```
 
 It runs formatting, the workspace tests, Clippy natively and for
-`wasm32-unknown-unknown` (SIMD128 and relaxed SIMD), docs, and the host package
-and import-check self-test. Kernel, team or bundle changes also need a
-consumer's runtime build and browser check (in `ming-wasm`: `make wasm`,
-`make smoke`, `make parity`, `make e2e`).
+`wasm32-unknown-unknown` (SIMD128 and relaxed SIMD), docs, the host package and
+import-check self-test, and the layer check. A change to a primitive, a block or
+a model also needs that model's runtime build and checks; for Ming:
+`just ming-runtimes`, `just ming-smoke`, `just ming-parity` (the same numbers as
+before unless the change is meant to move them) and `just ming-e2e`.
 
 ## Final review
 

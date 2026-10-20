@@ -27,3 +27,6 @@ getrandom.workspace = true
 wasm-bindgen-rayon = { workspace = true, optional = true }
 # Not called here: SIMD for the BLAKE3 that checks every part.
 blake3 = { workspace = true, features = ["wasm32_simd"] }
+
+[lints]
+workspace = true

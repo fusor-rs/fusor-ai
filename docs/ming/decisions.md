@@ -24,7 +24,7 @@ a reference clip would need all three; it is not built.
 thread team. The flow head runs 10 steps × 8 blocks of 6-row matmuls per 80 ms frame: dispatch
 and fork/join overhead would dominate in a framework (SealedKB D22/D25), and candle's wasm
 pitfalls (SealedKB D3, D14) do not arise. Parity with the PyTorch reference (f32 bundle,
-teacher-forced, `make parity`): every component within 2.3e-4 relative L2, identical prompt ids
+teacher-forced, `just ming-parity`): every component within 2.3e-4 relative L2, identical prompt ids
 and stop decisions.
 
 ## D4. The `mix` bundle is the default (plan §3, confirmed)
@@ -36,7 +36,7 @@ shows activation quantization alone costs 0.04). Every LLM layer contributes (0.
 quantized alone) and MSE-optimal 4-bit scales do not help (0.59). What matters downstream does
 not move: WER 0.000 on every test sentence, and CAM++ voice similarity to the reference within
 the run-to-run spread of the f32 bundle (mix 0.67/0.73/0.65, q7 0.76/0.76/0.65, f32
-0.72/0.72/0.64). `make model PROFILE=q7` gives the 1.2 GB all-7-bit bundle.
+0.72/0.72/0.64). `PROFILE=q7 just ming-model` gives the 1.2 GB all-7-bit bundle.
 
 ## D5. Activations quantized per block of 32, weights' zero point folded into the dot
 
@@ -142,3 +142,28 @@ text frontend. The move changed no result: recompiled `mix` and `f32` bundles ar
 byte-identical (every part hash), `make parity` prints the same numbers, every runtime build
 passes the import check, and the Chrome e2e passes (RTF 0.52 threaded, 2.05 single-threaded,
 WER 0, 0 requests during synthesis).
+
+## D16. Ming lives in fusor-ai, in layers
+
+D15's split kept the model in its own repository. With a second model in view, the model moved
+into fusor-ai instead, and both repositories' code was sorted into layers that only depend
+downwards (`AGENTS.md`, "Repository"): primitives (`team`, `kernels`, `bundle`, `compile`),
+blocks (`blocks`: the Qwen2 stack, the DiT block stack, flow-matching integration, the
+streaming inverse STFT), models (`ming`, `ming-compile`) and hosts (`ming-runtime`,
+`ming-cli`). A piece is a block only when a second, named model would use it unchanged: the DiT
+stack (F5-TTS-style flow heads), the guided Euler integrator with sway sampling and the
+Vocos-style iSTFT qualify; the aggregator's wiring, the EPSS knots, the silence gate, the
+presets, the prompts and the text frontend stay in `ming`. `scripts/check-layers.mjs` enforces
+the direction and keeps tensor names and fixed dimensions out of `blocks`.
+
+Each component loads itself (`bundle::Load`, with a prefix and a shape), so `ming::model` is a
+table of contents. Blocks therefore depend on `bundle`, which the first layering draft forbade;
+the alternative, loaders in every model for every block, repeats the tensor layout of each block
+in each model. The matmul is generic over an `arch::Backend` (relaxed SIMD, SIMD128, NEON,
+scalar), so the f64 reference test runs the scalar backend beside the native one.
+`ming::pipeline::Stage` lists the stages that `ming bench` and `ming parity` walk.
+
+The move changed no result: `ming-compile` builds the same rename table (570 tensors, same
+order), `just ming-parity` prints the same numbers, and native speed is within run-to-run noise
+of the code before the move (best of six alternating runs: flow head 15.0 ms per frame on both).
+

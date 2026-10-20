@@ -68,7 +68,7 @@ pub struct Prompt {
 impl Prompter {
     pub fn new(tokenizer_json: &[u8]) -> Result<Self, Error> {
         let tokenizer = Tokenizer::from_bytes(tokenizer_json)
-            .map_err(|e| Error::Format(format!("tokenizer: {e}")))?;
+            .map_err(|error| Error::Format(format!("tokenizer: {error}")))?;
         Ok(Self { tokenizer })
     }
 
@@ -76,7 +76,7 @@ impl Prompter {
         let encoding = self
             .tokenizer
             .encode(piece, false)
-            .map_err(|e| Error::Format(format!("tokenize: {e}")))?;
+            .map_err(|error| Error::Format(format!("tokenize: {error}")))?;
         ids.extend_from_slice(encoding.get_ids());
         Ok(())
     }
@@ -89,7 +89,7 @@ impl Prompter {
         language: Option<&str>,
     ) -> Result<Prompt, Error> {
         let mut ids = Vec::new();
-        let target = language.map(|l| format!("Target language: {}.\n", language_name(l)));
+        let target = language.map(|name| format!("Target language: {}.\n", language_name(name)));
         for piece in [SYSTEM, USER, TTS_PROMPT]
             .into_iter()
             .chain(target.as_deref())
@@ -145,10 +145,10 @@ fn instruction(voice: &Voice) -> String {
         Voice::Builtin(ip) => (None, Some(ip.as_str())),
         Voice::Design(style) => (Some(style.as_str()), None),
     };
-    let json = |v: Option<&str>| {
-        v.map_or_else(
+    let json = |value: Option<&str>| {
+        value.map_or_else(
             || "null".to_string(),
-            |s| serde_json::Value::from(s).to_string(),
+            |text| serde_json::Value::from(text).to_string(),
         )
     };
     format!(

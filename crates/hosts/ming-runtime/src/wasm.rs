@@ -11,7 +11,10 @@ static PANIC_HOOK: Once = Once::new();
 /// The message of the last panic, for the host to read after a `RuntimeError: unreachable`.
 #[wasm_bindgen]
 pub fn last_panic() -> String {
-    LAST_PANIC.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    LAST_PANIC
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
 }
 
 /// Threaded builds: `initThreadPool(n)` (wasm-bindgen-rayon) starts `n` compute workers sharing
@@ -56,7 +59,9 @@ impl Runtime {
     pub fn new(manifest_json: &str) -> Result<Runtime, JsError> {
         PANIC_HOOK.call_once(|| {
             std::panic::set_hook(Box::new(|info| {
-                *LAST_PANIC.lock().unwrap_or_else(|e| e.into_inner()) = info.to_string()
+                *LAST_PANIC
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = info.to_string()
             }));
         });
         let manifest = Manifest::parse(manifest_json).map_err(err)?;
@@ -108,7 +113,7 @@ impl Runtime {
     /// Starts a synthesis (`session::Request` as JSON); returns the plan (`{"fragments"}`).
     pub fn start(&mut self, request_json: &str) -> Result<String, JsError> {
         let request: Request = serde_json::from_str(request_json)
-            .map_err(|e| JsError::new(&format!("request: {e}")))?;
+            .map_err(|error| JsError::new(&format!("request: {error}")))?;
         Ok(json(&self.engine()?.start(request).map_err(err)?))
     }
 
@@ -126,27 +131,4 @@ impl Runtime {
         self.engine()?.cancel();
         Ok(())
     }
-}
-
-/// Deterministic getrandom backend (`--cfg getrandom_backend="custom"`, `.cargo/config.toml`):
-/// only the tokenizer's hash maps ask for randomness, and fixed bytes keep
-/// `crypto.getRandomValues` out of the module's imports.
-///
-/// # Safety
-/// getrandom 0.3's contract: `dest` is valid for writes of `len` bytes.
-#[unsafe(no_mangle)]
-unsafe extern "Rust" fn __getrandom_v03_custom(
-    dest: *mut u8,
-    len: usize,
-) -> Result<(), getrandom::Error> {
-    // SAFETY: getrandom passes a buffer valid for `len` byte writes (the contract above).
-    let out = unsafe { std::slice::from_raw_parts_mut(dest, len) };
-    let mut x: u64 = 0x4D49_4E47_5454_5321;
-    for b in out {
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        *b = x as u8;
-    }
-    Ok(())
 }

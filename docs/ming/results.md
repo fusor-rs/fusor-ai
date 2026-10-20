@@ -9,7 +9,7 @@ and the distant clouds slowly turned gold." (US_James, seed 1895, `mix` bundle).
 
 ## Correctness against the PyTorch reference
 
-`make parity` (`ming parity dist/model-f32 fixtures/goldens/ref_f32_A.safetensors`): the f32
+`just ming-parity` (`ming parity dist/ming/model-f32 fixtures/goldens/ming/ref_f32_A.safetensors`): the f32
 bundle, each component teacher-forced on the fp32 reference's own inputs
 (`scripts/dump_goldens.py`, sentence A, 158 prompt tokens, 69 frames).
 

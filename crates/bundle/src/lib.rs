@@ -6,9 +6,11 @@
 //! each byte range straight into the tensor it belongs to, so a weight is copied once and no
 //! part is held whole. `end_part` checks the size and the hash.
 
+mod load;
 mod manifest;
 mod store;
 
+pub use load::Load;
 pub use manifest::{FORMAT, Manifest, Part, Source, TensorEntry};
 pub use store::Store;
 

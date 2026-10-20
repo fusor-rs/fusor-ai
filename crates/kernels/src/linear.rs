@@ -8,6 +8,8 @@ use crate::tensor::{Matrix, Tensor};
 
 /// Column granularity of the output splits (a multiple of the SIMD width).
 pub const COLUMN_ALIGN: usize = 16;
+/// The granularity for projections with few outputs (a 64-d latent), so every thread gets some.
+pub const NARROW_COLUMN_ALIGN: usize = 8;
 
 pub struct Linear {
     weight: Tensor,

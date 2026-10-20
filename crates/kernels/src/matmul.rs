@@ -13,7 +13,7 @@
 
 use std::ops::Range;
 
-use crate::arch;
+use crate::arch::{Active, Backend};
 use crate::tensor::{BLOCK, DType, Matrix, MatrixStorage};
 
 /// Rows of activations quantized for one weight format.
@@ -59,7 +59,7 @@ impl QuantizedRows {
         let slots = outputs.zip(&mut self.scales).zip(&mut self.corrections);
         for (block, ((output, scale), correction)) in x.as_chunks::<BLOCK>().0.iter().zip(slots) {
             let sum;
-            (*scale, sum) = arch::quantize_block(block, output);
+            (*scale, sum) = Active::quantize_block(block, output);
             *correction = -self.zero_point * sum;
         }
     }
@@ -74,13 +74,23 @@ pub fn matmul(
     cols: Range<usize>,
     store: impl FnMut(usize, usize, f32),
 ) {
+    matmul_with::<Active>(weights, x, rows, cols, store);
+}
+
+fn matmul_with<B: Backend>(
+    weights: &Matrix,
+    x: &Input,
+    rows: usize,
+    cols: Range<usize>,
+    store: impl FnMut(usize, usize, f32),
+) {
     match (weights.storage, x) {
         (MatrixStorage::F32(values), Input::F32(x)) => {
             let dense = F32Weights {
                 values,
                 cols: weights.cols,
             };
-            f32_matmul(&dense, x, rows, cols, store);
+            f32_matmul::<B>(&dense, x, rows, cols, store);
         }
         (
             MatrixStorage::Quant {
@@ -101,7 +111,7 @@ pub fn matmul(
                 scales,
                 cols: weights.cols,
             };
-            quant_matmul(&quantized, x, rows, cols, store);
+            quant_matmul::<B>(&quantized, x, rows, cols, store);
         }
         _ => {
             unreachable!("Input::F32 is built for f32 weights and Input::Quant for quantized ones")
@@ -114,7 +124,7 @@ struct F32Weights<'tensor> {
     cols: usize,
 }
 
-fn f32_matmul(
+fn f32_matmul<B: Backend>(
     weights: &F32Weights,
     x: &[f32],
     rows: usize,
@@ -128,7 +138,7 @@ fn f32_matmul(
             store(
                 row,
                 col,
-                arch::dot_f32(weight_row, &x[row * width..(row + 1) * width]),
+                B::dot_f32(weight_row, &x[row * width..(row + 1) * width]),
             );
         }
     }
@@ -144,7 +154,7 @@ struct QuantWeights<'tensor> {
 /// Rows per tile: each weight block is unpacked once for up to this many activation rows.
 const TILE: usize = 8;
 
-fn quant_matmul(
+fn quant_matmul<B: Backend>(
     weights: &QuantWeights,
     x: &QuantizedRows,
     rows: usize,
@@ -173,8 +183,12 @@ fn quant_matmul(
         macro_rules! dispatch {
             ($($rows:literal)*) => {
                 match (tile, q4) {
-                    $(($rows, false) => quant_tile::<$rows, false>(weights, x, &span, &mut store_tile),
-                      ($rows, true) => quant_tile::<$rows, true>(weights, x, &span, &mut store_tile),)*
+                    $(($rows, false) => {
+                        quant_tile::<$rows, false, B>(weights, x, &span, &mut store_tile)
+                    }
+                    ($rows, true) => {
+                        quant_tile::<$rows, true, B>(weights, x, &span, &mut store_tile)
+                    })*
                     _ => unreachable!("tile is 1..=TILE"),
                 }
             };
@@ -191,7 +205,7 @@ struct TileSpan {
 
 /// One tile, two weight rows per pass so every activation block is loaded once for both.
 #[inline(always)]
-fn quant_tile<const ROWS: usize, const Q4: bool>(
+fn quant_tile<const ROWS: usize, const Q4: bool, B: Backend>(
     weights: &QuantWeights,
     x: &QuantizedRows,
     span: &TileSpan,
@@ -207,11 +221,7 @@ fn quant_tile<const ROWS: usize, const Q4: bool>(
         // SAFETY: the block lies within the asserted weight bytes (above).
         unsafe {
             let at = weights.quants.as_ptr().add(offset);
-            if Q4 {
-                arch::load_q4(at)
-            } else {
-                arch::load_q7(at)
-            }
+            if Q4 { B::load_q4(at) } else { B::load_q7(at) }
         }
     };
     let mut col = span.cols.start;
@@ -220,8 +230,8 @@ fn quant_tile<const ROWS: usize, const Q4: bool>(
         // The second weight row is `col` again when `col` is the last column (its sums are
         // dropped).
         let second = if pair { col + 1 } else { col };
-        let mut first_sums = [arch::zero(); ROWS];
-        let mut second_sums = [arch::zero(); ROWS];
+        let mut first_sums = [B::zero(); ROWS];
+        let mut second_sums = [B::zero(); ROWS];
         for block in 0..blocks {
             let (first_weights, second_weights) = (load(col, block), load(second, block));
             let first_scale = weights.scales[col * blocks + block];
@@ -231,16 +241,16 @@ fn quant_tile<const ROWS: usize, const Q4: bool>(
                 let index = (span.first_row + row) * blocks + block;
                 // SAFETY: the block lies within the asserted activation bytes (above).
                 let activations =
-                    unsafe { arch::load_activations(x.quants.as_ptr().add(index * BLOCK)) };
+                    unsafe { B::load_activations(x.quants.as_ptr().add(index * BLOCK)) };
                 let (correction, scale) = (x.corrections[index], x.scales[index]);
-                *first_sum = arch::accumulate(
+                *first_sum = B::accumulate(
                     *first_sum,
                     &activations,
                     &first_weights,
                     correction,
                     first_scale * scale,
                 );
-                *second_sum = arch::accumulate(
+                *second_sum = B::accumulate(
                     *second_sum,
                     &activations,
                     &second_weights,
@@ -250,9 +260,9 @@ fn quant_tile<const ROWS: usize, const Q4: bool>(
             }
         }
         for (row, (first_sum, second_sum)) in first_sums.into_iter().zip(second_sums).enumerate() {
-            store(row, col, arch::sum(first_sum));
+            store(row, col, B::sum(first_sum));
             if pair {
-                store(row, col + 1, arch::sum(second_sum));
+                store(row, col + 1, B::sum(second_sum));
             }
         }
         col += 2;
@@ -261,7 +271,8 @@ fn quant_tile<const ROWS: usize, const Q4: bool>(
 
 #[cfg(test)]
 mod tests {
-    use super::{QuantizedRows, matmul};
+    use super::{QuantizedRows, matmul_with};
+    use crate::arch::{Active, Backend, Scalar};
     use crate::tensor::{BLOCK, DType, Matrix, Tensor};
 
     fn pseudo_random(len: usize, seed: u32) -> Vec<f32> {
@@ -300,8 +311,7 @@ mod tests {
         out
     }
 
-    #[test]
-    fn quantized_matmul_matches_dequantized_product() {
+    fn assert_matches_dequantized_product<B: Backend>() {
         let (outputs, width) = (25, 128);
         let values = pseudo_random(outputs * width, 1);
         for dtype in [DType::Q7b32, DType::Q4b32] {
@@ -313,7 +323,7 @@ mod tests {
                 let mut scratch = QuantizedRows::default();
                 let input = scratch.input(&weights, &x, rows);
                 let mut got = vec![0.0f32; rows * outputs];
-                matmul(&weights, &input, rows, 0..outputs, |row, col, value| {
+                matmul_with::<B>(&weights, &input, rows, 0..outputs, |row, col, value| {
                     got[row * outputs + col] = value;
                 });
                 for (value, want) in got.iter().zip(&expected) {
@@ -325,5 +335,11 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn every_backend_matches_the_dequantized_product() {
+        assert_matches_dequantized_product::<Active>();
+        assert_matches_dequantized_product::<Scalar>();
     }
 }

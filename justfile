@@ -1,7 +1,7 @@
 default:
     @just --list
 
-check: lint wasm host
+check: lint wasm host layers
 
 lint:
     cargo fmt --all -- --check
@@ -22,6 +22,10 @@ host:
     node --check scripts/serve.mjs
     bash -n scripts/build-runtime.sh
     node scripts/check-wasm-imports.mjs --selftest
+
+# Hosts → models → blocks → primitives (AGENTS.md, "Layers").
+layers:
+    node scripts/check-layers.mjs
 
 # Ming-3.0-tts-0.5B (crates/models/ming): text-to-speech in the browser.
 # `just ming-build` then `just ming-serve`; docs/ming/README.md describes it.

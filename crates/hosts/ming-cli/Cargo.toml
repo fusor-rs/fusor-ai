@@ -10,6 +10,7 @@ repository.workspace = true
 [[bin]]
 name = "ming"
 path = "src/main.rs"
+doc = false
 
 [dependencies]
 ming = { workspace = true, features = ["threads"] }
@@ -19,3 +20,6 @@ compile.workspace = true
 rayon.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+
+[lints]
+workspace = true

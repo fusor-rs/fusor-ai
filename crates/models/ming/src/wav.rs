@@ -15,9 +15,9 @@ pub fn encode(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     out.extend_from_slice(&16u16.to_le_bytes());
     out.extend_from_slice(b"data");
     out.extend_from_slice(&data_len.to_le_bytes());
-    for s in samples {
-        let v = (s.clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16;
-        out.extend_from_slice(&v.to_le_bytes());
+    for sample in samples {
+        let level = (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16;
+        out.extend_from_slice(&level.to_le_bytes());
     }
     out
 }
