@@ -70,7 +70,8 @@ regex = "=1.13.1"
 [profile.dev]
 debug = "line-tables-only"
 [profile.dev.package."*"]
-# tokenizers and the kernels are unusably slow unoptimised; optimise them even in dev builds.
+# Dependencies such as tokenizers are unusably slow unoptimised; optimise them even in dev builds
+# ("*" is every dependency, not the workspace's own crates).
 opt-level = 3
 debug = false
 

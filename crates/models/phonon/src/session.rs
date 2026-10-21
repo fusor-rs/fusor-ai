@@ -8,7 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use bundle::Store;
+use bundle::{Store, Tokenizer};
+use kernels::QuantizedRows;
 use kernels::rng::Rng;
 use team::Team;
 
@@ -16,26 +17,21 @@ use crate::Error;
 pub use crate::lm::FlowStep;
 use crate::lm::LmState;
 use crate::mimi::MimiState;
-use crate::model::{HIDDEN, LATENT, Model, TOKENIZER_PART, VOICE_FRAMES};
+use crate::model::{FRAME_SAMPLES, HIDDEN, LATENT, Model, VOICE_FRAMES};
 use crate::prompt::{self, Chunk, MAX_CHUNK_TOKENS, Prompter, VOICES};
 
-pub const SAMPLE_RATE: u32 = 24_000;
-/// Samples per 80 ms latent frame.
-pub const FRAME_SAMPLES: usize = 1920;
 /// The noise variance of sampling (the reference runtime's default; the config's `temp` is not
 /// used).
-pub const DEFAULT_TEMPERATURE: f32 = 0.3;
+const DEFAULT_TEMPERATURE: f32 = 0.3;
 pub const EOS_THRESHOLD: f32 = 4.0;
-pub const DEFAULT_SEED: u64 = 4_242_424_242_424_242;
+const DEFAULT_SEED: u64 = 4_242_424_242_424_242;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Request {
     pub text: String,
     /// An id from `prompt::VOICES`.
     pub voice: String,
-    #[serde(default)]
     pub seed: Option<u64>,
-    #[serde(default)]
     pub temperature: Option<f32>,
 }
 
@@ -60,8 +56,6 @@ pub struct Engine {
     mimi: MimiState,
     /// The voice whose embeddings fill the first `VOICE_FRAMES` positions of the LM cache.
     primed: Option<usize>,
-    /// The LM position of the next `flow_step`.
-    position: usize,
     job: Option<Job>,
     audio: Vec<f32>,
 }
@@ -88,11 +82,9 @@ impl Engine {
     /// Builds the engine from a complete store, with the first voice already run through the LM
     /// so that a request starts speaking after its text alone.
     pub fn new(store: &mut Store) -> Result<Self, Error> {
-        if !store.complete() {
-            return Err(Error::Format("the bundle is not fully loaded".into()));
-        }
+        store.require_complete()?;
         let model = Model::load(store)?;
-        let prompter = Prompter::new(&store.take_blob(TOKENIZER_PART)?)?;
+        let prompter = Prompter::new(Tokenizer::take(store)?);
         let team = Team::global();
         let threads = team.threads();
         let capacity = VOICE_FRAMES + MAX_CHUNK_TOKENS + prompt::frame_budget(MAX_CHUNK_TOKENS);
@@ -103,7 +95,6 @@ impl Engine {
             prompter,
             team,
             primed: None,
-            position: 0,
             job: None,
             audio: Vec::new(),
         };
@@ -177,7 +168,7 @@ impl Engine {
             done: false,
         };
         let chunk = &job.chunks[job.chunk];
-        let ended = frame.end_of_speech(eos_logit > EOS_THRESHOLD, chunk.frames_after_eos);
+        let ended = frame.end_of_speech(eos_logit, chunk.frames_after_eos);
         if !ended && frame.index + 1 < frame.budget {
             frame.index += 1;
             frame.previous = Some(latent);
@@ -212,11 +203,10 @@ impl Engine {
         if self.primed == Some(voice) {
             return;
         }
-        let embedded = self.model.voice(voice);
-        let rows = (0, VOICE_FRAMES);
+        let embedded = self.model.voice(voice).matrix();
         self.model
             .lm
-            .prompt(&self.team, &mut self.lm, rows, |frame, row| {
+            .prompt(&self.team, &mut self.lm, 0..VOICE_FRAMES, |frame, row| {
                 embedded.dequantize_row(frame, row);
             });
         self.primed = Some(voice);
@@ -225,13 +215,12 @@ impl Engine {
     /// Runs `tokens` through the LM after the voice; the next `flow_step` follows them.
     fn prompt_text(&mut self, tokens: &[u32]) {
         let embeddings = self.model.lm.embeddings();
-        let rows = (VOICE_FRAMES, tokens.len());
+        let positions = VOICE_FRAMES..VOICE_FRAMES + tokens.len();
         self.model
             .lm
-            .prompt(&self.team, &mut self.lm, rows, |index, row| {
+            .prompt(&self.team, &mut self.lm, positions, |index, row| {
                 embeddings.dequantize_row(tokens[index] as usize, row);
             });
-        self.position = VOICE_FRAMES + tokens.len();
     }
 
     /// The chunks a request's text becomes.
@@ -241,19 +230,20 @@ impl Engine {
 
     /// Voice `voice`'s embedded latents, `[VOICE_FRAMES, HIDDEN]`.
     pub fn voice_embedding(&self, voice: &str) -> Result<Vec<f32>, Error> {
-        let embedded = self.model.voice(voice_index(voice)?);
-        let mut out = vec![0.0; VOICE_FRAMES * HIDDEN];
-        for (frame, row) in out.as_chunks_mut::<HIDDEN>().0.iter_mut().enumerate() {
-            embedded.dequantize_row(frame, row);
-        }
-        Ok(out)
+        Ok(self.model.voice(voice_index(voice)?).dequantize())
     }
 
-    /// The summed conditions added to every latent's input projection, `[HIDDEN]`.
+    /// The summed conditions added to every latent's input projection, `[HIDDEN]`: the
+    /// projection of a zero latent, as the compiler folds them into its bias.
     pub fn conditions(&self) -> Vec<f32> {
-        let bias = self.model.lm.input.bias();
-        bias.expect("the compiler folds the conditions into this bias")
-            .to_vec()
+        let mut conditions = vec![0.0; HIDDEN];
+        let input = &self.model.lm.input;
+        input.apply(
+            &[0.0; LATENT],
+            &mut QuantizedRows::default(),
+            &mut conditions,
+        );
+        conditions
     }
 
     /// The text embeddings of `tokens`, `[tokens, HIDDEN]`.
@@ -284,11 +274,8 @@ impl Engine {
     /// One frame from `previous` (BOS for `None`, the first frame) and `noise` (`LATENT`
     /// values, already scaled by √temperature), at the position after the last.
     pub fn flow_step(&mut self, previous: Option<&[f32]>, noise: &[f32]) -> FlowStep {
-        let bos = self.model.lm.bos.values().expect("checked at load");
-        let input = (previous.unwrap_or(bos), self.position);
-        let step = self.model.lm.step(&self.team, &mut self.lm, input, noise);
-        self.position += 1;
-        step
+        let input = previous.unwrap_or(self.model.lm.bos.values());
+        self.model.lm.step(&self.team, &mut self.lm, input, noise)
     }
 
     /// Decodes a latent sequence (`frames × LATENT`) from a fresh decoder state.
@@ -303,10 +290,9 @@ impl Engine {
 }
 
 impl Frame {
-    /// Whether the chunk ends after this frame, given whether its logit marks the end of
-    /// speech.
-    fn end_of_speech(&mut self, eos: bool, frames_after_eos: usize) -> bool {
-        if eos && self.remaining.is_none() {
+    /// Whether the chunk ends after this frame, given its end-of-speech logit.
+    fn end_of_speech(&mut self, eos_logit: f32, frames_after_eos: usize) -> bool {
+        if eos_logit > EOS_THRESHOLD && self.remaining.is_none() {
             self.remaining = Some(frames_after_eos);
         }
         match self.remaining {

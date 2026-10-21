@@ -4,6 +4,20 @@ use crate::Error;
 
 const PCM: u16 = 1;
 const FLOAT: u16 = 3;
+/// The RIFF header, the `fmt ` chunk of a PCM file and the `data` chunk's header.
+const HEADER_BYTES: usize = 44;
+const SIZE_FIELD_BYTES: usize = 4;
+/// The bytes after the RIFF size field that precede the samples.
+const HEADER_AFTER_SIZE: u32 = 36;
+const PCM_FORMAT_BYTES: u32 = 16;
+const MONO: u16 = 1;
+const SAMPLE_BYTES: u16 = 2;
+const SAMPLE_BITS: u16 = 16;
+const FLOAT_BITS: u16 = 32;
+/// Offsets inside the `fmt ` chunk.
+const FORMAT_TAG: usize = 0;
+const CHANNELS: usize = 2;
+const SAMPLE_RATE: usize = 4;
 /// `WAVE_FORMAT_EXTENSIBLE`: the format is the first two bytes of the subformat GUID.
 const EXTENSIBLE: u16 = 0xfffe;
 const EXTENSIBLE_SUBFORMAT: usize = 24;
@@ -12,18 +26,20 @@ const BITS_PER_SAMPLE: usize = 14;
 const PCM_SCALE: f32 = 32768.0;
 
 pub fn encode(samples: &[f32], sample_rate: u32) -> Vec<u8> {
-    let data_len = (samples.len() * 2) as u32;
-    let mut out = Vec::with_capacity(44 + samples.len() * 2);
+    let data_len = samples.len() * usize::from(SAMPLE_BYTES);
+    let mut out = Vec::with_capacity(HEADER_BYTES + data_len);
+    let data_len = data_len as u32;
     out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + data_len).to_le_bytes());
+    out.extend_from_slice(&(HEADER_AFTER_SIZE + data_len).to_le_bytes());
     out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&PCM_FORMAT_BYTES.to_le_bytes());
     out.extend_from_slice(&PCM.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes()); // mono
+    out.extend_from_slice(&MONO.to_le_bytes());
     out.extend_from_slice(&sample_rate.to_le_bytes());
-    out.extend_from_slice(&(sample_rate * 2).to_le_bytes());
-    out.extend_from_slice(&2u16.to_le_bytes());
-    out.extend_from_slice(&16u16.to_le_bytes());
+    let byte_rate = sample_rate * u32::from(SAMPLE_BYTES);
+    out.extend_from_slice(&byte_rate.to_le_bytes());
+    out.extend_from_slice(&SAMPLE_BYTES.to_le_bytes());
+    out.extend_from_slice(&SAMPLE_BITS.to_le_bytes());
     out.extend_from_slice(b"data");
     out.extend_from_slice(&data_len.to_le_bytes());
     for sample in samples {
@@ -39,7 +55,7 @@ pub fn decode(bytes: &[u8]) -> Result<(Vec<f32>, u32), Error> {
     let not_wav = || Error::Format("not a 16-bit PCM or 32-bit float WAV file".into());
     let body = bytes
         .strip_prefix(b"RIFF")
-        .and_then(|rest| rest.get(4..))
+        .and_then(|rest| rest.get(SIZE_FIELD_BYTES..))
         .and_then(|rest| rest.strip_prefix(b"WAVE"))
         .ok_or_else(not_wav)?;
     let format = chunk(body, b"fmt ").ok_or_else(not_wav)?;
@@ -49,21 +65,27 @@ pub fn decode(bytes: &[u8]) -> Result<(Vec<f32>, u32), Error> {
             .get(at..at + 2)
             .map(|two| u16::from_le_bytes([two[0], two[1]]))
     };
-    let tag = match field(0).ok_or_else(not_wav)? {
+    let tag = match field(FORMAT_TAG).ok_or_else(not_wav)? {
         EXTENSIBLE => field(EXTENSIBLE_SUBFORMAT).ok_or_else(not_wav)?,
         tag => tag,
     };
-    let channels = usize::from(field(2).filter(|&count| count > 0).ok_or_else(not_wav)?);
-    let rate = format.get(4..8).ok_or_else(not_wav)?;
-    let rate = u32::from_le_bytes([rate[0], rate[1], rate[2], rate[3]]);
+    let channels = field(CHANNELS)
+        .filter(|&count| count > 0)
+        .ok_or_else(not_wav)?;
+    let channels = usize::from(channels);
+    let rate = format
+        .get(SAMPLE_RATE..)
+        .and_then(<[u8]>::first_chunk::<4>)
+        .ok_or_else(not_wav)?;
+    let rate = u32::from_le_bytes(*rate);
     let samples: Vec<f32> = match (tag, field(BITS_PER_SAMPLE)) {
-        (PCM, Some(16)) => data
+        (PCM, Some(SAMPLE_BITS)) => data
             .as_chunks::<2>()
             .0
             .iter()
             .map(|two| f32::from(i16::from_le_bytes(*two)) / PCM_SCALE)
             .collect(),
-        (FLOAT, Some(32)) => data
+        (FLOAT, Some(FLOAT_BITS)) => data
             .as_chunks::<4>()
             .0
             .iter()

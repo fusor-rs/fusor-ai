@@ -2,14 +2,13 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct Team {
-    threads: usize,
     barrier: Barrier,
 }
 
 /// One thread's view of a team run.
 pub struct Ctx<'team> {
-    pub index: usize,
-    pub count: usize,
+    pub(crate) index: usize,
+    count: usize,
     barrier: &'team Barrier,
 }
 
@@ -22,23 +21,22 @@ impl Team {
         #[cfg(not(feature = "threads"))]
         let threads = 1;
         Self {
-            threads,
             barrier: Barrier::new(threads),
         }
     }
 
     pub fn threads(&self) -> usize {
-        self.threads
+        self.barrier.threads
     }
 
     /// Runs `task` on every team thread and returns when all have finished.
     pub fn run(&self, task: impl Fn(&Ctx) + Sync) {
         #[cfg(feature = "threads")]
-        if self.threads > 1 {
+        if self.threads() > 1 {
             rayon::broadcast(|broadcast| {
                 debug_assert_eq!(
                     broadcast.num_threads(),
-                    self.threads,
+                    self.threads(),
                     "the global pool was resized"
                 );
                 task(&self.ctx(broadcast.index()));
@@ -51,7 +49,7 @@ impl Team {
     fn ctx(&self, index: usize) -> Ctx<'_> {
         Ctx {
             index,
-            count: self.threads,
+            count: self.threads(),
             barrier: &self.barrier,
         }
     }
@@ -119,22 +117,27 @@ impl Barrier {
 
 #[cfg(test)]
 mod tests {
-    use super::{Barrier, Ctx};
+    use std::sync::Mutex;
+
+    use super::Team;
 
     #[test]
     fn split_covers_every_unit_once() {
-        let barrier = Barrier::new(3);
-        let mut covered = vec![0; 14 * 64];
-        for index in 0..3 {
-            let ctx = Ctx {
-                index,
-                count: 3,
-                barrier: &barrier,
-            };
-            for column in ctx.split(14 * 64, 64) {
+        let team = Team::global();
+        let covered = Mutex::new(vec![0; 37 * 64]);
+        team.run(|ctx| {
+            let share = ctx.split(37 * 64, 64);
+            let mut covered = covered.lock().unwrap();
+            for column in share {
                 covered[column] += 1;
             }
-        }
-        assert!(covered.iter().all(|&times| times == 1));
+        });
+        assert!(
+            covered
+                .into_inner()
+                .unwrap()
+                .iter()
+                .all(|&times| times == 1)
+        );
     }
 }

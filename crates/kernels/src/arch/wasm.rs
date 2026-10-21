@@ -13,6 +13,8 @@ use core::arch::wasm32::{
     i16x8_add, i16x8_extmul_high_i8x16, i16x8_extmul_low_i8x16, i32x4_extadd_pairwise_i16x8,
 };
 
+use super::DOTS;
+
 pub(crate) struct Weights(v128, v128);
 pub(crate) struct Activations(v128, v128);
 
@@ -25,16 +27,12 @@ impl super::Backend for Wasm {
     type Sums = v128;
     const TILE: usize = 4;
 
-    /// # Safety
-    /// 32 readable bytes at `at`.
     #[inline(always)]
     unsafe fn load_q7(at: *const u8) -> Self::Weights {
         // SAFETY: the caller guarantees 32 readable bytes; v128.load is unaligned.
         unsafe { Weights(v128_load(at.cast()), v128_load(at.add(16).cast())) }
     }
 
-    /// # Safety
-    /// 16 readable bytes at `at`.
     #[inline(always)]
     unsafe fn load_q4(at: *const u8) -> Self::Weights {
         // SAFETY: the caller guarantees 16 readable bytes; v128.load is unaligned.
@@ -42,8 +40,6 @@ impl super::Backend for Wasm {
         Weights(v128_and(packed, u8x16_splat(0x0f)), u8x16_shr(packed, 4))
     }
 
-    /// # Safety
-    /// 8 readable bytes at `at`.
     #[inline(always)]
     unsafe fn load_t2(at: *const u8) -> Self::Weights {
         // SAFETY: the caller guarantees 8 readable bytes; v128.load64_splat is unaligned.
@@ -58,8 +54,6 @@ impl super::Backend for Wasm {
         )
     }
 
-    /// # Safety
-    /// 32 readable bytes at `at`.
     #[inline(always)]
     unsafe fn load_activations(at: *const i8) -> Self::Activations {
         // SAFETY: the caller guarantees 32 readable bytes; v128.load is unaligned.
@@ -85,7 +79,6 @@ impl super::Backend for Wasm {
             .max(f32x4_extract_lane::<3>(max))
     }
 
-    /// Quantizes 32 values to int8 at scale `d` (`round_ties_even(x / d)`); returns `Σq`.
     fn quantize_block(x: &[f32], scale: f32, out: &mut [i8]) -> i32 {
         assert!(
             x.len() >= 32 && out.len() >= 32,
@@ -180,12 +173,12 @@ impl super::Backend for Wasm {
         Self::sum(sums) + tail.map(|(x, y)| x * y).sum::<f32>()
     }
 
-    fn dot_f32_4(left: &[f32], rights: [&[f32]; 4]) -> [f32; 4] {
+    fn dot_f32_many(left: &[f32], rights: [&[f32]; DOTS]) -> [f32; DOTS] {
         assert!(
             rights.iter().all(|right| right.len() == left.len()),
             "dot products of equal lengths"
         );
-        let mut sums = [f32x4_splat(0.0); 4];
+        let mut sums = [f32x4_splat(0.0); DOTS];
         let chunks = left.len() / 4;
         for i in 0..chunks {
             // SAFETY: i·4 + 4 ≤ len for every slice (asserted equal); v128.load is unaligned.
@@ -196,7 +189,7 @@ impl super::Backend for Wasm {
                 *sum = f32x4_add(*sum, f32x4_mul(x, y));
             }
         }
-        let mut out = [0.0; 4];
+        let mut out = [0.0; DOTS];
         for ((value, sum), right) in out.iter_mut().zip(sums).zip(rights) {
             let tail = left[chunks * 4..].iter().zip(&right[chunks * 4..]);
             *value = Self::sum(sum) + tail.map(|(x, y)| x * y).sum::<f32>();

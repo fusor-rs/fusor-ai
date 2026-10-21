@@ -286,6 +286,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tokenizers",
 ]
 
 [[package]]
@@ -317,12 +318,9 @@ dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-kernels",
  "fusor-ai-team",
- "realfft",
  "regex",
  "serde",
  "serde_json",
- "thiserror",
- "tokenizers",
 ]
 
 [[package]]
@@ -346,7 +344,6 @@ dependencies = [
  "realfft",
  "serde",
  "serde_json",
- "thiserror",
 ]
 
 [[package]]
@@ -370,8 +367,6 @@ dependencies = [
  "fusor-ai-kernels",
  "fusor-ai-team",
  "serde",
- "thiserror",
- "tokenizers",
 ]
 
 [[package]]

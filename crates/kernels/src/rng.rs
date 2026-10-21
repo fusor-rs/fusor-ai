@@ -20,7 +20,7 @@ impl Rng {
         }
     }
 
-    pub fn next_u64(&mut self) -> u64 {
+    fn next_u64(&mut self) -> u64 {
         let state = &mut self.state;
         let result = state[1].wrapping_mul(5).rotate_left(7).wrapping_mul(9);
         let shifted = state[1] << 17;
@@ -34,7 +34,7 @@ impl Rng {
     }
 
     /// Uniform in (0, 1].
-    pub fn uniform(&mut self) -> f64 {
+    fn uniform(&mut self) -> f64 {
         ((self.next_u64() >> 11) + 1) as f64 / (1u64 << 53) as f64
     }
 

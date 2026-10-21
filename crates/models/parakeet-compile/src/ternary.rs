@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use compile::{Checkpoint, Error};
+use compile::{Checkpoint, Error, read_json};
 use kernels::TERNARY_GROUP;
 use serde::Deserialize;
 
@@ -45,12 +45,7 @@ pub(crate) struct Export {
 impl Export {
     pub(crate) fn read(dir: &Path) -> Result<Self, Error> {
         let path = dir.join(MANIFEST);
-        let json = std::fs::read(&path).map_err(|source| Error::Io {
-            path: path.clone(),
-            source,
-        })?;
-        let manifest: Manifest = serde_json::from_slice(&json)
-            .map_err(|error| Error::Format(format!("{}: {error}", path.display())))?;
+        let manifest: Manifest = read_json(&path)?;
         if manifest.format != FORMAT || manifest.names != NAMES {
             return Err(Error::Format(format!(
                 "{}: a {} export with {} names, not {FORMAT} with {NAMES}",
@@ -83,12 +78,13 @@ impl Export {
         let scales = checkpoint.f32(&format!("{name}.scales"))?;
         let groups = in_features / TERNARY_GROUP;
         if module.group_size != TERNARY_GROUP
+            || !in_features.is_multiple_of(TERNARY_GROUP)
             || codes.len() != out_features * row_bytes
             || scales.len() != out_features * groups
         {
             return Err(Error::Format(format!(
                 "{name}: {} code bytes and {} scales for [{out_features}, {in_features}] in \
-                 groups of {}",
+                 groups of {} (whole groups of {TERNARY_GROUP} expected)",
                 codes.len(),
                 scales.len(),
                 module.group_size
@@ -107,5 +103,64 @@ impl Export {
             values,
             cols: in_features,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use compile::Checkpoint;
+
+    use super::Export;
+
+    #[test]
+    fn unpacks_base_3_codes_by_row_and_group() {
+        let (rows, cols) = (2, 256);
+        let code = |row: usize, column: usize| (row + column) % 3;
+        let mut codes = Vec::new();
+        for row in 0..rows {
+            for first in (0..cols).step_by(5) {
+                let digits = (first..(first + 5).min(cols)).rev();
+                codes.push(digits.fold(0u8, |byte, column| byte * 3 + code(row, column) as u8));
+            }
+        }
+        let scales = [0.5f32, 0.25, 2.0, 4.0];
+        let dir = std::env::temp_dir().join(format!("fusor-ai-ternary-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = format!(
+            r#"{{"format": "thrush-ternary-v2", "names": "hf", "quantized_modules": [
+                {{"name": "m", "in_features": {cols}, "out_features": {rows}, "group_size": 128}}
+            ]}}"#
+        );
+        std::fs::write(dir.join("ternary.json"), manifest).unwrap();
+        let header = format!(
+            r#"{{"m.qweight": {{"dtype": "U8", "shape": [{rows}, {}], "data_offsets": [0, {}]}},
+                "m.scales": {{"dtype": "F32", "shape": [{rows}, 2], "data_offsets": [{}, {}]}}}}"#,
+            codes.len() / rows,
+            codes.len(),
+            codes.len(),
+            codes.len() + 16
+        );
+        let mut file = (header.len() as u64).to_le_bytes().to_vec();
+        file.extend(header.as_bytes());
+        file.extend(&codes);
+        file.extend(scales.iter().flat_map(|scale| scale.to_le_bytes()));
+        std::fs::write(dir.join("model.safetensors"), file).unwrap();
+
+        let checkpoint = Checkpoint::read(&dir.join("model.safetensors")).unwrap();
+        let weight = Export::read(&dir)
+            .unwrap()
+            .weight(&checkpoint, "m")
+            .unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+        assert_eq!(weight.cols, cols);
+        for (at, value) in weight.values.iter().enumerate() {
+            let (row, column) = (at / cols, at % cols);
+            let scale = scales[row * 2 + column / 128];
+            assert_eq!(
+                *value,
+                scale * (code(row, column) as f32 - 1.0),
+                "{row}, {column}"
+            );
+        }
     }
 }

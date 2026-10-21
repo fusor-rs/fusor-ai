@@ -16,10 +16,6 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.99.0
-        with:
-          components: rustfmt, clippy
-          targets: wasm32-unknown-unknown
       - uses: actions/setup-node@v4
         with:
           node-version: 22

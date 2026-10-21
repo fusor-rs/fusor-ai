@@ -61,8 +61,9 @@ impl Store {
             tensors.insert(name.clone(), tensor);
         }
         let mut blobs = HashMap::new();
-        for (index, part) in manifest.parts.iter().enumerate() {
-            if manifest.is_blob(index) {
+        let parts = manifest.parts.iter().zip(manifest.holds_tensors());
+        for (index, (part, holds_tensors)) in parts.enumerate() {
+            if !holds_tensors {
                 slots[index].push(Slot {
                     offset: 0,
                     len: part.bytes,
@@ -87,12 +88,11 @@ impl Store {
 
     /// The next `bytes` of part `part` (writes arrive in order).
     pub fn write(&mut self, part: usize, bytes: &[u8]) -> Result<(), Error> {
-        let progress = &mut self.progress[part];
+        let (entry, progress) = self.part(part)?;
         let start = progress.received;
         let end = start + bytes.len() as u64;
-        if progress.done || end > self.manifest.parts[part].bytes {
-            let file = &self.manifest.parts[part].file;
-            return Err(Error::Format(format!("{file}: write past its end")));
+        if progress.done || end > entry.bytes {
+            return Err(Error::Format(format!("{}: write past its end", entry.file)));
         }
         progress.hasher.update(bytes);
         progress.received = end;
@@ -127,8 +127,7 @@ impl Store {
 
     /// Checks part `part`'s size and BLAKE3 once all its bytes were written.
     pub fn end_part(&mut self, part: usize) -> Result<(), Error> {
-        let entry = &self.manifest.parts[part];
-        let progress = &mut self.progress[part];
+        let (entry, progress) = self.part(part)?;
         if progress.received != entry.bytes {
             return Err(Error::Format(format!(
                 "{}: {} of {} bytes",
@@ -148,19 +147,36 @@ impl Store {
 
     /// Forgets what was written to part `part`, so it can be written again (a cached copy that
     /// failed its hash is refetched).
-    pub fn restart_part(&mut self, part: usize) {
-        self.progress[part] = Progress::new();
+    pub fn restart_part(&mut self, part: usize) -> Result<(), Error> {
+        let (_, progress) = self.part(part)?;
+        *progress = Progress::new();
         if let Some(blob) = self.blobs.get_mut(&part) {
             blob.clear();
         }
+        Ok(())
     }
 
     pub fn complete(&self) -> bool {
         self.progress.iter().all(|progress| progress.done)
     }
 
-    pub fn manifest(&self) -> &Manifest {
-        &self.manifest
+    /// Fails unless every part was written and checked: a model loads from a complete store.
+    pub fn require_complete(&self) -> Result<(), Error> {
+        if self.complete() {
+            Ok(())
+        } else {
+            Err(Error::Format("the bundle is not fully loaded".into()))
+        }
+    }
+
+    /// Part `part`'s manifest entry and what was written to it; the index comes from a host.
+    fn part(&mut self, part: usize) -> Result<(&Part, &mut Progress), Error> {
+        let entry = self.manifest.parts.get(part);
+        let progress = self.progress.get_mut(part);
+        entry.zip(progress).ok_or_else(|| {
+            let count = self.manifest.parts.len();
+            Error::Format(format!("no part {part}: the bundle has {count}"))
+        })
     }
 
     pub fn take(&mut self, name: &str) -> Result<Tensor, Error> {

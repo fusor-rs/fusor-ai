@@ -1,11 +1,13 @@
 //! Flow-matching integration: Euler steps from noise at `t = 0` to a sample at `t = 1` over a
 //! fixed knot schedule, with classifier-free guidance on the steps that ask for it.
 
+use crate::SINUSOID_BASE;
+
 /// The knots `0 = t_0 < … < t_steps = 1` and, per step, whether it is guided (evaluates the
 /// unconditional branch too).
 pub struct Schedule {
-    pub knots: Vec<f32>,
-    pub guided: Vec<bool>,
+    knots: Vec<f32>,
+    guided: Vec<bool>,
 }
 
 impl Schedule {
@@ -18,6 +20,19 @@ impl Schedule {
             .map(|(step, &time)| guided(step, time))
             .collect();
         Self { knots, guided }
+    }
+
+    pub fn steps(&self) -> usize {
+        self.guided.len()
+    }
+
+    /// The time each step starts at.
+    pub fn times(&self) -> &[f32] {
+        &self.knots[..self.steps()]
+    }
+
+    pub fn guided(&self, step: usize) -> bool {
+        self.guided[step]
     }
 
     pub fn dt(&self, step: usize) -> f32 {
@@ -34,7 +49,7 @@ pub fn sway(time: f32, coefficient: f32) -> f32 {
 /// The sinusoidal timestep embedding `[sin(scale·t·fᵢ), cos(scale·t·fᵢ)]` for
 /// `i < half`, `fᵢ = exp(−i · ln(10000) / (half − 1))`.
 pub fn timestep_embedding(time: f32, half: usize, scale: f32) -> Vec<f32> {
-    let step = 10000f32.ln() / (half - 1) as f32;
+    let step = SINUSOID_BASE.ln() / (half - 1) as f32;
     let angles: Vec<f32> = (0..half)
         .map(|i| scale * time * (i as f32 * -step).exp())
         .collect();
@@ -44,19 +59,23 @@ pub fn timestep_embedding(time: f32, half: usize, scale: f32) -> Vec<f32> {
         .collect()
 }
 
-/// One Euler step `y += dt · v`, with `v = c + (c − u) · scale` for a guided step (`u` the
-/// unconditional prediction) and `v = c` otherwise.
-pub fn euler_step(
-    y: &mut [f32],
-    conditional: &[f32],
-    unconditional: Option<&[f32]>,
-    scale: f32,
-    dt: f32,
-) {
+/// A guided step's unconditional prediction `u` and its guidance scale.
+#[derive(Clone, Copy)]
+pub struct Guidance<'step> {
+    pub unconditional: &'step [f32],
+    pub scale: f32,
+}
+
+/// One Euler step `y += dt · v`, with `v = c + (c − u) · scale` for a guided step and `v = c`
+/// otherwise.
+pub fn euler_step(y: &mut [f32], conditional: &[f32], guidance: Option<Guidance>, dt: f32) {
     for (i, value) in y.iter_mut().enumerate() {
         let prediction = conditional[i];
-        let velocity = match unconditional {
-            Some(null) => prediction + (prediction - null[i]) * scale,
+        let velocity = match guidance {
+            Some(Guidance {
+                unconditional,
+                scale,
+            }) => prediction + (prediction - unconditional[i]) * scale,
             None => prediction,
         };
         *value += velocity * dt;

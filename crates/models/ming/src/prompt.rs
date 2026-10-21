@@ -14,19 +14,18 @@
 //! the zh-schema caption, or a free-form instruction.
 
 use serde::{Deserialize, Serialize};
-use tokenizers::Tokenizer;
+
+use bundle::Tokenizer;
 
 use crate::Error;
 
 const SYSTEM: &str = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n";
 const USER: &str = "<|im_start|>user\n";
 const TTS_PROMPT: &str = "Please generate speech based on the following description.\n";
-const SPEAKER: [&str; 4] = [
-    "  speaker_1:",
-    "<|vision_start|>",
-    "<|vision_pad|>",
-    "<|vision_end|>\n",
-];
+const SPEAKER: [&str; 2] = ["  speaker_1:", "<|vision_start|>"];
+/// The piece whose row is the speaker embedding.
+const SPEAKER_EMBEDDING: &str = "<|vision_pad|>";
+const SPEAKER_END: &str = "<|vision_end|>\n";
 const TEXT_PREFIX: &str = " Text input:\n";
 const TURN_END: [&str; 2] = ["<|im_end|>\n", "<|im_start|>assistant\n"];
 const INSTRUCTION_END: &str = "<|im_end|>";
@@ -55,6 +54,61 @@ pub enum Voice {
     Freeform(String),
 }
 
+/// A request's target language (`tts_tasks._TARGET_LANGUAGE_NAMES`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Language {
+    Chinese,
+    Cantonese,
+    English,
+    Japanese,
+    Korean,
+    German,
+    French,
+    Spanish,
+    /// Any other name, passed to the prompt as given.
+    Other(String),
+}
+
+impl Language {
+    /// A language code or name in any case, with `_` or `-`; `None` when blank.
+    pub fn parse(text: &str) -> Option<Self> {
+        let name = text.trim();
+        let language = match name.to_lowercase().replace('_', "-").as_str() {
+            "" => return None,
+            "zh" | "zh-cn" | "chinese" => Self::Chinese,
+            "yue" | "zh-yue" | "cantonese" => Self::Cantonese,
+            "en" | "english" => Self::English,
+            "ja" | "japanese" => Self::Japanese,
+            "ko" | "korean" => Self::Korean,
+            "de" | "german" => Self::German,
+            "fr" | "french" => Self::French,
+            "es" | "spanish" => Self::Spanish,
+            _ => Self::Other(name.to_string()),
+        };
+        Some(language)
+    }
+
+    /// The name in the prompt's "Target language" line.
+    fn name(&self) -> &str {
+        match self {
+            Self::Chinese | Self::Cantonese => "Chinese",
+            Self::English => "English",
+            Self::Japanese => "Japanese",
+            Self::Korean => "Korean",
+            Self::German => "German",
+            Self::French => "French",
+            Self::Spanish => "Spanish",
+            Self::Other(name) => name,
+        }
+    }
+
+    /// `tts_tasks.preserve_multilingual_text`: languages other than Chinese and English bypass
+    /// the Chinese/English text normalization.
+    pub(crate) fn is_multilingual(&self) -> bool {
+        !matches!(self, Self::Chinese | Self::English)
+    }
+}
+
 pub struct Prompter {
     tokenizer: Tokenizer,
 }
@@ -66,18 +120,12 @@ pub struct Prompt {
 }
 
 impl Prompter {
-    pub fn new(tokenizer_json: &[u8]) -> Result<Self, Error> {
-        let tokenizer = Tokenizer::from_bytes(tokenizer_json)
-            .map_err(|error| Error::Format(format!("tokenizer: {error}")))?;
-        Ok(Self { tokenizer })
+    pub(crate) fn new(tokenizer: Tokenizer) -> Self {
+        Self { tokenizer }
     }
 
     fn encode(&self, piece: &str, ids: &mut Vec<u32>) -> Result<(), Error> {
-        let encoding = self
-            .tokenizer
-            .encode(piece, false)
-            .map_err(|error| Error::Format(format!("tokenize: {error}")))?;
-        ids.extend_from_slice(encoding.get_ids());
+        ids.extend(self.tokenizer.encode(piece)?);
         Ok(())
     }
 
@@ -86,55 +134,27 @@ impl Prompter {
         &self,
         text: &str,
         voice: &Voice,
-        language: Option<&str>,
+        language: Option<&Language>,
     ) -> Result<Prompt, Error> {
         let mut ids = Vec::new();
-        let target = language.map(|name| format!("Target language: {}.\n", language_name(name)));
-        for piece in [SYSTEM, USER, TTS_PROMPT]
+        let target = language.map(|language| format!("Target language: {}.\n", language.name()));
+        let head = [SYSTEM, USER, TTS_PROMPT]
             .into_iter()
-            .chain(target.as_deref())
-        {
+            .chain(target.as_deref());
+        for piece in head.chain(SPEAKER) {
             self.encode(piece, &mut ids)?;
         }
-        let mut speaker_row = 0;
-        for piece in SPEAKER {
-            if piece == SPEAKER[2] {
-                speaker_row = ids.len();
-            }
-            self.encode(piece, &mut ids)?;
-        }
-        for piece in [TEXT_PREFIX, text].into_iter().chain(TURN_END) {
-            self.encode(piece, &mut ids)?;
-        }
-        for piece in [instruction(voice).as_str(), INSTRUCTION_END, AUDIO] {
+        let speaker_row = ids.len();
+        let instruction = instruction(voice);
+        let pieces = [SPEAKER_EMBEDDING, SPEAKER_END, TEXT_PREFIX, text]
+            .into_iter()
+            .chain(TURN_END)
+            .chain([instruction.as_str(), INSTRUCTION_END, AUDIO]);
+        for piece in pieces {
             self.encode(piece, &mut ids)?;
         }
         Ok(Prompt { ids, speaker_row })
     }
-}
-
-/// `tts_tasks._TARGET_LANGUAGE_NAMES`: codes and lower-case names to the name in the prompt;
-/// anything else is passed through.
-fn language_name(language: &str) -> &str {
-    match language.trim().to_lowercase().as_str() {
-        "zh" | "zh-cn" | "chinese" | "yue" | "zh-yue" | "cantonese" => "Chinese",
-        "en" | "english" => "English",
-        "ja" | "japanese" => "Japanese",
-        "ko" | "korean" => "Korean",
-        "de" | "german" => "German",
-        "fr" | "french" => "French",
-        "es" | "spanish" => "Spanish",
-        _ => language.trim(),
-    }
-}
-
-/// `tts_tasks.preserve_multilingual_text`: languages other than Chinese and English bypass the
-/// Chinese/English text normalization.
-pub fn is_multilingual(language: &str) -> bool {
-    !matches!(
-        language.trim().to_lowercase().replace('_', "-").as_str(),
-        "zh" | "zh-cn" | "chinese" | "en" | "english"
-    )
 }
 
 /// The assistant-side caption: `tts_tasks.build_structured_instruction` with the zh schema
@@ -164,11 +184,55 @@ fn instruction(voice: &Voice) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use bundle::Tokenizer;
+
+    use super::{Language, Prompter, Voice};
+
+    /// The prompt for the reference's built-in voice, its target language line included.
+    const PROMPT: &str = concat!(
+        "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n",
+        "Please generate speech based on the following description.\n",
+        "Target language: German.\n  speaker_1:<|vision_start|><|vision_pad|><|vision_end|>\n",
+        " Text input:\nHallo.<|im_end|>\n<|im_start|>assistant\n",
+        r#"{"audio_sequence": [{"序号": 1, "说话人": "speaker_1", "方言": null, "风格": null, "#,
+        r#""语速": null, "基频": null, "音量": null, "情感": null, "BGM": {"Genre": null, "#,
+        r#""Mood": null, "Instrument": null, "Theme": null, "ENV": null, "SNR": null}, "#,
+        r#""IP": "US_James"}]}<|im_end|><audio>"#,
+    );
+
+    /// One token per character of `PROMPT`, its id the character's position in `characters`.
+    fn tokenizer(characters: &[char]) -> Tokenizer {
+        let vocab: serde_json::Map<String, serde_json::Value> = characters
+            .iter()
+            .enumerate()
+            .map(|(id, character)| (character.to_string(), id.into()))
+            .collect();
+        let json = serde_json::json!({
+            "version": "1.0",
+            "pre_tokenizer": {
+                "type": "Split", "pattern": {"Regex": "."}, "behavior": "Isolated", "invert": false
+            },
+            "model": {"type": "WordLevel", "vocab": vocab, "unk_token": "<"},
+        });
+        Tokenizer::parse(json.to_string().as_bytes()).unwrap()
+    }
 
     #[test]
-    fn builtin_voice_caption_matches_the_reference() {
-        let expected = r#"{"audio_sequence": [{"序号": 1, "说话人": "speaker_1", "方言": null, "风格": null, "语速": null, "基频": null, "音量": null, "情感": null, "BGM": {"Genre": null, "Mood": null, "Instrument": null, "Theme": null, "ENV": null, "SNR": null}, "IP": "US_James"}]}"#;
-        assert_eq!(instruction(&Voice::Builtin("US_James".into())), expected);
+    fn builtin_voice_prompt_matches_the_reference() {
+        let mut characters: Vec<char> = PROMPT.chars().collect();
+        characters.sort_unstable();
+        characters.dedup();
+        let prompter = Prompter::new(tokenizer(&characters));
+        let voice = Voice::Builtin("US_James".into());
+        let language = Language::parse(" de ");
+        let prompt = prompter.build("Hallo.", &voice, language.as_ref()).unwrap();
+        let text: String = prompt
+            .ids
+            .iter()
+            .map(|&id| characters[id as usize])
+            .collect();
+        assert_eq!(text, PROMPT);
+        let speaker: String = text.chars().skip(prompt.speaker_row).take(14).collect();
+        assert_eq!(speaker, "<|vision_pad|>");
     }
 }

@@ -4,19 +4,26 @@
 //! thousand 213"); years and values under a thousand stay as written; codes (a leading zero, a
 //! phone number in groups, "ending in -4098") are spelled digit by digit.
 
-use super::{PLUS, all_digits, split_suffix, trailing_punctuation};
+use std::ops::Range;
+
+use super::{PLUS, UNDERSCORE, all_digits, split_suffix, trailing_punctuation};
 
 const DIGIT_NAMES: [&str; 10] = [
     "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
 ];
-const SCALES: [(u64, &str); 3] = [
+/// Scale words by their value, largest first.
+const SCALES: [(u64, &str); 4] = [
+    (1_000_000_000_000, "trillion"),
     (1_000_000_000, "billion"),
     (1_000_000, "million"),
     (1000, "thousand"),
 ];
 /// Values from here on stay as written: no scale word reads them.
 const UNREAD: u64 = 1_000_000_000_000;
-const YEARS: std::ops::Range<u64> = 1900..2100;
+/// Numbers that read as years: they stay as written.
+const YEARS: Range<u64> = 1900..2100;
+/// The years a range of four-digit numbers ("1066-1087") may span.
+const RANGE_YEARS: Range<u64> = 1000..2100;
 const MINUS: &str = "minus";
 const POINT: &str = "point";
 
@@ -26,6 +33,11 @@ struct Currency {
     many: &'static str,
 }
 
+const CENT: Currency = Currency {
+    symbol: '¢',
+    one: "cent",
+    many: "cents",
+};
 const CURRENCIES: [Currency; 5] = [
     Currency {
         symbol: '$',
@@ -47,37 +59,24 @@ const CURRENCIES: [Currency; 5] = [
         one: "yen",
         many: "yen",
     },
-    Currency {
-        symbol: '¢',
-        one: "cent",
-        many: "cents",
-    },
+    CENT,
 ];
-const CENTS: &str = "cents";
-/// Scale words that may follow an amount, and the shorthands written right after one ("€3bn").
-const SCALE_WORDS: [&str; 4] = ["thousand", "million", "billion", "trillion"];
-const SCALE_SHORTHANDS: [(&str, &str); 14] = [
-    ("thousand", "thousand"),
-    ("million", "million"),
-    ("billion", "billion"),
-    ("trillion", "trillion"),
+/// Shorthands of a scale written right after an amount ("€3bn", "$5K"), in either case.
+const SCALE_SHORTHANDS: [(&str, &str); 6] = [
     ("bn", "billion"),
-    ("BN", "billion"),
     ("mn", "million"),
     ("tn", "trillion"),
     ("k", "thousand"),
-    ("K", "thousand"),
     ("m", "million"),
-    ("M", "million"),
     ("b", "billion"),
-    ("B", "billion"),
 ];
 
 /// The longest group of a phone number or code written in spaced groups.
 const MAX_GROUP: usize = 8;
 /// Groups of a dashed code up to this long are read as numbers, longer ones digit by digit.
 const MAX_DASHED_NUMBER: usize = 3;
-const UNDERSCORE: &str = "underscore";
+/// The words before "in -4098" that make it a code.
+const ENDING: [&str; 3] = ["ending", "ends", "ended"];
 
 /// A number word: a code with a leading zero, a range ("10-15"), a quantity, or a quantity
 /// joined to a word ("1500-word").
@@ -106,13 +105,10 @@ fn range(body: &str) -> Option<String> {
     let (from, to) = body.split_once('-')?;
     let small =
         |part: &str| (2..=3).contains(&part.len()) && all_digits(part) && !part.starts_with('0');
-    let year = |part: &str| {
-        part.len() == 4 && all_digits(part) && (part.starts_with('1') || part.starts_with("20"))
-    };
     let ascending = match (from.len(), to.len()) {
         _ if small(from) && small(to) => (from.len(), from) < (to.len(), to),
-        (4, 4) => year(from) && year(to) && from < to,
-        (4, 2) => year(from) && all_digits(to) && &from[2..] < to,
+        (4, 4) => is_year(from, &RANGE_YEARS) && is_year(to, &RANGE_YEARS) && from < to,
+        (4, 2) => is_year(from, &RANGE_YEARS) && all_digits(to) && &from[2..] < to,
         _ => false,
     };
     ascending.then(|| format!("{from} to {to}"))
@@ -149,6 +145,11 @@ fn quantity(word: &str) -> Option<(String, &str)> {
         spoken.extend([POINT.to_string(), decimals.to_string()]);
     }
     Some((spoken.join(" "), suffix))
+}
+
+/// Four digits in `years`.
+fn is_year(part: &str, years: &Range<u64>) -> bool {
+    part.len() == 4 && all_digits(part) && part.parse().is_ok_and(|year| years.contains(&year))
 }
 
 fn decimals(rest: &str) -> (Option<&str>, &str) {
@@ -205,9 +206,7 @@ pub(super) fn digit_groups(words: &[&str]) -> Option<(String, usize)> {
             break;
         }
     }
-    let years = groups
-        .iter()
-        .all(|group| group.len() == 4 && group.parse().is_ok_and(|year| YEARS.contains(&year)));
+    let years = groups.iter().all(|group| is_year(group, &YEARS));
     let code = match groups.len() {
         2 => plus || groups.iter().any(|group| group.starts_with('0')),
         count => count > 2 && !years,
@@ -225,23 +224,24 @@ pub(super) fn digit_groups(words: &[&str]) -> Option<(String, usize)> {
 }
 
 fn is_digit_group(body: &str) -> bool {
-    (1..=MAX_GROUP).contains(&body.len())
-        && body
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || byte.is_ascii_uppercase())
-        && body.bytes().any(|byte| byte.is_ascii_digit())
+    (1..=MAX_GROUP).contains(&body.len()) && is_code(body, b"")
+}
+
+/// Digits and capital letters, at least one digit, and any of `separators`.
+fn is_code(text: &str, separators: &[u8]) -> bool {
+    let readable =
+        |byte: u8| byte.is_ascii_digit() || byte.is_ascii_uppercase() || separators.contains(&byte);
+    text.bytes().all(readable) && text.bytes().any(|byte| byte.is_ascii_digit())
 }
 
 /// "ending in -4098": the code after "ending in" spelled out.
 pub(super) fn ending_in(previous: &str, words: &[&str]) -> Option<(String, usize)> {
-    let ending = ["ending", "ends", "ended"];
-    if !ending.contains(&previous.to_lowercase().as_str()) || *words.first()? != "in" {
+    if !ENDING.contains(&previous.to_lowercase().as_str()) || *words.first()? != "in" {
         return None;
     }
     let (body, end) = split_suffix(words.get(1)?);
     let code = body.strip_prefix('-')?;
-    let readable = |byte: u8| byte.is_ascii_digit() || byte.is_ascii_uppercase() || byte == b'-';
-    if !code.bytes().any(|byte| byte.is_ascii_digit()) || !code.bytes().all(readable) {
+    if !is_code(code, b"-") {
         return None;
     }
     Some((format!("in {}{end}", spell_digits(code)), 2))
@@ -321,7 +321,7 @@ pub(super) fn scaled_money(words: &[&str]) -> Option<(String, usize)> {
         return None;
     };
     let (scale, suffix) = split_suffix(next);
-    if !SCALE_WORDS.contains(&scale) {
+    if !SCALES.iter().any(|&(_, name)| name == scale) {
         return None;
     }
     let (currency, amount) = split_currency(word)?;
@@ -338,12 +338,15 @@ fn split_currency(word: &str) -> Option<(&'static Currency, &str)> {
 }
 
 impl Currency {
+    /// An amount with a scale word or shorthand right after it ("€3bn").
     fn scaled(&self, amount: &str) -> Option<String> {
-        SCALE_SHORTHANDS.iter().find_map(|&(shorthand, scale)| {
-            let number = amount.strip_suffix(shorthand)?;
-            number
-                .ends_with(|ch: char| ch.is_ascii_digit())
-                .then(|| self.with_scale(number, scale))?
+        let words = SCALES.iter().rev().map(|&(_, name)| (name, name));
+        words.chain(SCALE_SHORTHANDS).find_map(|(suffix, scale)| {
+            let number = amount.get(..amount.len().checked_sub(suffix.len())?)?;
+            let written = &amount[number.len()..];
+            let scaled = written.eq_ignore_ascii_case(suffix)
+                && number.ends_with(|ch: char| ch.is_ascii_digit());
+            scaled.then(|| self.with_scale(number, scale))?
         })
     }
 
@@ -361,7 +364,7 @@ impl Currency {
             all_digits(group) && (index == 0 && group.len() <= 3 || group.len() == 3)
         });
         let plain_cents = cents.len() == 2 && all_digits(cents);
-        if self.symbol == '¢' || !plain_cents || !(all_digits(whole) || grouped) {
+        if self.symbol == CENT.symbol || !plain_cents || !(all_digits(whole) || grouped) {
             return None;
         }
         let (whole, _) = quantity(whole)?;
@@ -369,15 +372,15 @@ impl Currency {
         let cents = cents.strip_prefix('0').unwrap_or(cents);
         Some(match (whole.as_str(), cents) {
             (_, "0") => format!("{whole} {name}"),
-            ("0", _) => format!("{cents} {CENTS}"),
-            _ => format!("{whole} {name} and {cents} {CENTS}"),
+            ("0", _) => format!("{cents} {}", CENT.many),
+            _ => format!("{whole} {name} and {cents} {}", CENT.many),
         })
     }
 
     /// Always the plural ("1 dollars", as the training text reads), except for one cent.
     fn whole(&self, amount: &str) -> Option<String> {
         let (spoken, _) = quantity(amount)?;
-        let one_cent = self.symbol == '¢' && amount == "1";
+        let one_cent = self.symbol == CENT.symbol && amount == "1";
         let name = if one_cent { self.one } else { self.many };
         Some(format!("{spoken} {name}"))
     }

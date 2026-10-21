@@ -1,8 +1,8 @@
-//! The FastConformer subsampler: `subsampling_stages` convolutions over time and frequency, each
-//! a `subsampling_kernel`-wide square window at stride `subsampling_stride` with zero padding of
-//! half the window, a ReLU after each stage. The first maps the mel features to `channels`; the
-//! others are depthwise, each followed by a pointwise linear. A last linear maps each frame's
-//! remaining frequencies of `channels` to `hidden`.
+//! The FastConformer subsampler: `stages` convolutions over time and frequency, each a
+//! `kernel`-wide square window at stride `stride` with zero padding of half the window, a ReLU
+//! after each stage. The first maps the mel features to `channels`; the others are depthwise,
+//! each followed by a pointwise linear. A last linear maps each frame's remaining frequencies
+//! of `channels` to `hidden`.
 //!
 //! A stage of `n` input rows (or frequencies) has `(n + 2 · ⌊kernel / 2⌋ − kernel) / stride + 1`
 //! outputs. As in the reference, the features count one zero frame past the `mel_frames` real
@@ -22,37 +22,67 @@
 
 use std::ops::Range;
 
-use bundle::{Load, Store};
-use kernels::{COLUMN_ALIGN, Error, Linear, QuantizedRows, Tensor, matmul};
+use bundle::{Load, Scope, Store};
+use kernels::{Linear, QuantizedRows, SharedRows, Vector, project};
 use team::{Ctx, PerThread, SharedBuf};
 
-use super::{Shape, vector};
+/// The dimensions of one subsampler.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Shape {
+    /// Mel bins of the input features.
+    pub mels: usize,
+    /// Channels of the convolutions.
+    pub channels: usize,
+    /// The side of the square windows, their stride, and how many stages there are.
+    pub kernel: usize,
+    pub stride: usize,
+    pub stages: usize,
+    /// The width of an encoder frame.
+    pub hidden: usize,
+}
 
 impl Shape {
     /// Mel frames per encoder frame.
-    pub const fn subsampling_factor(&self) -> usize {
-        self.subsampling_stride.pow(self.subsampling_stages as u32)
+    pub const fn factor(&self) -> usize {
+        self.stride.pow(self.stages as u32)
     }
 
     /// Outputs of a stage over `inputs` rows (or frequencies).
     fn stage_outputs(&self, inputs: usize) -> usize {
-        let padding = self.subsampling_kernel / 2;
-        (inputs + 2 * padding - self.subsampling_kernel) / self.subsampling_stride + 1
+        let padding = self.kernel / 2;
+        (inputs + 2 * padding - self.kernel) / self.stride + 1
     }
 
     /// The input rows a stage reads for its output rows `rows`, within `available` input rows.
     fn reads(&self, rows: &Range<usize>, available: usize) -> Range<usize> {
-        let padding = self.subsampling_kernel / 2;
-        let first = (self.subsampling_stride * rows.start).saturating_sub(padding);
-        let last = self.subsampling_stride * (rows.end - 1) + self.subsampling_kernel - padding;
+        let padding = self.kernel / 2;
+        let first = (self.stride * rows.start).saturating_sub(padding);
+        let last = self.stride * (rows.end - 1) + self.kernel - padding;
         first..last.min(available)
+    }
+
+    /// The frequencies after every stage, the first the mel bins.
+    fn widths(&self) -> Vec<usize> {
+        let mut width = self.mels;
+        let mut widths = vec![width];
+        for _ in 0..self.stages {
+            width = self.stage_outputs(width);
+            widths.push(width);
+        }
+        widths
+    }
+
+    /// Values of one subsampled frame before the last linear: the last stage's frequencies of
+    /// every channel.
+    fn stacked_width(&self) -> usize {
+        self.widths().last().expect("the mel bins") * self.channels
     }
 }
 
 /// A stage's convolution: taps and bias.
 struct Kernel {
-    taps: Tensor,
-    bias: Tensor,
+    taps: Vector,
+    bias: Vector,
 }
 
 /// A depthwise convolution and the pointwise linear after it.
@@ -63,29 +93,27 @@ struct Stage {
 
 pub struct Subsampling {
     shape: Shape,
+    /// The frequencies after every stage, the first the mel bins.
+    widths: Vec<usize>,
     conv: Kernel,
     stages: Vec<Stage>,
     out: Linear,
 }
 
-/// The encoder frames of `mel_frames` mel frames.
+/// Rows of a stage's output: all of them, and the leading ones that are valid. For the last
+/// stage, the encoder frames of `mel_frames` mel frames: the subsampler's output rows, of which
+/// the first `valid` are the encoder's frames.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Frames {
-    /// Rows of the subsampler's output.
     pub all: usize,
-    /// The leading rows that are the encoder's frames.
     pub valid: usize,
 }
 
 impl Frames {
     pub fn of(shape: &Shape, mel_frames: usize) -> Self {
-        let last = *lengths(shape, mel_frames)
+        *lengths(shape, mel_frames)
             .last()
-            .expect("at least one stage");
-        Self {
-            all: last.all,
-            valid: last.valid,
-        }
+            .expect("a subsampler has stages")
     }
 }
 
@@ -113,11 +141,10 @@ struct Scratch {
 impl Buffers {
     pub fn new(shape: Shape, mel_frames: usize, block_frames: usize, threads: usize) -> Self {
         let frames = Frames::of(&shape, mel_frames).all;
-        let width = stacked_width(&shape);
         Self {
             mel_frames,
             block_frames,
-            stacked: SharedBuf::new(frames * width),
+            stacked: SharedBuf::new(frames * shape.stacked_width()),
             hidden: SharedBuf::new(frames * shape.hidden),
             scratch: PerThread::new(threads, Scratch::default),
         }
@@ -128,50 +155,20 @@ impl Buffers {
     }
 }
 
-/// A stage's output rows and the leading ones that are valid.
-#[derive(Clone, Copy)]
-struct Length {
-    all: usize,
-    valid: usize,
-}
-
-/// One call's stages: their output lengths, and the frequencies of their inputs (the mel bins
-/// first) and of the last one's output.
-struct Layout {
-    lengths: Vec<Length>,
-    widths: Vec<usize>,
-}
-
-/// Every stage's output length for `mel_frames` mel frames.
-fn lengths(shape: &Shape, mel_frames: usize) -> Vec<Length> {
-    let mut length = Length {
+/// Every stage's output rows for `mel_frames` mel frames.
+fn lengths(shape: &Shape, mel_frames: usize) -> Vec<Frames> {
+    let mut length = Frames {
         all: mel_frames + 1,
         valid: mel_frames,
     };
-    let stages = (0..shape.subsampling_stages).map(|_| {
-        length = Length {
+    let stages = (0..shape.stages).map(|_| {
+        length = Frames {
             all: shape.stage_outputs(length.all),
             valid: shape.stage_outputs(length.valid),
         };
         length
     });
     stages.collect()
-}
-
-/// The frequencies after every stage, the first the mel bins.
-fn widths(shape: &Shape) -> Vec<usize> {
-    let mut width = shape.mels;
-    let mut widths = vec![width];
-    for _ in 0..shape.subsampling_stages {
-        width = shape.stage_outputs(width);
-        widths.push(width);
-    }
-    widths
-}
-
-/// Values of one subsampled frame before the last linear.
-fn stacked_width(shape: &Shape) -> usize {
-    widths(shape).last().expect("the mel bins") * shape.channels
 }
 
 /// Rows of a stage's input: `values` holds rows `first..` of `width × depth` values each; rows
@@ -208,29 +205,24 @@ impl Subsampling {
             (1..=buffers.mel_frames).contains(&mel_frames),
             "the buffers hold the features"
         );
-        let layout = Layout {
-            lengths: lengths(&self.shape, mel_frames),
-            widths: widths(&self.shape),
-        };
-        let frames = Frames::of(&self.shape, mel_frames);
-        let width = stacked_width(&self.shape);
+        let lengths = lengths(&self.shape, mel_frames);
+        let frames = *lengths.last().expect("a subsampler has stages");
+        let width = self.out.matrix().cols;
         for block in ctx.split(frames.all.div_ceil(buffers.block_frames), 1) {
             let first = block * buffers.block_frames;
             let rows = first..(first + buffers.block_frames).min(frames.all);
-            let stacked = self.block(features, &layout, rows.clone(), buffers.scratch.get(ctx));
+            let stacked = self.block(features, &lengths, rows.clone(), buffers.scratch.get(ctx));
             let part = buffers.stacked.part(rows.start * width..rows.end * width);
             part.copy_from_slice(stacked);
         }
         ctx.barrier();
-        let matrix = self.out.matrix();
+        let stacked = SharedRows {
+            values: &buffers.stacked,
+            rows: frames.all,
+        };
         let quant = &mut buffers.scratch.get(ctx).quant;
-        let stacked = &buffers.stacked.read()[..frames.all * matrix.cols];
-        let x = quant.input(&matrix, stacked, frames.all);
-        let bias = self.out.bias();
-        let cols = ctx.split(matrix.rows, COLUMN_ALIGN);
-        matmul(&matrix, &x, frames.all, cols, |row, col, value| {
-            let biased = value + bias.map_or(0.0, |bias| bias[col]);
-            buffers.hidden.set(row * matrix.rows + col, biased);
+        project(ctx, &self.out, stacked, quant, |at, value| {
+            buffers.hidden.set(at, value);
         });
         ctx.barrier();
         frames
@@ -241,11 +233,11 @@ impl Subsampling {
     fn block<'scratch>(
         &self,
         features: &[f32],
-        layout: &Layout,
+        lengths: &[Frames],
         rows: Range<usize>,
         scratch: &'scratch mut Scratch,
     ) -> &'scratch [f32] {
-        let Layout { lengths, widths } = layout;
+        let widths = &self.widths;
         let Scratch {
             reads,
             stages,
@@ -284,27 +276,16 @@ impl Subsampling {
             stage
                 .depthwise
                 .apply(&self.shape, &input, span, &mut rest[0]);
-            mix(
-                &stage.pointwise,
-                self.shape.channels,
-                &mut rest[0],
-                (pointwise, quant),
-            );
+            mix(&stage.pointwise, &mut rest[0], pointwise, quant);
         }
-        stages.last().expect("at least one stage")
+        stages.last().expect("a subsampler has stages")
     }
 }
 
-/// `relu(linear(values))` over every position of `channels` values, in place.
-fn mix(
-    linear: &Linear,
-    channels: usize,
-    values: &mut [f32],
-    (out, quant): (&mut Vec<f32>, &mut QuantizedRows),
-) {
-    let positions = values.len() / channels;
+/// `relu(linear(values))` over every position (a row of the linear's inputs), in place.
+fn mix(linear: &Linear, values: &mut [f32], out: &mut Vec<f32>, quant: &mut QuantizedRows) {
     out.resize(values.len(), 0.0);
-    linear.apply(values, positions, quant, out);
+    linear.apply(values, quant, out);
     values.copy_from_slice(out);
     relu(values);
 }
@@ -325,7 +306,7 @@ impl Kernel {
         (rows, valid): (Range<usize>, usize),
         out: &mut Vec<f32>,
     ) {
-        let channels = self.bias.values().expect("checked at load").len();
+        let channels = self.bias.values().len();
         let width = shape.stage_outputs(input.width);
         out.clear();
         out.resize(rows.len() * width * channels, 0.0);
@@ -345,14 +326,10 @@ impl Kernel {
         (row, column): (usize, usize),
         sums: &mut [f32],
     ) {
-        let taps = self.taps.values().expect("checked at load");
-        let (side, stride, padding) = (
-            shape.subsampling_kernel,
-            shape.subsampling_stride,
-            shape.subsampling_kernel / 2,
-        );
+        let taps = self.taps.values();
+        let (side, stride, padding) = (shape.kernel, shape.stride, shape.kernel / 2);
         let channels = sums.len();
-        sums.copy_from_slice(self.bias.values().expect("checked at load"));
+        sums.copy_from_slice(self.bias.values());
         for tap in 0..side * side {
             let source = (stride * row + tap / side).checked_sub(padding);
             let at = (stride * column + tap % side).checked_sub(padding);
@@ -380,10 +357,11 @@ impl Load for Kernel {
     type Shape = Shape;
 
     fn load(store: &mut Store, prefix: &str, shape: Shape) -> Result<Self, bundle::Error> {
-        let taps = shape.subsampling_kernel * shape.subsampling_kernel;
+        let taps = shape.kernel * shape.kernel;
+        let mut scope = Scope::new(store, prefix);
         Ok(Self {
-            taps: vector(store, &format!("{prefix}.weight"), taps * shape.channels)?,
-            bias: vector(store, &format!("{prefix}.bias"), shape.channels)?,
+            taps: scope.load("weight", taps * shape.channels)?,
+            bias: scope.load("bias", shape.channels)?,
         })
     }
 }
@@ -392,28 +370,22 @@ impl Load for Subsampling {
     type Shape = Shape;
 
     fn load(store: &mut Store, prefix: &str, shape: Shape) -> Result<Self, bundle::Error> {
-        let name = |part: &str| format!("{prefix}.{part}");
-        let stages = (1..shape.subsampling_stages)
+        let mut scope = Scope::new(store, prefix);
+        let channels = [shape.channels; 2];
+        let stages = (1..shape.stages)
             .map(|stage| {
                 Ok(Stage {
-                    depthwise: Kernel::load(store, &name(&format!("depthwise{stage}")), shape)?,
-                    pointwise: Linear::load(store, &name(&format!("pointwise{stage}")), ())?,
+                    depthwise: scope.load(&format!("depthwise{stage}"), shape)?,
+                    pointwise: scope.load(&format!("pointwise{stage}"), channels)?,
                 })
             })
             .collect::<Result<_, bundle::Error>>()?;
-        let subsampling = Self {
+        Ok(Self {
             shape,
-            conv: Kernel::load(store, &name("conv"), shape)?,
+            widths: shape.widths(),
+            conv: scope.load("conv", shape)?,
             stages,
-            out: Linear::load(store, &name("out"), ())?,
-        };
-        let inputs = stacked_width(&shape);
-        let found = subsampling.out.matrix().cols;
-        if found != inputs {
-            return Err(
-                Error::Format(format!("{prefix}.out reads {found} values, not {inputs}")).into(),
-            );
-        }
-        Ok(subsampling)
+            out: scope.load("out", [shape.hidden, shape.stacked_width()])?,
+        })
     }
 }

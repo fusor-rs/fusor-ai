@@ -14,21 +14,22 @@ mod filterbank;
 mod tables;
 mod ternary;
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 
 use bundle::{Manifest, Source};
-use compile::{BundleWriter, Checkpoint, Error};
-use kernels::{DType, Tensor};
+use compile::{BundleWriter, Checkpoint, Error, Profile as _, Tensors, read_json};
+use kernels::DType;
 use parakeet::model::{TOKENS, VOCABULARY_PART};
 use serde::Deserialize;
 
-use crate::tables::{Kind, Tensors};
-
-pub const REPO: &str = "moondream/parakeet-redux";
-pub const REVISION: &str = "2bf128600aac4b16946f7ed8372e56117fe5e23b";
+const REPO: &str = "moondream/parakeet-redux";
+const REVISION: &str = "2bf128600aac4b16946f7ed8372e56117fe5e23b";
 const WEIGHTS: &str = "model.safetensors";
 const TOKENIZER: &str = "tokenizer.json";
+/// The conformer layers, whose matrices are the export's ternary projections.
+const TERNARY_PREFIX: &str = "encoder.layers.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Profile {
@@ -38,22 +39,24 @@ pub enum Profile {
     Ternary,
 }
 
-impl Profile {
-    pub const ALL: [Self; 2] = [Self::F32, Self::Ternary];
+impl compile::Profile for Profile {
+    const ALL: &'static [Self] = &[Self::F32, Self::Ternary];
+    /// The frontend, the subsampler's pointwise convolutions and the speech head.
+    const ALWAYS_F32: &'static [&'static str] =
+        &["features.", "encoder.subsampling.pointwise", "speech."];
 
-    /// The name in `manifest.json` and on the command line.
-    pub fn name(self) -> &'static str {
+    fn name(self) -> &'static str {
         match self {
             Self::F32 => "f32",
             Self::Ternary => "ternary",
         }
     }
 
-    fn dtype(self, kind: Kind) -> DType {
-        match (self, kind) {
-            (Self::Ternary, Kind::Ternary) => DType::T2b128,
-            (Self::Ternary, Kind::Matrix) => DType::Q7b32,
-            (Self::F32, _) | (_, Kind::F32) => DType::F32,
+    fn matrix_dtype(self, name: &str) -> DType {
+        match self {
+            Self::F32 => DType::F32,
+            Self::Ternary if name.starts_with(TERNARY_PREFIX) => DType::T2b128,
+            Self::Ternary => DType::Q7b32,
         }
     }
 }
@@ -62,34 +65,21 @@ impl FromStr for Profile {
     type Err = Error;
 
     fn from_str(name: &str) -> Result<Self, Error> {
-        Self::ALL
-            .into_iter()
-            .find(|profile| profile.name() == name)
-            .ok_or_else(|| Error::Format(format!("no profile {name:?} (f32 or ternary)")))
+        compile::profile(name)
     }
 }
 
 pub fn run(checkpoint_dir: &Path, out: &Path, profile: Profile) -> Result<Manifest, Error> {
     let checkpoint = Checkpoint::read(&checkpoint_dir.join(WEIGHTS))?;
     let ternary = ternary::Export::read(checkpoint_dir)?;
-    let mut tensors = Tensors::default();
-    tables::frontend(&mut tensors);
+    let mut writer = BundleWriter::create(out)?;
+    let mut tensors = Tensors::new(&mut writer, profile);
+    tables::frontend(&mut tensors)?;
     tables::encoder(&checkpoint, &ternary, &mut tensors)?;
     tables::speech(&checkpoint, &mut tensors)?;
     tables::decoder(&checkpoint, &mut tensors)?;
-    let mut writer = BundleWriter::create(out)?;
-    for entry in tensors.into_entries() {
-        if entry.values.len() != entry.shape.iter().product::<usize>() {
-            let (name, shape) = (entry.name, entry.shape);
-            return Err(Error::Format(format!("{name}: shape {shape:?}")));
-        }
-        let tensor = Tensor::encode(profile.dtype(entry.kind), entry.shape, &entry.values);
-        writer.add_tensor(&entry.name, &tensor)?;
-    }
-    writer.add_blob(
-        VOCABULARY_PART,
-        &vocabulary(&checkpoint_dir.join(TOKENIZER))?,
-    )?;
+    let vocabulary = vocabulary(&checkpoint_dir.join(TOKENIZER))?;
+    writer.add_blob(VOCABULARY_PART, &vocabulary)?;
     writer.finish(Source {
         repo: REPO.into(),
         revision: REVISION.into(),
@@ -105,7 +95,7 @@ struct Tokenizer {
 
 #[derive(Deserialize)]
 struct TokenizerModel {
-    vocab: std::collections::HashMap<String, usize>,
+    vocab: HashMap<String, usize>,
 }
 
 #[derive(Deserialize)]
@@ -118,12 +108,7 @@ struct AddedToken {
 /// The vocabulary blob (`parakeet::vocabulary::Vocabulary`): the piece of every token id, `null`
 /// for the special tokens, which decoding skips.
 fn vocabulary(path: &Path) -> Result<Vec<u8>, Error> {
-    let json = std::fs::read(path).map_err(|source| Error::Io {
-        path: path.into(),
-        source,
-    })?;
-    let tokenizer: Tokenizer = serde_json::from_slice(&json)
-        .map_err(|error| Error::Format(format!("{}: {error}", path.display())))?;
+    let tokenizer: Tokenizer = read_json(path)?;
     let mut pieces: Vec<Option<String>> = vec![None; TOKENS];
     let mut place = |id: usize, piece: Option<String>| match pieces.get_mut(id) {
         Some(slot) => {

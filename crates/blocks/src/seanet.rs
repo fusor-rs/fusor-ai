@@ -14,11 +14,13 @@
 //! has fewer rows than columns and by rows after, then one phase that moves every conv's history.
 //!
 //! Tensors under a prefix `p`: `p.init`, `p.stages.{i}.{upsample, residual1, residual2}` and
-//! `p.final`, each a linear layer with a bias.
+//! `p.final`, each a linear layer.
+
+use std::ops::Range;
 
 use bundle::{Load, Store};
 use kernels::ops::elu;
-use kernels::{COLUMN_ALIGN, Error, Linear, QuantizedRows, matmul};
+use kernels::{COLUMN_ALIGN, Linear, QuantizedRows};
 use team::{Ctx, PerThread, SharedBuf};
 
 /// The dimensions of one decoder.
@@ -39,14 +41,21 @@ pub struct Shape {
     pub channels: usize,
 }
 
-/// A causal convolution as one matrix (see the module docs).
+/// A causal convolution as one matrix (see the module docs): output row `t` holds `phases` time
+/// steps of `outputs` channels, from input rows `t − window + 1 ..= t` of `inputs` channels.
+#[derive(Debug, Clone, Copy)]
 struct CausalConv {
-    linear: Linear,
     window: usize,
     phases: usize,
     inputs: usize,
-    /// Values of one output row: `phases · out`.
     outputs: usize,
+}
+
+impl CausalConv {
+    /// Values of one output row.
+    fn row(&self) -> usize {
+        self.phases * self.outputs
+    }
 }
 
 /// Where a conv's results go.
@@ -54,19 +63,18 @@ struct CausalConv {
 enum Output {
     /// ELU of the result into the next conv's input.
     Next,
-    /// The result into the stage's skip buffer as well.
-    NextAndSkip,
-    /// The skip buffer added to the result first (the end of a residual unit).
-    NextPlusSkip,
+    /// The result into the skip buffer of `stage` as well.
+    NextAndSkip { stage: usize },
+    /// The skip buffer of `stage` added to the result first (the end of a residual unit).
+    NextPlusSkip { stage: usize },
     /// The decoder's output.
     Last,
 }
 
 struct Step {
     conv: CausalConv,
+    linear: Linear,
     output: Output,
-    /// The stage whose skip buffer `output` uses.
-    stage: usize,
 }
 
 pub struct Seanet {
@@ -80,6 +88,7 @@ pub struct State {
     histories: Vec<SharedBuf>,
     /// The input rows of every conv after the first.
     inputs: Vec<SharedBuf>,
+    /// Per stage, the output of its upsampling conv, which its residual unit adds back.
     skips: Vec<SharedBuf>,
     /// Output rows of the last call, `channels` values each.
     pub output: SharedBuf,
@@ -99,47 +108,7 @@ struct Pass<'call> {
     history: &'call SharedBuf,
     input: &'call SharedBuf,
     target: &'call SharedBuf,
-    skip: Option<&'call SharedBuf>,
-}
-
-/// One conv of the decoder as the shape describes it.
-struct Layout {
-    window: usize,
-    phases: usize,
-    inputs: usize,
-    outputs: usize,
-    output: Output,
-    stage: usize,
-}
-
-impl CausalConv {
-    fn new(linear: Linear, layout: &Layout) -> Result<Self, Error> {
-        let Layout {
-            window,
-            phases,
-            inputs,
-            outputs,
-            ..
-        } = *layout;
-        let matrix = linear.matrix();
-        if matrix.cols != window * inputs
-            || matrix.rows != phases * outputs
-            || linear.bias().is_none()
-        {
-            return Err(Error::Format(format!(
-                "a [{}, {}] conv with a bias for {phases} × {outputs} outputs \
-                 of {window} × {inputs}",
-                matrix.rows, matrix.cols
-            )));
-        }
-        Ok(Self {
-            window,
-            phases,
-            inputs,
-            outputs: matrix.rows,
-            linear,
-        })
-    }
+    skips: &'call [SharedBuf],
 }
 
 impl Seanet {
@@ -175,47 +144,13 @@ impl Seanet {
                 history: &state.histories[index],
                 input: state.input(index, input),
                 target: state.inputs.get(index).unwrap_or(&state.output),
-                skip: state.skips.get(step.stage),
+                skips: &state.skips,
             };
-            self.convolve(ctx, state, &pass);
+            convolve(ctx, state, &pass);
             ctx.barrier();
         }
         self.keep_history(ctx, state, input, rows);
         ctx.barrier();
-    }
-
-    /// This thread's share of one conv: the windows of its rows, the product, the output.
-    fn convolve(&self, ctx: &Ctx, state: &State, pass: &Pass) {
-        let conv = &pass.step.conv;
-        let (rows, cols) = if pass.rows < conv.outputs {
-            (0..pass.rows, ctx.split(conv.outputs, COLUMN_ALIGN))
-        } else {
-            (ctx.split(pass.rows, 1), 0..conv.outputs)
-        };
-        let scratch = state.scratch.get(ctx);
-        let width = conv.window * conv.inputs;
-        scratch.window.resize(rows.len() * width, 0.0);
-        for (row, window) in rows.clone().zip(scratch.window.chunks_exact_mut(width)) {
-            gather(pass, row, window);
-        }
-        let matrix = conv.linear.matrix();
-        let input = scratch.quant.input(&matrix, &scratch.window, rows.len());
-        let bias = conv.linear.bias().expect("checked in CausalConv::new");
-        let first = rows.start;
-        matmul(
-            &matrix,
-            &input,
-            rows.len(),
-            cols.clone(),
-            |row, col, value| {
-                pass.target
-                    .set((first + row) * conv.outputs + col, value + bias[col]);
-            },
-        );
-        for row in rows {
-            let span = row * conv.outputs + cols.start..row * conv.outputs + cols.end;
-            finish(pass, span);
-        }
     }
 
     /// Moves the last `window − 1` input rows of every conv into its history.
@@ -236,6 +171,32 @@ impl Seanet {
     }
 }
 
+/// This thread's share of one conv: the windows of its rows, the product, the output.
+fn convolve(ctx: &Ctx, state: &State, pass: &Pass) {
+    let conv = &pass.step.conv;
+    let (rows, cols) = if pass.rows < conv.row() {
+        (0..pass.rows, ctx.split(conv.row(), COLUMN_ALIGN))
+    } else {
+        (ctx.split(pass.rows, 1), 0..conv.row())
+    };
+    let scratch = state.scratch.get(ctx);
+    let width = conv.window * conv.inputs;
+    scratch.window.resize(rows.len() * width, 0.0);
+    for (row, window) in rows.clone().zip(scratch.window.chunks_exact_mut(width)) {
+        gather(pass, row, window);
+    }
+    let linear = &pass.step.linear;
+    let input = scratch.quant.input(&linear.matrix(), &scratch.window);
+    let first = rows.start;
+    linear.project(&input, cols.clone(), |row, col, value| {
+        pass.target.set((first + row) * conv.row() + col, value);
+    });
+    for row in rows {
+        let span = row * conv.row() + cols.start..row * conv.row() + cols.end;
+        finish(pass, span);
+    }
+}
+
 impl State {
     pub fn new(seanet: &Seanet, rows: usize, threads: usize) -> Self {
         let mut histories = Vec::new();
@@ -244,9 +205,9 @@ impl State {
         for (step, step_rows) in seanet.steps.iter().zip(seanet.step_rows(rows)) {
             let conv = &step.conv;
             histories.push(SharedBuf::new((conv.window - 1) * conv.inputs));
-            inputs.push(SharedBuf::new(step_rows * conv.outputs));
-            if step.output == Output::NextAndSkip {
-                skips.push(SharedBuf::new(step_rows * conv.outputs));
+            inputs.push(SharedBuf::new(step_rows * conv.row()));
+            if let Output::NextAndSkip { .. } = step.output {
+                skips.push(SharedBuf::new(step_rows * conv.row()));
             }
         }
         let output = inputs.pop().expect("a decoder has convs");
@@ -294,19 +255,14 @@ fn gather(pass: &Pass, row: usize, window: &mut [f32]) {
 }
 
 /// Applies a conv's output rule to the results in `span` of its target.
-fn finish(pass: &Pass, span: std::ops::Range<usize>) {
+fn finish(pass: &Pass, span: Range<usize>) {
     let values = pass.target.part(span.clone());
-    let skip = || {
-        pass.skip
-            .expect("every stage has a skip buffer")
-            .part(span.clone())
-    };
     match pass.step.output {
         Output::Last => return,
         Output::Next => {}
-        Output::NextAndSkip => skip().copy_from_slice(values),
-        Output::NextPlusSkip => {
-            for (value, saved) in values.iter_mut().zip(skip().iter()) {
+        Output::NextAndSkip { stage } => pass.skips[stage].part(span).copy_from_slice(values),
+        Output::NextPlusSkip { stage } => {
+            for (value, saved) in values.iter_mut().zip(pass.skips[stage].part(span).iter()) {
                 *value += saved;
             }
         }
@@ -315,46 +271,42 @@ fn finish(pass: &Pass, span: std::ops::Range<usize>) {
 }
 
 impl Shape {
-    /// Every conv in order, with its tensor name under `prefix`.
-    fn layouts(&self, prefix: &str) -> Vec<(String, Layout)> {
+    /// Every conv in order, with its tensor name under `prefix` and where its results go.
+    fn layouts(&self, prefix: &str) -> Vec<(String, CausalConv, Output)> {
         let stages = self.ratios.len();
-        let conv = |window, inputs, outputs, output| Layout {
+        let conv = |window, inputs, outputs| CausalConv {
             window,
             phases: 1,
             inputs,
             outputs,
-            output,
-            stage: 0,
         };
         let top = self.filters << stages;
         let mut layouts = vec![(
             format!("{prefix}.init"),
-            conv(self.kernel, self.dimension, top, Output::Next),
+            conv(self.kernel, self.dimension, top),
+            Output::Next,
         )];
         for (stage, &ratio) in self.ratios.iter().enumerate() {
             let wide = top >> stage;
             let (narrow, inner) = (wide / 2, wide / 2 / self.compress);
             let name = |part: &str| format!("{prefix}.stages.{stage}.{part}");
-            let upsample = Layout {
+            let upsample = CausalConv {
                 phases: ratio,
-                stage,
-                ..conv(2, wide, narrow, Output::NextAndSkip)
+                ..conv(2, wide, narrow)
             };
-            let residual1 = conv(self.residual_kernel, narrow, inner, Output::Next);
-            let residual2 = Layout {
-                stage,
-                ..conv(1, inner, narrow, Output::NextPlusSkip)
-            };
-            layouts.push((name("upsample"), upsample));
-            layouts.push((name("residual1"), residual1));
-            layouts.push((name("residual2"), residual2));
+            layouts.push((name("upsample"), upsample, Output::NextAndSkip { stage }));
+            let residual1 = conv(self.residual_kernel, narrow, inner);
+            layouts.push((name("residual1"), residual1, Output::Next));
+            let residual2 = conv(1, inner, narrow);
+            layouts.push((name("residual2"), residual2, Output::NextPlusSkip { stage }));
         }
-        let last = conv(self.last_kernel, self.filters, self.channels, Output::Last);
-        layouts.push((format!("{prefix}.final"), last));
+        let last = conv(self.last_kernel, self.filters, self.channels);
+        layouts.push((format!("{prefix}.final"), last, Output::Last));
         layouts
     }
 }
 
+/// Each conv a linear layer of `[phases · out, window · in]`.
 impl Load for Seanet {
     type Shape = Shape;
 
@@ -362,12 +314,12 @@ impl Load for Seanet {
         let steps = shape
             .layouts(prefix)
             .into_iter()
-            .map(|(name, layout)| {
-                let linear = Linear::load(store, &name, ())?;
+            .map(|(name, conv, output)| {
+                let matrix = [conv.row(), conv.window * conv.inputs];
                 Ok(Step {
-                    conv: CausalConv::new(linear, &layout)?,
-                    output: layout.output,
-                    stage: layout.stage,
+                    linear: Linear::load(store, &name, matrix)?,
+                    conv,
+                    output,
                 })
             })
             .collect::<Result<_, bundle::Error>>()?;

@@ -25,21 +25,25 @@ export const BUILDS = [
   { name: 'web-single', threads: false, relaxed: false },
 ];
 
+/** A runtime's `{"kind","message"}` error, or null for any other error. */
+function runtimeError(error) {
+  try {
+    return JSON.parse(String(error?.message ?? error));
+  } catch {
+    return null; // not thrown by the runtime as JSON
+  }
+}
+
 /** The `kind` of a runtime error (`format`, `integrity`, …), or null for other errors. */
 export function errorKind(error) {
-  try {
-    return JSON.parse(String(error?.message ?? error)).kind;
-  } catch {
-    return null;
-  }
+  return runtimeError(error)?.kind ?? null;
 }
 
 /** A runtime error's message, or the runtime's last Rust panic behind a wasm trap. */
 export function describe(error, glue) {
+  const runtime = runtimeError(error);
+  if (runtime) return runtime.message;
   const text = String(error?.message ?? error);
-  try {
-    return JSON.parse(text).message;
-  } catch {}
   const panic = glue?.last_panic?.();
   return panic ? `${text} (panic: ${panic})` : text;
 }

@@ -159,18 +159,27 @@ fn abbreviation(word: &str) -> Option<String> {
         Some(rest) => (&word[..=body.len()], rest),
         None => (body, suffix),
     };
+    Some(format!("{}{rest}", long_form(short)?))
+}
+
+fn long_form(short: &str) -> Option<&'static str> {
     let (_, long) = ABBREVIATIONS
         .iter()
         .find(|(abbreviation, _)| *abbreviation == short)?;
-    Some(format!("{long}{rest}"))
+    Some(long)
 }
 
+/// "Lt Col", which reads as "Lt" and "Col." do.
 fn lieutenant_colonel(words: &[&str]) -> Option<(String, usize)> {
     let [first, second, ..] = words else {
         return None;
     };
     let (rank, suffix) = split_suffix(second);
-    (*first == "Lt" && rank == "Col").then(|| (format!("Lieutenant Colonel{suffix}"), 2))
+    if *first != "Lt" || rank != "Col" {
+        return None;
+    }
+    let spoken = format!("{} {}{suffix}", long_form("Lt")?, long_form("Col.")?);
+    Some((spoken, 2))
 }
 
 /// A word with a letter stretched out ("sooo"), each stretch read as one letter.

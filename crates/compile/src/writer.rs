@@ -8,8 +8,6 @@ use crate::Error;
 
 /// Parts close once they would grow past this size (a single larger tensor gets its own part).
 const PART_BYTES: usize = 48 << 20;
-/// Tensor offsets inside a part are multiples of this, for aligned SIMD loads.
-const TENSOR_ALIGN: usize = 16;
 const PARTS_DIR: &str = "parts";
 const MANIFEST: &str = "manifest.json";
 
@@ -38,11 +36,9 @@ impl BundleWriter {
         if !self.current.is_empty() && self.current.len() + bytes.len() > PART_BYTES {
             self.flush()?;
         }
-        self.current
-            .resize(self.current.len().next_multiple_of(TENSOR_ALIGN), 0);
         let entry = TensorEntry {
-            dtype: tensor.dtype,
-            shape: tensor.shape.clone(),
+            dtype: tensor.dtype(),
+            shape: tensor.shape().to_vec(),
             part: self.parts.len(),
             offset: self.current.len() as u64,
         };
@@ -57,6 +53,11 @@ impl BundleWriter {
     pub fn add_blob(&mut self, file: &str, bytes: &[u8]) -> Result<(), Error> {
         self.flush()?;
         self.write_part(file, bytes)
+    }
+
+    pub fn add_blob_file(&mut self, file: &str, path: &Path) -> Result<(), Error> {
+        let bytes = std::fs::read(path).map_err(Error::io(path))?;
+        self.add_blob(file, &bytes)
     }
 
     /// Writes the last tensor part and the manifest.
@@ -131,28 +132,16 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("fusor-ai-writer-{}", std::process::id()));
         let values: Vec<f32> = (0..3 * 64).map(|i| (i as f32 - 90.0) / 9.0).collect();
         let mut writer = BundleWriter::create(&dir).unwrap();
-        writer
-            .add_tensor(
-                "norm",
-                &Tensor::encode(DType::F32, vec![3], &[1.0, 2.0, 3.0]),
-            )
-            .unwrap();
-        writer
-            .add_tensor(
-                "weight",
-                &Tensor::encode(DType::Q7b32, vec![3, 64], &values),
-            )
-            .unwrap();
+        let norm = Tensor::encode(DType::F32, vec![3], &[1.0, 2.0, 3.0]).unwrap();
+        writer.add_tensor("norm", &norm).unwrap();
+        let weight = Tensor::encode(DType::Q7b32, vec![3, 64], &values).unwrap();
+        writer.add_tensor("weight", &weight).unwrap();
         writer.add_blob("vocab.json", b"{\"a\": 1}").unwrap();
         let manifest = writer.finish(source()).unwrap();
 
         let mut store = load(&dir, &manifest, 7).unwrap();
-        assert_eq!(
-            store.take("norm").unwrap().values().unwrap(),
-            [1.0, 2.0, 3.0]
-        );
-        let expected = Tensor::encode(DType::Q7b32, vec![3, 64], &values);
-        assert_eq!(store.take("weight").unwrap().bytes(), expected.bytes());
+        assert_eq!(store.take("norm").unwrap().bytes(), norm.bytes());
+        assert_eq!(store.take("weight").unwrap().bytes(), weight.bytes());
         assert_eq!(store.take_blob("vocab.json").unwrap(), b"{\"a\": 1}");
 
         let mut tampered = manifest;

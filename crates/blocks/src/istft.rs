@@ -39,8 +39,16 @@ impl Istft {
         self.n_fft() / 2 + 1
     }
 
-    pub fn window(&self) -> &[f32] {
-        &self.window
+    /// The overlap-add of this transform's frames at `hop` intervals.
+    pub fn overlap_add(&self, hop: usize) -> OverlapAdd {
+        OverlapAdd {
+            window: self.window.clone(),
+            hop,
+            frames: 0,
+            sum: Vec::new(),
+            envelope: Vec::new(),
+            base: 0,
+        }
     }
 
     pub fn scratch(&self) -> FftScratch {
@@ -87,7 +95,7 @@ impl Istft {
 
 /// Overlap-add sums and squared-window sums of a stream; index 0 is padded sample `base`.
 pub struct OverlapAdd {
-    n_fft: usize,
+    window: Vec<f32>,
     hop: usize,
     frames: usize,
     sum: Vec<f32>,
@@ -96,31 +104,31 @@ pub struct OverlapAdd {
 }
 
 impl OverlapAdd {
-    pub fn new(n_fft: usize, hop: usize) -> Self {
-        Self {
-            n_fft,
-            hop,
-            frames: 0,
-            sum: Vec::new(),
-            envelope: Vec::new(),
-            base: 0,
-        }
-    }
-
     /// Frames added so far (the next frame's position).
     pub fn frames(&self) -> usize {
         self.frames
     }
 
+    pub fn reset(&mut self) {
+        self.frames = 0;
+        self.sum.clear();
+        self.envelope.clear();
+        self.base = 0;
+    }
+
+    fn n_fft(&self) -> usize {
+        self.window.len()
+    }
+
     /// Adds one windowed frame at the next position.
-    pub fn add(&mut self, frame: &[f32], window: &[f32]) {
+    pub fn add(&mut self, frame: &[f32]) {
         let start = self.frames * self.hop - self.base;
-        let end = start + self.n_fft;
+        let end = start + self.n_fft();
         if self.sum.len() < end {
             self.sum.resize(end, 0.0);
             self.envelope.resize(end, 0.0);
         }
-        for ((offset, &value), &weight) in frame.iter().enumerate().zip(window) {
+        for ((offset, &value), &weight) in frame.iter().enumerate().zip(&self.window) {
             self.sum[start + offset] += value;
             self.envelope[start + offset] += weight * weight;
         }
@@ -137,11 +145,11 @@ impl OverlapAdd {
         let Some(last) = self.frames.checked_sub(1) else {
             return;
         };
-        self.emit(last * self.hop + self.n_fft - self.pad(), out);
+        self.emit(last * self.hop + self.n_fft() - self.pad(), out);
     }
 
     fn pad(&self) -> usize {
-        (self.n_fft - self.hop) / 2
+        (self.n_fft() - self.hop) / 2
     }
 
     /// Appends padded samples `[base, limit)` past the leading padding, normalized by the
@@ -153,5 +161,47 @@ impl OverlapAdd {
         self.sum.drain(..take);
         self.envelope.drain(..take);
         self.base = limit;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Istft;
+
+    /// Streaming, frame by frame, gives what the one-shot overlap-add of every frame gives:
+    /// `Σ frames / Σ window²` at `hop` intervals, `(n_fft − hop) / 2` samples dropped at each end.
+    #[test]
+    fn streams_the_one_shot_overlap_add() {
+        let (n_fft, hop, count) = (16, 4, 9);
+        let window: Vec<f32> = (0..n_fft)
+            .map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / n_fft as f32).cos())
+            .collect();
+        let frames: Vec<Vec<f32>> = (0..count)
+            .map(|frame| {
+                (0..n_fft)
+                    .map(|i| window[i] * ((frame * 7 + i * 3) % 11) as f32)
+                    .collect()
+            })
+            .collect();
+        let length = (count - 1) * hop + n_fft;
+        let (mut sum, mut envelope) = (vec![0.0; length], vec![0.0; length]);
+        for (index, frame) in frames.iter().enumerate() {
+            for (offset, (value, weight)) in frame.iter().zip(&window).enumerate() {
+                sum[index * hop + offset] += value;
+                envelope[index * hop + offset] += weight * weight;
+            }
+        }
+        let pad = (n_fft - hop) / 2;
+        let expected: Vec<f32> = (pad..length - pad)
+            .map(|at| sum[at] / envelope[at])
+            .collect();
+        let mut overlap = Istft::new(window).overlap_add(hop);
+        let mut streamed = Vec::new();
+        for frame in &frames {
+            overlap.add(frame);
+            overlap.emit_ready(&mut streamed);
+        }
+        overlap.finish(&mut streamed);
+        assert_eq!(streamed, expected);
     }
 }

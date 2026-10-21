@@ -14,8 +14,9 @@
 
 use std::ops::Range;
 
-use crate::arch::{Active, Backend, activation_scale};
-use crate::tensor::{BLOCK, DType, Matrix, MatrixStorage, TERNARY_GROUP};
+use crate::arch::{Active, Backend, DOTS, activation_scale};
+use crate::quant::{BLOCK, QuantFormat, TERNARY_GROUP};
+use crate::tensor::{Matrix, MatrixStorage};
 
 /// Rows of activations quantized for one weight format.
 #[derive(Default)]
@@ -24,79 +25,90 @@ pub struct QuantizedRows {
     /// One scale and one correction per group.
     scales: Vec<f32>,
     corrections: Vec<i32>,
-    zero_point: i32,
-    group: usize,
 }
 
-/// The activations a matmul reads: the f32 rows themselves for f32 weights, else their int8 form.
+/// The activations a matmul reads: the f32 rows themselves for f32 weights, else their int8 form
+/// for one quantized format.
 pub enum Input<'rows> {
     F32(&'rows [f32]),
-    Quant(&'rows QuantizedRows),
+    Quant {
+        rows: &'rows QuantizedRows,
+        format: QuantFormat,
+    },
+}
+
+impl Input<'_> {
+    /// How many rows of `width` values the input holds.
+    fn rows(&self, width: usize) -> usize {
+        match self {
+            Input::F32(values) => values.len() / width,
+            Input::Quant { rows, .. } => rows.quants.len() / width,
+        }
+    }
 }
 
 impl QuantizedRows {
-    /// Prepares `rows` rows of `x` (each `weights.cols` long) as the input of `weights`.
-    pub fn input<'rows>(
-        &'rows mut self,
-        weights: &Matrix,
-        x: &'rows [f32],
-        rows: usize,
-    ) -> Input<'rows> {
-        let x = &x[..rows * weights.cols];
+    /// Prepares `x`, whole rows of `weights.cols` values, as the input of `weights`.
+    pub fn input<'rows>(&'rows mut self, weights: &Matrix, x: &'rows [f32]) -> Input<'rows> {
+        assert!(
+            x.len().is_multiple_of(weights.cols),
+            "the input is whole rows of the weights' width"
+        );
         match weights.storage {
             MatrixStorage::F32(_) => Input::F32(x),
-            MatrixStorage::Quant { dtype, .. } => {
-                self.quantize(x, dtype);
-                Input::Quant(self)
+            MatrixStorage::Quant { format, .. } => {
+                self.quantize(x, format);
+                Input::Quant { rows: self, format }
             }
         }
     }
 
-    fn quantize(&mut self, x: &[f32], dtype: DType) {
-        self.group = dtype.group();
-        self.zero_point = dtype.zero_point();
-        let groups = x.len() / self.group;
+    fn quantize(&mut self, x: &[f32], format: QuantFormat) {
+        let group = format.group();
+        let groups = x.len() / group;
         self.quants.resize(x.len(), 0);
         self.scales.resize(groups, 0.0);
         self.corrections.resize(groups, 0);
-        let outputs = self.quants.chunks_exact_mut(self.group);
+        let outputs = self.quants.chunks_exact_mut(group);
         let slots = outputs.zip(&mut self.scales).zip(&mut self.corrections);
-        for (values, ((output, scale), correction)) in x.chunks_exact(self.group).zip(slots) {
+        for (values, ((output, scale), correction)) in x.chunks_exact(group).zip(slots) {
             let blocks = values.as_chunks::<BLOCK>().0;
-            let absmax = blocks
+            let largest = blocks
                 .iter()
                 .map(|block| Active::absmax(block))
                 .fold(0.0, f32::max);
-            *scale = activation_scale(absmax);
+            *scale = activation_scale(largest);
             let outputs = output.as_chunks_mut::<BLOCK>().0;
             let sums = blocks
                 .iter()
                 .zip(outputs)
                 .map(|(block, out)| Active::quantize_block(block, *scale, out));
-            *correction = -self.zero_point * sums.sum::<i32>();
+            *correction = -format.zero_point() * sums.sum::<i32>();
         }
     }
 }
 
 /// `store(row, col, Σ_k weights[col][k] · x[row][k])` for every input row and every output
 /// column in `cols`.
+///
+/// # Panics
+/// When `x` was prepared for another format than the weights'.
 pub fn matmul(
     weights: &Matrix,
     x: &Input,
-    rows: usize,
     cols: Range<usize>,
     store: impl FnMut(usize, usize, f32),
 ) {
-    matmul_with::<Active>(weights, x, rows, cols, store);
+    matmul_with::<Active>(weights, x, cols, store);
 }
 
 fn matmul_with<B: Backend>(
     weights: &Matrix,
     x: &Input,
-    rows: usize,
     cols: Range<usize>,
     store: impl FnMut(usize, usize, f32),
 ) {
+    let rows = x.rows(weights.cols);
     match (weights.storage, x) {
         (MatrixStorage::F32(values), Input::F32(x)) => {
             let dense = F32Weights {
@@ -107,18 +119,21 @@ fn matmul_with<B: Backend>(
         }
         (
             MatrixStorage::Quant {
-                dtype,
+                format,
                 quants,
                 scales,
             },
-            Input::Quant(x),
+            Input::Quant {
+                rows: x,
+                format: prepared,
+            },
         ) => {
-            debug_assert!(
-                x.zero_point == dtype.zero_point() && x.group == dtype.group(),
-                "input prepared for another format"
+            assert_eq!(
+                *prepared, format,
+                "the input is prepared for the weights' format"
             );
             let quantized = QuantWeights {
-                dtype,
+                format,
                 quants,
                 scales,
                 cols: weights.cols,
@@ -145,12 +160,12 @@ fn f32_matmul<B: Backend>(
 ) {
     let width = weights.cols;
     let activation = |row: usize| &x[row * width..(row + 1) * width];
-    let grouped = rows - rows % 4;
+    let grouped = rows - rows % DOTS;
     for col in cols {
         let weight_row = &weights.values[col * width..(col + 1) * width];
-        for first in (0..grouped).step_by(4) {
+        for first in (0..grouped).step_by(DOTS) {
             let group = std::array::from_fn(|offset| activation(first + offset));
-            for (offset, value) in B::dot_f32_4(weight_row, group).into_iter().enumerate() {
+            for (offset, value) in B::dot_f32_many(weight_row, group).into_iter().enumerate() {
                 store(first + offset, col, value);
             }
         }
@@ -161,7 +176,7 @@ fn f32_matmul<B: Backend>(
 }
 
 struct QuantWeights<'tensor> {
-    dtype: DType,
+    format: QuantFormat,
     quants: &'tensor [u8],
     scales: &'tensor [f32],
     cols: usize,
@@ -174,11 +189,10 @@ fn quant_matmul<B: Backend>(
     cols: Range<usize>,
     store: impl FnMut(usize, usize, f32),
 ) {
-    match weights.dtype {
-        DType::Q7b32 => quant_tiles::<Q7, B>(weights, x, rows, cols, store),
-        DType::Q4b32 => quant_tiles::<Q4, B>(weights, x, rows, cols, store),
-        DType::T2b128 => quant_tiles::<T2, B>(weights, x, rows, cols, store),
-        DType::F32 => unreachable!("f32 weights take the f32 path"),
+    match weights.format {
+        QuantFormat::Q7b32 => quant_tiles::<Q7, B>(weights, x, rows, cols, store),
+        QuantFormat::Q4b32 => quant_tiles::<Q4, B>(weights, x, rows, cols, store),
+        QuantFormat::T2b128 => quant_tiles::<T2, B>(weights, x, rows, cols, store),
     }
 }
 
@@ -353,7 +367,7 @@ fn quant_tile<const ROWS: usize, F: Format, B: Backend>(
 mod tests {
     use super::{QuantizedRows, matmul_with};
     use crate::arch::{Active, Backend, Scalar};
-    use crate::tensor::{DType, Matrix, Tensor};
+    use crate::tensor::{DType, Matrix, Table, Tensor};
 
     fn pseudo_random(len: usize, seed: u32) -> Vec<f32> {
         let mut state = seed;
@@ -396,15 +410,17 @@ mod tests {
         let (outputs, width) = (25, 128);
         let values = pseudo_random(outputs * width, 1);
         for dtype in [DType::Q7b32, DType::Q4b32, DType::T2b128] {
-            let tensor = Tensor::encode(dtype, vec![outputs, width], &values);
-            let weights = tensor.matrix().unwrap();
+            let tensor = Tensor::encode(dtype, vec![outputs, width], &values).unwrap();
+            let table = Table::new(tensor).unwrap();
+            let weights = table.matrix();
+            let group = dtype.quant_format().unwrap().group();
             for rows in [1, 3, 8, 11] {
                 let x = pseudo_random(rows * width, 7 + rows as u32);
-                let expected = reference(&weights, &x, (rows, dtype.group()));
+                let expected = reference(&weights, &x, (rows, group));
                 let mut scratch = QuantizedRows::default();
-                let input = scratch.input(&weights, &x, rows);
+                let input = scratch.input(&weights, &x);
                 let mut got = vec![0.0f32; rows * outputs];
-                matmul_with::<B>(&weights, &input, rows, 0..outputs, |row, col, value| {
+                matmul_with::<B>(&weights, &input, 0..outputs, |row, col, value| {
                     got[row * outputs + col] = value;
                 });
                 for (value, want) in got.iter().zip(&expected) {

@@ -10,16 +10,15 @@
 //! by units (every thread first copies the layer's input and previous state, then a barrier) and
 //! the projection by output columns.
 
-use kernels::{COLUMN_ALIGN, Linear, QuantizedRows, matmul};
+use kernels::ops::sigmoid;
+use kernels::{COLUMN_ALIGN, Linear, QuantizedRows};
 use serde::Serialize;
 use team::{Ctx, PerThread, SharedBuf};
 
-use crate::model::{BLANK, DECODER_HIDDEN, DECODER_LAYERS, DURATIONS, Model, TOKENS};
+use crate::model::{BLANK, DECODER_HIDDEN, DECODER_LAYERS, DURATIONS, GATES, Model, TOKENS};
 
 /// The most decisions per encoder frame.
-pub const MAX_SYMBOLS_PER_FRAME: usize = 10;
-/// LSTM gates per unit: input, forget, cell, output.
-const GATES: usize = 4;
+const MAX_SYMBOLS_PER_FRAME: usize = 10;
 
 /// One decision of the transducer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -88,16 +87,10 @@ impl Model {
         state: &State,
     ) {
         let linear = &self.joint.encoder;
-        let matrix = linear.matrix();
-        let scratch = state.scratch.get(ctx);
-        let input = scratch
-            .quant
-            .input(&matrix, &hidden.read()[..frames * matrix.cols], frames);
-        let bias = linear.bias();
-        let cols = ctx.split(matrix.rows, COLUMN_ALIGN);
-        matmul(&matrix, &input, frames, cols, |row, col, value| {
-            let biased = value + bias.map_or(0.0, |bias| bias[col]);
-            state.encoded.set(row * DECODER_HIDDEN + col, biased);
+        let x = &hidden.read()[..frames * linear.matrix().cols];
+        let quant = &mut state.scratch.get(ctx).quant;
+        project(ctx, linear, x, quant, |row, col, value| {
+            state.encoded.set(row * DECODER_HIDDEN + col, value);
         });
         ctx.barrier();
     }
@@ -109,9 +102,8 @@ impl Model {
         state.scratch.get(ctx).steps.clear();
         self.predict(ctx, state, BLANK);
         let mut frame = 0;
-        let mut budget = MAX_SYMBOLS_PER_FRAME * frames;
         let mut decision = 0;
-        while frame < frames && budget > 0 {
+        while frame < frames && decision < MAX_SYMBOLS_PER_FRAME * frames {
             let logits = &state.logits[decision % 2];
             let row = &encoded[frame * DECODER_HIDDEN..(frame + 1) * DECODER_HIDDEN];
             self.joint(ctx, state, row, logits);
@@ -122,7 +114,6 @@ impl Model {
             if step.token as usize != BLANK {
                 self.predict(ctx, state, step.token as usize);
             }
-            budget -= 1;
             decision += 1;
         }
     }
@@ -143,7 +134,9 @@ impl Model {
             head,
             &scratch.input,
             &mut scratch.quant,
-            |col, value| logits.set(col, value),
+            |_, col, value| {
+                logits.set(col, value);
+            },
         );
     }
 
@@ -156,18 +149,14 @@ impl Model {
             let (input, previous) = scratch.input.split_at_mut(DECODER_HIDDEN);
             let hidden = state.hidden.read();
             match layer.checked_sub(1) {
-                None => decoder
-                    .embedding
-                    .matrix()
-                    .expect("checked at load")
-                    .dequantize_row(token, input),
+                None => decoder.embedding.matrix().dequantize_row(token, input),
                 Some(below) => {
                     input.copy_from_slice(&hidden[below * DECODER_HIDDEN..][..DECODER_HIDDEN])
                 }
             }
             previous.copy_from_slice(&hidden[layer * DECODER_HIDDEN..][..DECODER_HIDDEN]);
             ctx.barrier();
-            self.cell(ctx, state, (layer, weights));
+            self.cell(ctx, state, layer, weights);
             ctx.barrier();
         }
         let scratch = state.scratch.get(ctx);
@@ -182,7 +171,7 @@ impl Model {
             projector,
             &scratch.input,
             &mut scratch.quant,
-            |col, value| {
+            |_, col, value| {
                 state.output.set(col, value);
             },
         );
@@ -190,26 +179,20 @@ impl Model {
     }
 
     /// One LSTM layer for this thread's units, from `[input; previous hidden]` in its scratch.
-    fn cell(&self, ctx: &Ctx, state: &State, (layer, weights): (usize, &Linear)) {
-        let scratch = state.scratch.get(ctx);
+    fn cell(&self, ctx: &Ctx, state: &State, layer: usize, weights: &Linear) {
+        let Scratch {
+            input,
+            gates,
+            quant,
+            ..
+        } = state.scratch.get(ctx);
         let units = ctx.split(DECODER_HIDDEN, COLUMN_ALIGN / GATES);
-        let matrix = weights.matrix();
-        let bias = weights
-            .bias()
-            .expect("the compiler sums the LSTM biases into one");
-        let input = scratch.quant.input(&matrix, &scratch.input, 1);
+        let input = quant.input(&weights.matrix(), input);
         let first = GATES * units.start;
-        scratch.gates.resize(GATES * units.len(), 0.0);
-        let gates = &mut scratch.gates;
-        matmul(
-            &matrix,
-            &input,
-            1,
-            first..GATES * units.end,
-            |_, col, value| {
-                gates[col - first] = value + bias[col];
-            },
-        );
+        gates.resize(GATES * units.len(), 0.0);
+        weights.project(&input, first..GATES * units.end, |_, col, value| {
+            gates[col - first] = value;
+        });
         for (unit, gate) in units.zip(gates.as_chunks::<GATES>().0) {
             let at = layer * DECODER_HIDDEN + unit;
             let [input, forget, cell, output] = *gate;
@@ -220,24 +203,24 @@ impl Model {
     }
 }
 
-/// `linear(x)` for one row, this thread's output columns (in whole units of `COLUMN_ALIGN`, the
-/// last one short: the joint's outputs are not a multiple of it).
+/// `store(row, col, linear(x[row])[col])` for every row of `x` and this thread's output columns
+/// (in whole units of `COLUMN_ALIGN`, the last one short: the joint's outputs are not a multiple
+/// of it).
 fn project(
     ctx: &Ctx,
     linear: &Linear,
     x: &[f32],
     quant: &mut QuantizedRows,
-    mut store: impl FnMut(usize, f32),
+    store: impl FnMut(usize, usize, f32),
 ) {
-    let matrix = linear.matrix();
-    let bias = linear.bias();
-    let input = quant.input(&matrix, x, 1);
-    let outputs = matrix.rows;
+    let outputs = linear.matrix().rows;
+    let input = quant.input(&linear.matrix(), x);
     let cols = ctx.split(outputs.next_multiple_of(COLUMN_ALIGN), COLUMN_ALIGN);
-    let cols = cols.start.min(outputs)..cols.end.min(outputs);
-    matmul(&matrix, &input, 1, cols, |_, col, value| {
-        store(col, value + bias.map_or(0.0, |bias| bias[col]));
-    });
+    linear.project(
+        &input,
+        cols.start.min(outputs)..cols.end.min(outputs),
+        store,
+    );
 }
 
 /// The decision of a row of joint logits: the most likely token and the most likely duration
@@ -263,8 +246,4 @@ fn argmax(values: &[f32]) -> usize {
         }
     }
     best
-}
-
-fn sigmoid(x: f32) -> f32 {
-    1.0 / (1.0 + (-x).exp())
 }
