@@ -15,7 +15,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT"
@@ -47,17 +47,17 @@ excessive_nesting = "deny"
 undocumented_unsafe_blocks = "deny"
 
 [workspace.dependencies]
-team = { package = "fusor-ai-team", path = "crates/team", version = "=0.1.1" }
-kernels = { package = "fusor-ai-kernels", path = "crates/kernels", version = "=0.1.1" }
-blocks = { package = "fusor-ai-blocks", path = "crates/blocks", version = "=0.1.1" }
-bundle = { package = "fusor-ai-bundle", path = "crates/bundle", version = "=0.1.1" }
-compile = { package = "fusor-ai-compile", path = "crates/compile", version = "=0.1.1" }
-ming = { package = "fusor-ai-ming", path = "crates/models/ming", version = "=0.1.1" }
-ming-compile = { package = "fusor-ai-ming-compile", path = "crates/models/ming-compile", version = "=0.1.1" }
-phonon = { package = "fusor-ai-phonon", path = "crates/models/phonon", version = "=0.1.1" }
-phonon-compile = { package = "fusor-ai-phonon-compile", path = "crates/models/phonon-compile", version = "=0.1.1" }
-parakeet = { package = "fusor-ai-parakeet", path = "crates/models/parakeet", version = "=0.1.1" }
-parakeet-compile = { package = "fusor-ai-parakeet-compile", path = "crates/models/parakeet-compile", version = "=0.1.1" }
+team = { package = "fusor-ai-team", path = "crates/team", version = "=0.1.2" }
+kernels = { package = "fusor-ai-kernels", path = "crates/kernels", version = "=0.1.2" }
+blocks = { package = "fusor-ai-blocks", path = "crates/blocks", version = "=0.1.2" }
+bundle = { package = "fusor-ai-bundle", path = "crates/bundle", version = "=0.1.2" }
+compile = { package = "fusor-ai-compile", path = "crates/compile", version = "=0.1.2" }
+ming = { package = "fusor-ai-ming", path = "crates/models/ming", version = "=0.1.2" }
+ming-compile = { package = "fusor-ai-ming-compile", path = "crates/models/ming-compile", version = "=0.1.2" }
+phonon = { package = "fusor-ai-phonon", path = "crates/models/phonon", version = "=0.1.2" }
+phonon-compile = { package = "fusor-ai-phonon-compile", path = "crates/models/phonon-compile", version = "=0.1.2" }
+parakeet = { package = "fusor-ai-parakeet", path = "crates/models/parakeet", version = "=0.1.2" }
+parakeet-compile = { package = "fusor-ai-parakeet-compile", path = "crates/models/parakeet-compile", version = "=0.1.2" }
 rayon = "=1.12.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"

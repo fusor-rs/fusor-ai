@@ -269,7 +269,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "fusor-ai-blocks"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-kernels",
@@ -279,7 +279,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-bundle"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "blake3",
  "fusor-ai-kernels",
@@ -291,7 +291,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-compile"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "blake3",
  "fusor-ai-bundle",
@@ -303,7 +303,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-kernels"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fusor-ai-team",
  "serde",
@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-ming"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -325,7 +325,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-ming-compile"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -335,7 +335,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-parakeet"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-parakeet-compile"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-phonon"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -371,7 +371,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-phonon-compile"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -381,7 +381,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-team"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rayon",
 ]
