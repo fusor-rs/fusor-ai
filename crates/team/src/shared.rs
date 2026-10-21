@@ -85,6 +85,11 @@ impl<T> PerThread<T> {
         // SAFETY: each team thread has a distinct `ctx.index` during a run.
         unsafe { &mut *self.cells[ctx.index].get() }
     }
+
+    /// Thread `index`'s value, outside team runs.
+    pub fn get_mut(&mut self, index: usize) -> &mut T {
+        self.cells[index].get_mut()
+    }
 }
 
 #[cfg(all(test, feature = "threads"))]

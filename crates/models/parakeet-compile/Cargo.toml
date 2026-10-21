@@ -1,0 +1,25 @@
+[package]
+name = "fusor-ai-parakeet-compile"
+description = "Compiles the moondream/parakeet-redux checkpoint into a bundle: its base-3 ternary weights repacked, compile-time folds, the frontend's window and filterbank, the vocabulary and the dtype of every tensor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../../README.md"
+keywords = ["fusor", "asr", "safetensors", "quantization", "wasm"]
+categories = ["development-tools", "multimedia::audio"]
+
+[lib]
+name = "parakeet_compile"
+
+[dependencies]
+parakeet.workspace = true
+bundle.workspace = true
+compile.workspace = true
+kernels.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

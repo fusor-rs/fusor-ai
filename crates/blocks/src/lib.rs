@@ -6,6 +6,7 @@
 //! a prefix that its documentation lists.
 
 pub mod adaln_mlp;
+pub mod conformer;
 pub mod dit;
 pub mod flow;
 pub mod istft;

@@ -1,6 +1,6 @@
 [package]
 name = "fusor-ai-blocks"
-description = "Architecture blocks built on fusor-ai's kernels and thread team: the Qwen2 decoder stack, Kyutai's streaming transformer, DiT blocks, an adaLN MLP flow head, flow-matching integration, a streaming inverse STFT and a streaming SEANet decoder."
+description = "Architecture blocks built on fusor-ai's kernels and thread team: the Qwen2 decoder stack, Kyutai's streaming transformer, DiT blocks, an adaLN MLP flow head, flow-matching integration, a streaming inverse STFT, a streaming SEANet decoder and the FastConformer encoder."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

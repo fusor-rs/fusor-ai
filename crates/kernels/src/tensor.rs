@@ -1,14 +1,18 @@
 //! Weight tensors and their storage formats.
 //!
 //! A quantized matrix `[rows, cols]` is stored as one byte buffer: the quants of every row
-//! (row-major, `cols` bytes per row for `Q7b32`, `cols / 2` for `Q4b32`) followed by one f32
-//! scale per block of 32 along a row (`rows · cols / 32` scales, row-major). Both planes start
-//! 16-byte aligned because `cols` is a multiple of 32.
+//! (row-major, `cols` bytes per row for `Q7b32`, `cols / 2` for `Q4b32`, `cols / 4` for `T2b128`)
+//! followed by one f32 scale per group along a row (32 values for `Q7b32` and `Q4b32`, 128 for
+//! `T2b128`; row-major). Both planes start 16-byte aligned because `cols` is a multiple of the
+//! group.
 //!
 //! - `Q7b32`: `u = q + 64` with `q ∈ [−63, 63]`, so every stored byte is a valid unsigned 7-bit
 //!   operand of `i32x4.relaxed_dot_i8x16_i7x16_add_s`; value = `d · (u − 64)`.
 //! - `Q4b32`: ggml Q4_0 nibbles, `u = q + 8` with `q ∈ [−8, 7]`; byte `j` of a block holds element
 //!   `j` in its low nibble and element `j + 16` in its high nibble; value = `d · (u − 8)`.
+//! - `T2b128`: ternary weights, two-bit codes `u = q + 1` with `q ∈ {−1, 0, 1}` and one scale per
+//!   128 values; byte `j` of a block of 32 (8 bytes) holds elements `j`, `j + 8`, `j + 16` and
+//!   `j + 24` in bits 0–1, 2–3, 4–5 and 6–7; value = `d · (u − 1)`.
 
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +20,8 @@ use crate::Error;
 use crate::blob::Blob;
 
 pub const BLOCK: usize = 32;
+/// Values sharing one scale in `T2b128`.
+pub const TERNARY_GROUP: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -23,6 +29,7 @@ pub enum DType {
     F32,
     Q7b32,
     Q4b32,
+    T2b128,
 }
 
 impl DType {
@@ -32,7 +39,9 @@ impl DType {
         let count: usize = shape.iter().product();
         match self {
             DType::F32 => count * 4,
-            DType::Q7b32 | DType::Q4b32 => self.quant_bytes(count) + count / BLOCK * 4,
+            DType::Q7b32 | DType::Q4b32 | DType::T2b128 => {
+                self.quant_bytes(count) + count / self.group() * 4
+            }
         }
     }
 
@@ -42,6 +51,16 @@ impl DType {
             DType::F32 => 0,
             DType::Q7b32 => count,
             DType::Q4b32 => count / 2,
+            DType::T2b128 => count / 4,
+        }
+    }
+
+    /// Values sharing one scale (1 for f32).
+    pub(crate) fn group(self) -> usize {
+        match self {
+            DType::F32 => 1,
+            DType::Q7b32 | DType::Q4b32 => BLOCK,
+            DType::T2b128 => TERNARY_GROUP,
         }
     }
 
@@ -51,6 +70,7 @@ impl DType {
             DType::F32 => 0,
             DType::Q7b32 => 64,
             DType::Q4b32 => 8,
+            DType::T2b128 => 1,
         }
     }
 }
@@ -87,7 +107,9 @@ impl Tensor {
     }
 
     /// Encodes row-major `values` of `shape` as `dtype`. Quantized types need a matrix whose
-    /// rows are a multiple of 32 long; quantization rounds ties to even.
+    /// rows are a multiple of the group long; quantization rounds ties to even. `T2b128` keeps
+    /// ternary weights (`d · {−1, 0, 1}` per group) exactly; other values lose all but their sign
+    /// and the largest magnitude of their group.
     pub fn encode(dtype: DType, shape: Vec<usize>, values: &[f32]) -> Self {
         let mut tensor = Self::zeroed(dtype, shape);
         let quant_len = dtype.quant_bytes(values.len());
@@ -102,12 +124,14 @@ impl Tensor {
             }
             DType::Q7b32 => quantize_q7,
             DType::Q4b32 => quantize_q4,
+            DType::T2b128 => quantize_t2,
         };
-        let blocks = values.as_chunks::<BLOCK>().0;
-        let outputs = quants.chunks_exact_mut(dtype.quant_bytes(BLOCK));
+        let group = dtype.group();
+        let groups = values.chunks_exact(group);
+        let outputs = quants.chunks_exact_mut(dtype.quant_bytes(group));
         let scale_slots = scales.as_chunks_mut::<4>().0;
-        for ((block, output), slot) in blocks.iter().zip(outputs).zip(scale_slots) {
-            slot.copy_from_slice(&encoder(block, output).to_le_bytes());
+        for ((values, output), slot) in groups.zip(outputs).zip(scale_slots) {
+            slot.copy_from_slice(&encoder(values, output).to_le_bytes());
         }
         tensor
     }
@@ -168,12 +192,13 @@ impl Matrix<'_> {
                 quants,
                 scales,
             } => {
-                let blocks = cols / BLOCK;
                 let block_bytes = dtype.quant_bytes(BLOCK);
-                let first = row * blocks;
+                let first = row * cols / BLOCK;
                 let row_quants = quants[first * block_bytes..].chunks_exact(block_bytes);
                 let outputs = out.as_chunks_mut::<BLOCK>().0;
-                for ((stored, output), &scale) in row_quants.zip(outputs).zip(&scales[first..]) {
+                let blocks_per_scale = dtype.group() / BLOCK;
+                for (block, (stored, output)) in row_quants.zip(outputs).enumerate() {
+                    let scale = scales[(first + block) / blocks_per_scale];
                     dequantize_block(dtype, stored, scale, output);
                 }
             }
@@ -193,6 +218,12 @@ fn dequantize_block(dtype: DType, stored: &[u8], scale: f32, out: &mut [f32]) {
             for (j, &byte) in stored.iter().enumerate() {
                 out[j] = level(byte & 0x0f);
                 out[j + BLOCK / 2] = level(byte >> 4);
+            }
+        }
+        DType::T2b128 => {
+            for (j, output) in out.iter_mut().enumerate() {
+                let shift = TERNARY_BITS * (j / TERNARY_BYTES);
+                *output = level((stored[j % TERNARY_BYTES] >> shift) & TERNARY_MASK);
             }
         }
         DType::F32 => unreachable!("F32 has no blocks"),
@@ -228,9 +259,29 @@ fn quantize_q4(block: &[f32], out: &mut [u8]) -> f32 {
     scale
 }
 
+const TERNARY_BITS: usize = 2;
+const TERNARY_MASK: u8 = 0b11;
+/// Bytes of one `T2b128` block of 32 values.
+const TERNARY_BYTES: usize = BLOCK / 4;
+
+/// Ternary: `d = absmax`, `q = round_ties_even(x / d)` clamped to `[−1, 1]`. Returns `d`.
+fn quantize_t2(group: &[f32], out: &mut [u8]) -> f32 {
+    let absmax = group.iter().fold(0.0f32, |max, x| max.max(x.abs()));
+    let scale = if absmax == 0.0 { 1.0 } else { absmax };
+    out.fill(0);
+    let blocks = group.as_chunks::<BLOCK>().0;
+    for (block, stored) in blocks.iter().zip(out.as_chunks_mut::<TERNARY_BYTES>().0) {
+        for (j, x) in block.iter().enumerate() {
+            let code = (x / scale).round_ties_even().clamp(-1.0, 1.0) as i32 + 1;
+            stored[j % TERNARY_BYTES] |= (code as u8) << (TERNARY_BITS * (j / TERNARY_BYTES));
+        }
+    }
+    scale
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{BLOCK, DType, Tensor};
+    use super::{BLOCK, DType, TERNARY_GROUP, Tensor};
 
     fn ramp(len: usize) -> Vec<f32> {
         (0..len)
@@ -268,6 +319,24 @@ mod tests {
                     assert_within_one_step(dtype, block, decoded);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn ternary_rows_keep_their_codes_and_group_scales() {
+        let cols = 2 * TERNARY_GROUP;
+        let scales = [0.5, 0.25, 2.0, 0.125];
+        let values: Vec<f32> = (0..2 * cols)
+            .map(|i| scales[i / TERNARY_GROUP] * ((i * 7 % 3) as f32 - 1.0))
+            .collect();
+        let tensor = Tensor::encode(DType::T2b128, vec![2, cols], &values);
+        // Elements 0, 8, 16 and 24 have codes 1 − 1, 1 + 1, 1 + 0 and 1 − 1: 0b00_01_10_00.
+        assert_eq!(tensor.bytes()[0], 0b0001_1000);
+        let matrix = tensor.matrix().unwrap();
+        let mut row = vec![0.0; cols];
+        for index in 0..2 {
+            matrix.dequantize_row(index, &mut row);
+            assert_eq!(row, values[index * cols..(index + 1) * cols]);
         }
     }
 }

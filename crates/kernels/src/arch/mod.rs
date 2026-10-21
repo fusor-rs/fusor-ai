@@ -35,10 +35,14 @@ pub(crate) use scalar::Scalar;
 pub(crate) type Active = wasm::Wasm;
 
 /// The int8 block-dot contract every instruction set implements. A block is 32 values: 32 weight
-/// bytes (`Q7b32`, values ≤ 127) or 16 packed nibble bytes (`Q4b32`), and 32 int8 activations.
+/// bytes (`Q7b32`, values ≤ 127), 16 packed nibble bytes (`Q4b32`) or 8 bytes of two-bit codes
+/// (`T2b128`), and 32 int8 activations. The blocks of a group share a weight scale and an
+/// activation scale, so their integer dot products add up before one conversion to f32.
 pub(crate) trait Backend {
     type Weights;
     type Activations;
+    /// Four i32 partial dot products.
+    type Dots: Copy;
     /// Four f32 partial sums.
     type Sums: Copy;
 
@@ -55,22 +59,33 @@ pub(crate) trait Backend {
     unsafe fn load_q4(at: *const u8) -> Self::Weights;
 
     /// # Safety
+    /// 8 readable bytes at `at`.
+    unsafe fn load_t2(at: *const u8) -> Self::Weights;
+
+    /// # Safety
     /// 32 readable bytes at `at`.
     unsafe fn load_activations(at: *const i8) -> Self::Activations;
 
     fn zero() -> Self::Sums;
 
-    /// Quantizes 32 values to int8 (`round_ties_even(x / d)`); returns `(d, Σq)`.
-    fn quantize_block(x: &[f32], out: &mut [i8]) -> (f32, i32);
+    /// The largest magnitude of 32 values.
+    fn absmax(x: &[f32]) -> f32;
 
-    /// `sums + (Σ a·w + correction) · scale`, the correction being `−zero_point · Σa`.
-    fn accumulate(
-        sums: Self::Sums,
+    /// Quantizes 32 values to int8 at scale `d` (`round_ties_even(x / d)`); returns `Σq`.
+    fn quantize_block(x: &[f32], scale: f32, out: &mut [i8]) -> i32;
+
+    /// The dot products of a group before its first block: `correction`, its `−zero_point · Σa`.
+    fn seed(correction: i32) -> Self::Dots;
+
+    /// `dots + Σ a·w` over one block.
+    fn dot(
+        dots: Self::Dots,
         activations: &Self::Activations,
         weights: &Self::Weights,
-        correction: i32,
-        scale: f32,
-    ) -> Self::Sums;
+    ) -> Self::Dots;
+
+    /// `sums + dots · scale`.
+    fn scale(sums: Self::Sums, dots: Self::Dots, scale: f32) -> Self::Sums;
 
     fn sum(sums: Self::Sums) -> f32;
 
@@ -87,10 +102,18 @@ pub fn dot_f32(left: &[f32], right: &[f32]) -> f32 {
     <Active as Backend>::dot_f32(left, right)
 }
 
+/// How many dot products `dot_f32_many` takes at once.
+pub const DOTS: usize = 4;
+
+/// `dot_f32(left, right)` for each of `rights`, reading `left` once.
+pub fn dot_f32_many(left: &[f32], rights: [&[f32]; DOTS]) -> [f32; DOTS] {
+    <Active as Backend>::dot_f32_4(left, rights)
+}
+
 const ACTIVATION_MAX: f32 = 127.0;
 
-/// `d = absmax / 127` (1 for an all-zero block): an activation block's scale.
-fn activation_scale(absmax: f32) -> f32 {
+/// `d = absmax / 127` (1 for an all-zero group): an activation group's scale.
+pub(crate) fn activation_scale(absmax: f32) -> f32 {
     if absmax == 0.0 {
         1.0
     } else {

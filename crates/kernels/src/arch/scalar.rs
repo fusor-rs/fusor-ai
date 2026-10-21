@@ -11,6 +11,7 @@ pub(crate) struct Scalar;
 impl super::Backend for Scalar {
     type Weights = Weights;
     type Activations = Activations;
+    type Dots = i32;
     type Sums = f32;
     const TILE: usize = 4;
 
@@ -37,6 +38,16 @@ impl super::Backend for Scalar {
     }
 
     /// # Safety
+    /// 8 readable bytes at `at`.
+    unsafe fn load_t2(at: *const u8) -> Self::Weights {
+        // SAFETY: the caller guarantees 8 readable bytes.
+        let bytes = unsafe { std::slice::from_raw_parts(at, 8) };
+        Weights(std::array::from_fn(|j| {
+            i32::from((bytes[j % 8] >> (2 * (j / 8))) & 0b11)
+        }))
+    }
+
+    /// # Safety
     /// 32 readable bytes at `at`.
     unsafe fn load_activations(at: *const i8) -> Self::Activations {
         // SAFETY: the caller guarantees 32 readable bytes.
@@ -48,32 +59,37 @@ impl super::Backend for Scalar {
         0.0
     }
 
-    /// Quantizes 32 values to int8 (`round_ties_even(x / d)`); returns `(d, Σq)`.
-    fn quantize_block(x: &[f32], out: &mut [i8]) -> (f32, i32) {
-        let absmax = x.iter().fold(0.0f32, |max, value| max.max(value.abs()));
-        let scale = super::activation_scale(absmax);
+    fn absmax(x: &[f32]) -> f32 {
+        x[..32]
+            .iter()
+            .fold(0.0f32, |max, value| max.max(value.abs()))
+    }
+
+    /// Quantizes 32 values to int8 at scale `d` (`round_ties_even(x / d)`); returns `Σq`.
+    fn quantize_block(x: &[f32], scale: f32, out: &mut [i8]) -> i32 {
         let mut sum = 0;
-        for (output, value) in out.iter_mut().zip(x) {
+        for (output, value) in out[..32].iter_mut().zip(x) {
             let limit = super::ACTIVATION_MAX;
             let level = (value / scale).round_ties_even().clamp(-limit, limit) as i8;
             sum += i32::from(level);
             *output = level;
         }
-        (scale, sum)
+        sum
     }
 
-    fn accumulate(
-        sums: f32,
-        activations: &Self::Activations,
-        weights: &Self::Weights,
-        correction: i32,
-        scale: f32,
-    ) -> f32 {
+    fn seed(correction: i32) -> i32 {
+        correction
+    }
+
+    fn dot(dots: i32, activations: &Self::Activations, weights: &Self::Weights) -> i32 {
         let products = activations.0.iter().zip(&weights.0);
-        let dot: i32 = products
+        dots + products
             .map(|(activation, weight)| activation * weight)
-            .sum();
-        sums + (dot + correction) as f32 * scale
+            .sum::<i32>()
+    }
+
+    fn scale(sums: f32, dots: i32, scale: f32) -> f32 {
+        sums + dots as f32 * scale
     }
 
     fn sum(sums: f32) -> f32 {
