@@ -11,6 +11,7 @@
 mod arch;
 mod blob;
 pub mod conv;
+pub mod image;
 mod linear;
 mod matmul;
 pub mod ops;

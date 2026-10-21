@@ -4,6 +4,7 @@
 
 use blocks::adaln_mlp::{self, AdalnMlp};
 use blocks::norm::LayerNorm;
+use blocks::rotary::Rotation;
 use blocks::seanet::{self, Seanet};
 use blocks::transformer::{self, Architecture, Transformer};
 use bundle::{Load, Store};
@@ -33,6 +34,7 @@ pub const FLOW_LM_SHAPE: transformer::Shape = transformer::Shape {
     head_dim: 64,
     feed_forward: 2048,
     rope_base: 1e4,
+    rotation: Rotation::Sequence,
     norm_eps: 1e-5,
 };
 /// The flow LM's final norm.

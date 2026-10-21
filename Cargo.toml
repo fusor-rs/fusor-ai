@@ -13,6 +13,8 @@ members = [
     "crates/models/parakeet-compile",
     "crates/models/realistic-vision",
     "crates/models/realistic-vision-compile",
+    "crates/models/paddle-ocr",
+    "crates/models/paddle-ocr-compile",
 ]
 resolver = "2"
 
@@ -62,6 +64,8 @@ parakeet = { package = "fusor-ai-parakeet", path = "crates/models/parakeet", ver
 parakeet-compile = { package = "fusor-ai-parakeet-compile", path = "crates/models/parakeet-compile", version = "=0.1.2" }
 realistic-vision = { package = "fusor-ai-realistic-vision", path = "crates/models/realistic-vision", version = "=0.1.2" }
 realistic-vision-compile = { package = "fusor-ai-realistic-vision-compile", path = "crates/models/realistic-vision-compile", version = "=0.1.2" }
+paddle-ocr = { package = "fusor-ai-paddle-ocr", path = "crates/models/paddle-ocr", version = "=0.1.2" }
+paddle-ocr-compile = { package = "fusor-ai-paddle-ocr-compile", path = "crates/models/paddle-ocr-compile", version = "=0.1.2" }
 rayon = "=1.12.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"

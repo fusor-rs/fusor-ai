@@ -4,7 +4,7 @@
 //!
 //! - Qwen2: RMSNorm, a fused QKV with biases, rotary embeddings by halves, a SiLU-gated MLP.
 //!   Tensors under a prefix `p`: `p.layers.{i}.{input_norm, qkv, o, post_norm, gate, up, down}`
-//!   (q, k and v fused into `qkv`).
+//!   (q, k and v fused into `qkv`). ERNIE 4.5 is the same layer without biases.
 //! - Kyutai's streaming transformer (Moshi, Mimi, Pocket TTS, Phonon): LayerNorm, a bias-free
 //!   fused QKV, interleaved rotary embeddings, multi-head attention and an exact-GELU MLP without
 //!   biases; a checkpoint's layer-scale factors are folded into `out` and `ff2` by its compiler.
@@ -23,6 +23,7 @@ use team::{Ctx, SharedBuf};
 pub use crate::layer::Buffers;
 use crate::layer::{Attention, FeedForward, Heads, Layer, Norm, Pass, Rope, Stack, Widths};
 use crate::norm::LayerNorm;
+use crate::rotary::{Position, Rotary, Rotation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Architecture {
@@ -42,6 +43,7 @@ pub struct Shape {
     pub head_dim: usize,
     pub feed_forward: usize,
     pub rope_base: f32,
+    pub rotation: Rotation,
     pub norm_eps: f32,
 }
 
@@ -108,12 +110,20 @@ impl KvCache {
     }
 }
 
-/// One call: `rows` consecutive positions starting at `first`, attending under `mask`.
+/// One call: `rows` consecutive positions starting at `first`, attending under `mask`. Their
+/// rotary angles turn by their sequence positions, unless `forward_at` gives them their own.
 #[derive(Debug, Clone, Copy)]
 pub struct Span {
     pub rows: usize,
     pub first: usize,
     pub mask: Mask,
+}
+
+/// A span whose row `r` turns its rotary angles by `positions[r]`.
+#[derive(Debug, Clone, Copy)]
+pub struct Positioned<'rows> {
+    pub span: Span,
+    pub positions: &'rows [Position],
 }
 
 impl Transformer {
@@ -123,6 +133,21 @@ impl Transformer {
     /// When the cache would overwrite a key the span still sees: a causal span past the cache's
     /// capacity, or a window plus the span's rows over it.
     pub fn forward(&self, ctx: &Ctx, cache: &KvCache, buffers: &Buffers, span: Span) {
+        self.run(ctx, buffers, &Cached::new(cache, span, None));
+    }
+
+    /// `forward` with each row's rotary angles turned by its own position (multimodal RoPE).
+    ///
+    /// # Panics
+    /// As `forward`, and when there is not one position per row.
+    pub fn forward_at(&self, ctx: &Ctx, cache: &KvCache, buffers: &Buffers, at: Positioned) {
+        let Positioned { span, positions } = at;
+        assert_eq!(positions.len(), span.rows, "one position per row");
+        self.run(ctx, buffers, &Cached::new(cache, span, Some(positions)));
+    }
+
+    fn run(&self, ctx: &Ctx, buffers: &Buffers, attention: &Cached) {
+        let Cached { cache, span, .. } = attention;
         let reach = match span.mask {
             Mask::Causal => span.first + span.rows,
             Mask::Window(window) => window + span.rows,
@@ -131,8 +156,7 @@ impl Transformer {
             reach <= cache.capacity,
             "the cache holds every key the span sees"
         );
-        self.stack
-            .forward(ctx, buffers, span.rows, &Cached { cache, span });
+        self.stack.forward(ctx, buffers, span.rows, attention);
     }
 }
 
@@ -140,11 +164,29 @@ impl Transformer {
 struct Cached<'call> {
     cache: &'call KvCache,
     span: Span,
+    positions: Option<&'call [Position]>,
+}
+
+impl<'call> Cached<'call> {
+    fn new(cache: &'call KvCache, span: Span, positions: Option<&'call [Position]>) -> Self {
+        Self {
+            cache,
+            span,
+            positions,
+        }
+    }
 }
 
 impl Attention for Cached<'_> {
     fn position(&self, row: usize) -> usize {
         self.span.first + row
+    }
+
+    fn rotary(&self, row: usize) -> Position {
+        match self.positions {
+            Some(positions) => positions[row],
+            None => Position::uniform(self.position(row)),
+        }
     }
 
     fn keep(&self, layer: usize, unit: usize, position: usize, head: &[f32]) {
@@ -206,16 +248,11 @@ impl Load for Transformer {
 
     fn load(store: &mut Store, prefix: &str, shape: Shape) -> Result<Self, bundle::Error> {
         let Shape {
-            hidden,
-            heads,
-            kv_heads,
-            head_dim,
-            ..
+            heads, kv_heads, ..
         } = shape;
-        if heads * head_dim != hidden || kv_heads == 0 || !heads.is_multiple_of(kv_heads) {
+        if kv_heads == 0 || !heads.is_multiple_of(kv_heads) {
             return Err(bundle::Error::Format(format!(
-                "{prefix}: {heads} heads over {kv_heads} KV heads of {head_dim} for a width of \
-                 {hidden}"
+                "{prefix}: {heads} heads over {kv_heads} KV heads"
             )));
         }
         let layers = load_each(
@@ -229,8 +266,9 @@ impl Load for Transformer {
             Architecture::Kyutai => Some(Rope::Interleaved),
             Architecture::Clip => None,
         };
+        let rotary = Rotary::new(shape.rotation, shape.rope_base, shape.head_dim);
         Ok(Self {
-            stack: Stack::new(shape.heads(), rope, shape.rope_base, layers),
+            stack: Stack::new(shape.heads(), rope, rotary, layers),
         })
     }
 }
@@ -255,7 +293,7 @@ fn qwen2_layer(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, b
     Ok(Layer {
         norm1: rms(scope.load("input_norm", hidden)?),
         qkv: scope.load("qkv", [shape.heads().qkv(), hidden])?,
-        out: scope.load("o", [hidden, hidden])?,
+        out: scope.load("o", [hidden, shape.heads().width()])?,
         norm2: rms(scope.load("post_norm", hidden)?),
         feed_forward: FeedForward::Gated {
             gate: scope.load("gate", [feed_forward, hidden])?,
@@ -283,7 +321,7 @@ fn layer_norm_layer(
     Ok(Layer {
         norm1: layer_norm(scope.load("norm1", hidden)?),
         qkv: scope.load("qkv", [shape.heads().qkv(), hidden])?,
-        out: scope.load("out", [hidden, hidden])?,
+        out: scope.load("out", [hidden, shape.heads().width()])?,
         norm2: layer_norm(scope.load("norm2", hidden)?),
         feed_forward: FeedForward::Plain {
             up: scope.load("ff1", [feed_forward, hidden])?,

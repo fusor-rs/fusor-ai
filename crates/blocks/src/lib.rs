@@ -15,10 +15,12 @@ pub mod istft;
 mod layer;
 pub mod norm;
 mod resnet;
+pub mod rotary;
 pub mod seanet;
 pub mod transformer;
 pub mod unet;
 pub mod vae;
+pub mod vit;
 
 /// The base of the sinusoids that encode a position or a time (`10000^(−2i/d)`).
 const SINUSOID_BASE: f32 = 10_000.0;

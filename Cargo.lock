@@ -334,6 +334,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "fusor-ai-paddle-ocr"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-blocks",
+ "fusor-ai-bundle",
+ "fusor-ai-kernels",
+ "fusor-ai-team",
+ "serde",
+]
+
+[[package]]
+name = "fusor-ai-paddle-ocr-compile"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-kernels",
+ "fusor-ai-paddle-ocr",
+]
+
+[[package]]
 name = "fusor-ai-parakeet"
 version = "0.1.2"
 dependencies = [

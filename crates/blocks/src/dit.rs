@@ -13,6 +13,7 @@ use team::{Ctx, SharedBuf};
 
 pub use crate::layer::Buffers;
 use crate::layer::{Attention, FeedForward, Heads, Layer, Norm, Pass, Rope, Stack, Widths};
+use crate::rotary::{Rotary, Rotation};
 
 /// The dimensions of one DiT stack.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -162,6 +163,7 @@ impl Load for Dit {
                 "{prefix}: {heads} heads of {head_dim} for a width of {hidden}"
             )));
         }
+        let rotary = Rotary::new(Rotation::Sequence, shape.rope_base, head_dim);
         let blocks = load_each(
             store,
             &format!("{prefix}.blocks"),
@@ -169,12 +171,7 @@ impl Load for Dit {
             |store, name| block(store, name, shape),
         )?;
         Ok(Self {
-            stack: Stack::new(
-                shape.heads(),
-                Some(Rope::Interleaved),
-                shape.rope_base,
-                blocks,
-            ),
+            stack: Stack::new(shape.heads(), Some(Rope::Interleaved), rotary, blocks),
         })
     }
 }

@@ -26,4 +26,11 @@ impl Tokenizer {
             .map_err(|error| Error::Format(format!("tokenize: {error}")))?;
         Ok(encoding.get_ids().to_vec())
     }
+
+    /// The text of `ids`, special tokens included.
+    pub fn decode(&self, ids: &[u32]) -> Result<String, Error> {
+        self.0
+            .decode(ids, false)
+            .map_err(|error| Error::Format(format!("detokenize: {error}")))
+    }
 }

@@ -2,6 +2,7 @@
 //! its prefix — `text`, `unet`, `vae` — so this is the table of contents; the compiler
 //! (`realistic-vision-compile`) writes exactly these names.
 
+use blocks::rotary::Rotation;
 use blocks::transformer::{Architecture, Shape};
 use blocks::unet::{self, Unet};
 use blocks::vae::{self, Decoder};
@@ -20,6 +21,7 @@ pub const TEXT_SHAPE: Shape = Shape {
     head_dim: 64,
     feed_forward: 3072,
     rope_base: 0.0,
+    rotation: Rotation::Sequence,
     norm_eps: 1e-5,
 };
 /// The rows of CLIP's token embeddings.

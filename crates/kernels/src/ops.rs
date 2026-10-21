@@ -38,15 +38,6 @@ pub fn rope_inv_freq(base: f32, head_dim: usize) -> Vec<f32> {
         .collect()
 }
 
-/// Cos and sin of `position · inv_freq[i]` (angles in f32).
-pub fn rope_angles(position: usize, inv_freq: &[f32], cos: &mut [f32], sin: &mut [f32]) {
-    for ((frequency, cosine), sine) in inv_freq.iter().zip(cos.iter_mut()).zip(sin.iter_mut()) {
-        let angle = position as f32 * frequency;
-        *cosine = angle.cos();
-        *sine = angle.sin();
-    }
-}
-
 /// Rotation by halves (`rotate_half`, Llama/Qwen): element `i` pairs with `i + d/2`.
 pub fn rope_half(head: &mut [f32], cos: &[f32], sin: &[f32]) {
     let half = head.len() / 2;

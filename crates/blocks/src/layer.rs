@@ -7,11 +7,13 @@
 //! feed-forward's first projections by their columns; its last projection plus residual by
 //! columns.
 
-use kernels::ops::{rms_norm, rope_angles, rope_half, rope_interleaved, rope_inv_freq, silu};
+use kernels::ops::{rms_norm, rope_half, rope_interleaved, silu};
 use kernels::{COLUMN_ALIGN, Linear, QuantizedRows, SharedRows, Vector, project_residual};
 use team::{Ctx, PerThread, SharedBuf};
 
+use crate::attention;
 use crate::norm::LayerNorm;
+use crate::rotary::{Position, Rotary};
 
 pub(crate) enum Norm {
     Rms { weight: Vector, eps: f32 },
@@ -92,7 +94,7 @@ pub(crate) struct Stack {
     heads: Heads,
     /// `None` for stacks without rotary embeddings (learned positions, added to the input).
     rope: Option<Rope>,
-    inv_freq: Vec<f32>,
+    rotary: Rotary,
     layers: Vec<Layer>,
 }
 
@@ -118,6 +120,8 @@ pub(crate) struct Scratch {
     sin: Vec<f32>,
     /// A gated feed-forward's `up` projection of this thread's columns.
     up_share: Vec<f32>,
+    /// A vision encoder's attention over all of an image's patches.
+    pub(crate) attention: attention::Scratch,
 }
 
 /// The widths of a stack's activations.
@@ -161,8 +165,13 @@ pub(crate) struct Pass<'call> {
 
 /// What a block's attention does with the QKV rows of a call.
 pub(crate) trait Attention {
-    /// The position of row `row`, which its rotary angles turn by.
+    /// The sequence position of row `row`.
     fn position(&self, row: usize) -> usize;
+
+    /// The position row `row`'s rotary angles turn by: its sequence position on every axis.
+    fn rotary(&self, row: usize) -> Position {
+        Position::uniform(self.position(row))
+    }
 
     /// Keeps head `unit` (query heads, then key heads, then value heads) of a row at `position`
     /// of layer `layer`, once rotated: a KV cache keeps the key and value heads.
@@ -176,13 +185,13 @@ impl Stack {
     pub(crate) fn new(
         heads: Heads,
         rope: Option<Rope>,
-        rope_base: f32,
+        rotary: Rotary,
         layers: Vec<Layer>,
     ) -> Self {
         Self {
             heads,
             rope,
-            inv_freq: rope_inv_freq(rope_base, heads.head_dim),
+            rotary,
             layers,
         }
     }
@@ -245,7 +254,9 @@ impl Stack {
         for row in 0..pass.rows {
             let position = attention.position(row);
             if self.rope.is_some() {
-                rope_angles(position, &self.inv_freq, &mut scratch.cos, &mut scratch.sin);
+                let rotary = attention.rotary(row);
+                self.rotary
+                    .angles(rotary, &mut scratch.cos, &mut scratch.sin);
             }
             for start in units.clone().step_by(head_dim) {
                 let at = row * width + start;

@@ -2,6 +2,7 @@
 //! its prefix — `llm`, `flow`, `agg`, `stop`, `vae` — so this is the table of contents; the
 //! compiler (`ming-compile`) writes exactly these names.
 
+use blocks::rotary::Rotation;
 use blocks::transformer::{Architecture, Buffers, Shape, Transformer};
 use bundle::{Load, Scope, Store};
 use kernels::ops::rms_norm;
@@ -23,6 +24,7 @@ pub const QWEN2_SHAPE: Shape = Shape {
     head_dim: 64,
     feed_forward: 4864,
     rope_base: 1e6,
+    rotation: Rotation::Sequence,
     norm_eps: 1e-6,
 };
 /// Width of the LLM's hidden states (and of its input embeddings).
