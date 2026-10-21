@@ -118,13 +118,14 @@ ming-wasm is a complete worked example, and [AGENTS.md](AGENTS.md#repository) sa
 | Layer | Crate or package | Holds |
 | --- | --- | --- |
 | Primitives | `team` | `Team`, `Ctx` (`split`, `barrier`), `SharedBuf`, `PerThread` |
-| | `kernels` | `Tensor` and its formats, the checked views `Vector` and `Table`, `matmul` over per-target backends, `ops` (RMSNorm, LayerNorm, RoPE, GELU, SiLU, ELU, `exp`, `erf`, softmax, attention), `Linear`, `rng`, `wav` (16-bit PCM WAV encoding, and decoding to mono) |
+| | `kernels` | `Tensor` and its formats, the checked views `Vector` and `Table`, `matmul` over per-target backends, `ops` (RMSNorm, LayerNorm, RoPE, GELU, SiLU, ELU, `exp`, `erf`, softmax, attention), `Linear`, `conv` (products over the pixels of images split by rows, 2-D convolutions as such products, nearest upsampling folded in), `QuantizedMatrix` (weights quantized at run time), `rng`, `wav` (16-bit PCM WAV encoding, and decoding to mono) |
 | | `bundle` | `Manifest`, `Store` (streamed, hashed parts; tensors and blobs), the `Load` trait that checks every tensor's shape, `Tokenizer` (with the `tokenizer` feature) |
 | | `compile` | `Checkpoint` (safetensors), `BundleWriter`, `Profile` and `Tensors` (each tensor in its profile's format) |
-| Blocks | `blocks` | `transformer` (decoder stacks with a causal or sliding-window KV cache, in the Qwen2 and Kyutai architectures), `dit` (diffusion-transformer blocks), `norm` (LayerNorm), `adaln_mlp` (the adaLN residual MLP of MAR-style flow heads), `flow` (flow-matching Euler steps with classifier-free guidance), `istft` (streaming inverse STFT), `seanet` (SEANet's streaming decoder, every conv one matrix), `conformer` (NVIDIA's FastConformer encoder: the convolutional subsampler, Transformer-XL relative-position attention, the convolution module) |
+| Blocks | `blocks` | `transformer` (decoder stacks with a causal or sliding-window KV cache, in the Qwen2, Kyutai and CLIP architectures), `dit` (diffusion-transformer blocks), `norm` (LayerNorm, GroupNorm), `adaln_mlp` (the adaLN residual MLP of MAR-style flow heads), `flow` (flow-matching Euler steps with classifier-free guidance), `istft` (streaming inverse STFT), `seanet` (SEANet's streaming decoder, every conv one matrix), `conformer` (NVIDIA's FastConformer encoder: the convolutional subsampler, Transformer-XL relative-position attention, the convolution module), `unet` (latent diffusion's UNet: residual blocks, spatial transformers with int8 self- and cross-attention), `vae` (the KL autoencoder's decoder), `dpm` (DPM-Solver++(2M) at Karras noise levels) |
 | Models | `ming`, `ming-compile` | Ming-3.0-tts-0.5B and the compiler that writes its bundles |
 | | `phonon`, `phonon-compile` | Phonon-31m-en and the compiler that writes its bundles |
 | | `parakeet`, `parakeet-compile` | Moondream's Parakeet Redux and the compiler that writes its bundles |
+| | `realistic-vision`, `realistic-vision-compile` | Realistic Vision V6.0 B1 (Stable Diffusion 1.5) with the SD VAE ft-MSE, and the compiler that writes its bundles |
 | Browser | `packages/host` | `loader.js` (build choice, part streaming, OPFS cache), `compute.js` (the compute-worker pool), `thread-host.js` and the `protocol.js` they share |
 | Tools | `scripts/` | `build-runtime.sh`, `check-wasm-imports.mjs`, `check-layers.mjs`, `serve.mjs`, `install-tools.sh` |
 
@@ -137,6 +138,7 @@ On crates.io each crate is `fusor-ai-<name>`, such as `fusor-ai-kernels`, and it
 | Ming-3.0-tts-0.5B: `ming`, `ming-compile`; app in [ming-wasm](https://github.com/fusor-rs/ming-wasm) | Text to speech, 44.1 kHz | `transformer`, `dit`, `flow`, `istft` | 1.5–2× faster than real time in Chrome on an Apple M4 Pro; 850 MB bundle |
 | Phonon-31m-en: `phonon`, `phonon-compile`; app in [phonon-wasm](https://github.com/fusor-rs/phonon-wasm) | Text to speech, 24 kHz, English | `transformer`, `norm`, `adaln_mlp`, `seanet` | 9× faster than real time on one thread and 40× on eight in Chrome on an Apple M4 Pro; 46 MB bundle |
 | Parakeet Redux: `parakeet`, `parakeet-compile`; app in [parakeet-redux-wasm](https://github.com/fusor-rs/parakeet-redux-wasm) | Speech to text, 16 kHz, 25 European languages, live or from a recording | `conformer` | 34× faster than real time on eight threads and 7× on one in Chrome on an Apple M4 Pro; 199 MB bundle |
+| Realistic Vision V6.0 B1: `realistic-vision`, `realistic-vision-compile`; app in [realistic-vision](https://github.com/fusor-rs/realistic-vision) | Text to image, Stable Diffusion 1.5 with the SD VAE ft-MSE, up to 512 × 768 | `transformer`, `unet`, `vae`, `dpm` | A 512 × 512 image in 20 steps in 57 s on eight threads and 6 minutes on one in Chrome on an Apple M4 Pro; 1.16 GB bundle |
 
 Each model's library lives in `crates/models/`. Its runtime, CLI, page, documentation and releases live in its app's repository.
 
@@ -147,6 +149,7 @@ Each model's library lives in `crates/models/`. Its runtime, CLI, page, document
 | [ming-wasm](https://github.com/fusor-rs/ming-wasm) | Running the Ming text-to-speech page and the `ming` CLI, releases, and benchmarks of the first model against PyTorch and other runtimes |
 | [phonon-wasm](https://github.com/fusor-rs/phonon-wasm) | Running the Phonon text-to-speech page and the `phonon` CLI, releases and benchmarks |
 | [parakeet-redux-wasm](https://github.com/fusor-rs/parakeet-redux-wasm) | Running the Parakeet Redux speech-to-text page and the `parakeet` CLI, releases and benchmarks |
+| [realistic-vision](https://github.com/fusor-rs/realistic-vision) | Running the Realistic Vision text-to-image page and the `realistic-vision` CLI, releases and benchmarks |
 | [Repository rules](AGENTS.md) | The layers, where new code goes, and the rules every change follows |
 | [Contributing](CONTRIBUTING.md) | Setup, checks and releasing |
 | [Brand](assets/brand/BRANDING.md) | The logo, its construction and its colors |

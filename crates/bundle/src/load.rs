@@ -1,3 +1,4 @@
+use kernels::conv::{self, Conv2d};
 use kernels::{Linear, Table, Vector};
 
 use crate::{Error, Store};
@@ -77,5 +78,16 @@ impl Load for Linear {
         let weight = Table::load(store, &format!("{prefix}.weight"), shape)?;
         let bias = store.take_optional(&format!("{prefix}.bias"));
         Ok(Linear::new(weight, bias.map(Vector::new).transpose()?)?)
+    }
+}
+
+/// The convolution `prefix`: `prefix.weight`, `[outputs, kernel² · inputs]`, and its bias when
+/// the bundle has one.
+impl Load for Conv2d {
+    type Shape = conv::Shape;
+
+    fn load(store: &mut Store, prefix: &str, shape: conv::Shape) -> Result<Self, Error> {
+        let linear = Linear::load(store, prefix, shape.matrix())?;
+        Ok(Conv2d::new(linear, shape.kernel, shape.stride)?)
     }
 }

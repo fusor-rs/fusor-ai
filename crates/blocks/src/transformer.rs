@@ -10,11 +10,14 @@
 //!   biases; a checkpoint's layer-scale factors are folded into `out` and `ff2` by its compiler.
 //!   Tensors under a prefix `p`: `p.layers.{i}.{norm1, qkv, out, norm2, ff1, ff2}`, the norms as
 //!   `weight` and `bias` vectors.
+//! - CLIP's text encoder: the Kyutai layer's tensors, with biases on every linear, a quick-GELU
+//!   MLP and no rotary embeddings: its positions are learned, added to the input by the model
+//!   (`rope_base` is unused).
 //!
 //! A final norm after the last layer, where a model has one, is the model's.
 
 use bundle::{Load, Scope, Store, load_each};
-use kernels::ops::{attend, gelu_erf};
+use kernels::ops::{attend, gelu_erf, quick_gelu};
 use team::{Ctx, SharedBuf};
 
 pub use crate::layer::Buffers;
@@ -25,6 +28,7 @@ use crate::norm::LayerNorm;
 pub enum Architecture {
     Qwen2,
     Kyutai,
+    Clip,
 }
 
 /// The dimensions of one stack.
@@ -221,8 +225,9 @@ impl Load for Transformer {
             |store, name| layer(store, name, shape),
         )?;
         let rope = match shape.architecture {
-            Architecture::Qwen2 => Rope::Half,
-            Architecture::Kyutai => Rope::Interleaved,
+            Architecture::Qwen2 => Some(Rope::Half),
+            Architecture::Kyutai => Some(Rope::Interleaved),
+            Architecture::Clip => None,
         };
         Ok(Self {
             stack: Stack::new(shape.heads(), rope, shape.rope_base, layers),
@@ -233,7 +238,8 @@ impl Load for Transformer {
 fn layer(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, bundle::Error> {
     match shape.architecture {
         Architecture::Qwen2 => qwen2_layer(store, prefix, shape),
-        Architecture::Kyutai => kyutai_layer(store, prefix, shape),
+        Architecture::Kyutai => layer_norm_layer(store, prefix, shape, gelu_erf),
+        Architecture::Clip => layer_norm_layer(store, prefix, shape, quick_gelu),
     }
 }
 
@@ -259,7 +265,13 @@ fn qwen2_layer(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, b
     })
 }
 
-fn kyutai_layer(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, bundle::Error> {
+/// A Kyutai or CLIP layer: LayerNorms, and an MLP with `activation`.
+fn layer_norm_layer(
+    store: &mut Store,
+    prefix: &str,
+    shape: Shape,
+    activation: fn(f32) -> f32,
+) -> Result<Layer, bundle::Error> {
     let Shape {
         hidden,
         feed_forward,
@@ -276,7 +288,7 @@ fn kyutai_layer(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, 
         feed_forward: FeedForward::Plain {
             up: scope.load("ff1", [feed_forward, hidden])?,
             down: scope.load("ff2", [hidden, feed_forward])?,
-            activation: gelu_erf,
+            activation,
         },
     })
 }

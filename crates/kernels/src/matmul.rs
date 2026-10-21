@@ -27,6 +27,49 @@ pub struct QuantizedRows {
     corrections: Vec<i32>,
 }
 
+/// A matrix quantized to `Q7b32` at run time, row by row (an attention's keys and values): its
+/// `matrix` multiplies like a model's weights.
+#[derive(Default)]
+pub struct QuantizedMatrix {
+    quants: Vec<u8>,
+    scales: Vec<f32>,
+    cols: usize,
+}
+
+impl QuantizedMatrix {
+    /// Empties it for rows of `cols` values, a multiple of `BLOCK`.
+    pub fn reset(&mut self, cols: usize) {
+        assert!(cols.is_multiple_of(BLOCK), "rows of whole blocks");
+        self.quants.clear();
+        self.scales.clear();
+        self.cols = cols;
+    }
+
+    /// Appends `row`, `cols` values.
+    pub fn push(&mut self, row: &[f32]) {
+        assert_eq!(row.len(), self.cols, "a row of the matrix's width");
+        let start = self.quants.len();
+        self.quants.resize(start + row.len(), 0);
+        let blocks = row.as_chunks::<BLOCK>().0;
+        let outputs = self.quants[start..].as_chunks_mut::<BLOCK>().0;
+        for (block, out) in blocks.iter().zip(outputs) {
+            self.scales.push(QuantFormat::Q7b32.quantize(block, out));
+        }
+    }
+
+    pub fn matrix(&self) -> Matrix<'_> {
+        Matrix {
+            rows: self.quants.len() / self.cols.max(1),
+            cols: self.cols,
+            storage: MatrixStorage::Quant {
+                format: QuantFormat::Q7b32,
+                quants: &self.quants,
+                scales: &self.scales,
+            },
+        }
+    }
+}
+
 /// The activations a matmul reads: the f32 rows themselves for f32 weights, else their int8 form
 /// for one quantized format.
 pub enum Input<'rows> {

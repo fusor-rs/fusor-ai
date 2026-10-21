@@ -5,10 +5,12 @@
 //! (`T2b128`, see `quant`); activations are quantized to int8 per scale group on the fly, and
 //! `matmul` multiplies them with the target's dot-product instructions (`arch`). `Linear` adds
 //! the bias; `project` and `project_residual` split a linear layer's output columns over the
-//! threads of a `team` run.
+//! threads of a `team` run, and `conv` splits products over many rows (images, long sequences)
+//! by rows, 2-D convolutions among them.
 
 mod arch;
 mod blob;
+pub mod conv;
 mod linear;
 mod matmul;
 pub mod ops;
@@ -21,7 +23,7 @@ pub use arch::{DOTS, dot_f32, dot_f32_many};
 pub use linear::{
     COLUMN_ALIGN, Linear, NARROW_COLUMN_ALIGN, SharedRows, project, project_residual,
 };
-pub use matmul::{Input, QuantizedRows, matmul};
+pub use matmul::{Input, QuantizedMatrix, QuantizedRows, matmul};
 pub use quant::{BLOCK, QuantFormat, TERNARY_GROUP};
 pub use tensor::{DType, Matrix, MatrixStorage, Table, Tensor, Vector};
 

@@ -132,6 +132,13 @@ pub fn gelu_erf(x: f32) -> f32 {
     0.5 * x * (1.0 + erf(x * std::f32::consts::FRAC_1_SQRT_2))
 }
 
+/// CLIP's GELU approximation, `x · σ(1.702 x)`.
+#[inline(always)]
+pub fn quick_gelu(x: f32) -> f32 {
+    const SHARPNESS: f32 = 1.702;
+    x / (1.0 + exp(-SHARPNESS * x))
+}
+
 /// ELU with `α = 1`: `x` for `x > 0`, `eˣ − 1` otherwise.
 #[inline(always)]
 pub fn elu(x: f32) -> f32 {

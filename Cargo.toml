@@ -11,6 +11,8 @@ members = [
     "crates/models/phonon-compile",
     "crates/models/parakeet",
     "crates/models/parakeet-compile",
+    "crates/models/realistic-vision",
+    "crates/models/realistic-vision-compile",
 ]
 resolver = "2"
 
@@ -58,6 +60,8 @@ phonon = { package = "fusor-ai-phonon", path = "crates/models/phonon", version =
 phonon-compile = { package = "fusor-ai-phonon-compile", path = "crates/models/phonon-compile", version = "=0.1.2" }
 parakeet = { package = "fusor-ai-parakeet", path = "crates/models/parakeet", version = "=0.1.2" }
 parakeet-compile = { package = "fusor-ai-parakeet-compile", path = "crates/models/parakeet-compile", version = "=0.1.2" }
+realistic-vision = { package = "fusor-ai-realistic-vision", path = "crates/models/realistic-vision", version = "=0.1.2" }
+realistic-vision-compile = { package = "fusor-ai-realistic-vision-compile", path = "crates/models/realistic-vision-compile", version = "=0.1.2" }
 rayon = "=1.12.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"

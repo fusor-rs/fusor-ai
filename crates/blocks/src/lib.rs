@@ -6,14 +6,19 @@
 //! a prefix that its documentation lists.
 
 pub mod adaln_mlp;
+mod attention;
 pub mod conformer;
 pub mod dit;
+pub mod dpm;
 pub mod flow;
 pub mod istft;
 mod layer;
 pub mod norm;
+mod resnet;
 pub mod seanet;
 pub mod transformer;
+pub mod unet;
+pub mod vae;
 
 /// The base of the sinusoids that encode a position or a time (`10000^(−2i/d)`).
 const SINUSOID_BASE: f32 = 10_000.0;

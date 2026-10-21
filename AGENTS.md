@@ -16,8 +16,8 @@ The crates are layers. A crate depends only on its own layer or the ones below i
 
 | Layer | Path | Holds |
 | --- | --- | --- |
-| Primitives | `crates/team`, `crates/kernels`, `crates/bundle`, `crates/compile` | the SPMD thread team; tensors and their block-quantized formats, the int8 matmul over per-target `arch` backends, f32 operations, `Linear`, `rng`, `wav`; the bundle manifest, the streaming `Store`, the `Load` trait and the bundled `Tokenizer`; the safetensors reader, `BundleWriter` and the profile-driven `Tensors` |
-| Blocks | `crates/blocks` | architecture pieces parameterized by a shape: `transformer` (Qwen2 and Kyutai), `dit`, `norm`, `adaln_mlp`, `flow` (flow-matching integration), `istft`, `seanet`, `conformer` |
+| Primitives | `crates/team`, `crates/kernels`, `crates/bundle`, `crates/compile` | the SPMD thread team; tensors and their block-quantized formats, the int8 matmul over per-target `arch` backends, f32 operations, `Linear`, `conv` (products over many rows, 2-D convolutions), `rng`, `wav`; the bundle manifest, the streaming `Store`, the `Load` trait and the bundled `Tokenizer`; the safetensors reader, `BundleWriter` and the profile-driven `Tensors` |
+| Blocks | `crates/blocks` | architecture pieces parameterized by a shape: `transformer` (Qwen2, Kyutai and CLIP), `dit`, `norm` (LayerNorm, GroupNorm), `adaln_mlp`, `flow` (flow-matching integration), `istft`, `seanet`, `conformer`, `unet` (latent diffusion's UNet), `vae` (its autoencoder's decoder), `dpm` (DPM-Solver++ sampling) |
 | Models | `crates/models/<model>`, `crates/models/<model>-compile` | one model: its dimensions, tensor names, wiring, sampler settings, prompts and text frontend; its compiler |
 
 Beside the crates: `packages/host`, the browser side every model shares (`loader.js`,
@@ -28,8 +28,9 @@ A model's products live in its own repository, which consumes fusor-ai as the gi
 `vendor/fusor-ai`: its wasm-bindgen runtime, its native CLI, its page, its goldens and
 end-to-end checks, its documentation and its releases. Ming's is
 [ming-wasm](https://github.com/fusor-rs/ming-wasm), Phonon's
-[phonon-wasm](https://github.com/fusor-rs/phonon-wasm) and Parakeet Redux's
-[parakeet-redux-wasm](https://github.com/fusor-rs/parakeet-redux-wasm).
+[phonon-wasm](https://github.com/fusor-rs/phonon-wasm), Parakeet Redux's
+[parakeet-redux-wasm](https://github.com/fusor-rs/parakeet-redux-wasm) and Realistic Vision's
+[realistic-vision](https://github.com/fusor-rs/realistic-vision).
 
 Where code goes, asked in order:
 
@@ -72,7 +73,7 @@ Constraints that hold everywhere:
   runtimes (both SIMD128 and relaxed SIMD) of every model whose weight formats
   it touches produce the same result they did before (`just smoke` and
   `just e2e` in the model's repository, its submodule at the change): Ming for
-  `Q7b32` and `Q4b32`, Parakeet Redux for `T2b128`.
+  `Q7b32` and `Q4b32`, Parakeet Redux for `T2b128`, Realistic Vision for `Q7b32`.
 - Every crate shares the version in `[workspace.package]`.
 
 ## The standard
@@ -314,7 +315,8 @@ It runs formatting, the workspace tests, Clippy natively and for
 `wasm32-unknown-unknown` (SIMD128 and relaxed SIMD), docs, the host package and
 import-check self-test, and the layer check. A change to a primitive, a block or
 a model also needs the runtime build and checks of every model it reaches, run
-in the model's repository (ming-wasm, phonon-wasm, parakeet-redux-wasm) with its
+in the model's repository (ming-wasm, phonon-wasm, parakeet-redux-wasm,
+realistic-vision) with its
 `vendor/fusor-ai` submodule at the change: `just runtimes`, `just smoke`,
 `just parity` (the same numbers as before unless the change is meant to move
 them) and `just e2e`.

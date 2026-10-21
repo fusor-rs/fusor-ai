@@ -1,0 +1,29 @@
+[package]
+name = "fusor-ai-realistic-vision"
+description = "Realistic Vision V6.0 B1 text to image (Stable Diffusion 1.5): CLIP's text encoder, the UNet, DPM-Solver++(2M) at Karras sigmas with classifier-free guidance, the SD VAE decoder, the prompt frontend and a live preview. No I/O; builds for native and wasm32."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../../README.md"
+keywords = ["fusor", "diffusion", "image", "wasm", "inference"]
+categories = ["multimedia::images", "science", "wasm"]
+
+[lib]
+name = "realistic_vision"
+
+[dependencies]
+team.workspace = true
+kernels.workspace = true
+blocks.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[features]
+# Run the thread team on Rayon's pool (native, and the threaded browser runtimes).
+threads = ["team/threads"]
+
+[lints]
+workspace = true

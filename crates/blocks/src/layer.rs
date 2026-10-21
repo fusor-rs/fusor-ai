@@ -90,7 +90,8 @@ impl Heads {
 
 pub(crate) struct Stack {
     heads: Heads,
-    rope: Rope,
+    /// `None` for stacks without rotary embeddings (learned positions, added to the input).
+    rope: Option<Rope>,
     inv_freq: Vec<f32>,
     layers: Vec<Layer>,
 }
@@ -172,7 +173,12 @@ pub(crate) trait Attention {
 }
 
 impl Stack {
-    pub(crate) fn new(heads: Heads, rope: Rope, rope_base: f32, layers: Vec<Layer>) -> Self {
+    pub(crate) fn new(
+        heads: Heads,
+        rope: Option<Rope>,
+        rope_base: f32,
+        layers: Vec<Layer>,
+    ) -> Self {
         Self {
             heads,
             rope,
@@ -238,7 +244,9 @@ impl Stack {
         let rotated = self.heads.heads + self.heads.kv_heads;
         for row in 0..pass.rows {
             let position = attention.position(row);
-            rope_angles(position, &self.inv_freq, &mut scratch.cos, &mut scratch.sin);
+            if self.rope.is_some() {
+                rope_angles(position, &self.inv_freq, &mut scratch.cos, &mut scratch.sin);
+            }
             for start in units.clone().step_by(head_dim) {
                 let at = row * width + start;
                 let head = buffers.qkv.part(at..at + head_dim);
@@ -253,8 +261,9 @@ impl Stack {
 
     fn rotate(&self, head: &mut [f32], scratch: &Scratch) {
         match self.rope {
-            Rope::Half => rope_half(head, &scratch.cos, &scratch.sin),
-            Rope::Interleaved => rope_interleaved(head, &scratch.cos, &scratch.sin),
+            Some(Rope::Half) => rope_half(head, &scratch.cos, &scratch.sin),
+            Some(Rope::Interleaved) => rope_interleaved(head, &scratch.cos, &scratch.sin),
+            None => {}
         }
     }
 }

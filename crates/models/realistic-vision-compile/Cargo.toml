@@ -1,0 +1,25 @@
+[package]
+name = "fusor-ai-realistic-vision-compile"
+description = "Compiles Realistic Vision V6.0 B1 (SG161222/Realistic_Vision_V6.0_B1_noVAE) and the SD VAE ft-MSE (stabilityai/sd-vae-ft-mse-original) into a bundle: renamed and fused tensors, convolutions as matrices, the CLIP tokenizer and the dtype of every tensor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../../README.md"
+keywords = ["fusor", "diffusion", "safetensors", "quantization", "wasm"]
+categories = ["development-tools", "multimedia::images"]
+
+[lib]
+name = "realistic_vision_compile"
+
+[dependencies]
+realistic-vision.workspace = true
+bundle.workspace = true
+compile.workspace = true
+kernels.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

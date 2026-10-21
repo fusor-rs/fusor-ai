@@ -380,6 +380,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "fusor-ai-realistic-vision"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-blocks",
+ "fusor-ai-bundle",
+ "fusor-ai-kernels",
+ "fusor-ai-team",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "fusor-ai-realistic-vision-compile"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-kernels",
+ "fusor-ai-realistic-vision",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "fusor-ai-team"
 version = "0.1.2"
 dependencies = [

@@ -169,7 +169,12 @@ impl Load for Dit {
             |store, name| block(store, name, shape),
         )?;
         Ok(Self {
-            stack: Stack::new(shape.heads(), Rope::Interleaved, shape.rope_base, blocks),
+            stack: Stack::new(
+                shape.heads(),
+                Some(Rope::Interleaved),
+                shape.rope_base,
+                blocks,
+            ),
         })
     }
 }
