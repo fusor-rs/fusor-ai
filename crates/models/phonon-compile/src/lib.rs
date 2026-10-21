@@ -14,17 +14,15 @@ mod tables;
 use std::path::Path;
 use std::str::FromStr;
 
-use bundle::{Manifest, Source};
-use compile::{BundleWriter, Checkpoint, Error};
-use kernels::{BLOCK, DType, Tensor};
-use phonon::model::{SEANET_SHAPE, TOKENIZER_PART};
+use bundle::{Manifest, Source, TOKENIZER_PART};
+use compile::{BundleWriter, Checkpoint, Error, Profile as _, Tensors};
+use kernels::DType;
+use phonon::model::SEANET_SHAPE;
 
-use crate::tables::Tensors;
-
-pub const REPO: &str = "gradium/phonon-31m-en";
-pub const REVISION: &str = "52433c46975bfa13144c56204c9f4ee1c5b148aa";
+const REPO: &str = "gradium/phonon-31m-en";
+const REVISION: &str = "52433c46975bfa13144c56204c9f4ee1c5b148aa";
 /// The `gradium/phonon-voices` revision whose voices the bundle ships.
-pub const VOICES_REVISION: &str = "0ee17205f254b5abc43b266c8a0f215565c352f7";
+const VOICES_REVISION: &str = "0ee17205f254b5abc43b266c8a0f215565c352f7";
 const WEIGHTS: &str = "model.safetensors";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,14 +33,29 @@ pub enum Profile {
     Q7,
 }
 
-impl Profile {
-    pub const ALL: [Self; 2] = [Self::F32, Self::Q7];
+impl compile::Profile for Profile {
+    const ALL: &'static [Self] = &[Self::F32, Self::Q7];
+    const ALWAYS_F32: &'static [&'static str] = &[
+        "lm.input.",
+        "lm.eos.",
+        "flow.input.",
+        "flow.final.",
+        "mimi.latent.",
+        "mimi.upsample",
+        "mimi.decoder.final.",
+    ];
 
-    /// The name in `manifest.json` and on the command line.
-    pub fn name(self) -> &'static str {
+    fn name(self) -> &'static str {
         match self {
             Self::F32 => "f32",
             Self::Q7 => "q7",
+        }
+    }
+
+    fn matrix_dtype(self, name: &str) -> DType {
+        match self {
+            Self::Q7 if !last_residual(name) => DType::Q7b32,
+            Self::F32 | Self::Q7 => DType::F32,
         }
     }
 }
@@ -51,23 +64,9 @@ impl FromStr for Profile {
     type Err = Error;
 
     fn from_str(name: &str) -> Result<Self, Error> {
-        Self::ALL
-            .into_iter()
-            .find(|profile| profile.name() == name)
-            .ok_or_else(|| Error::Format(format!("no profile {name:?} (f32 or q7)")))
+        compile::profile(name)
     }
 }
-
-/// Small or precision-critical matrices kept in f32 in every profile.
-const ALWAYS_F32: [&str; 7] = [
-    "lm.input.",
-    "lm.eos.",
-    "flow.input.",
-    "flow.final.",
-    "mimi.latent.",
-    "mimi.upsample",
-    "mimi.decoder.final.",
-];
 
 /// The 1-wide conv that ends SEANet's last residual unit: its int8 activations (one block of
 /// channels per sample) set the noise floor of quiet passages, about −70 dBFS against −82 in f32.
@@ -76,36 +75,15 @@ fn last_residual(name: &str) -> bool {
     name.starts_with(&format!("mimi.decoder.stages.{last_stage}.residual2."))
 }
 
-fn dtype(profile: Profile, name: &str, shape: &[usize]) -> DType {
-    let matrix = shape.len() == 2 && shape[1].is_multiple_of(BLOCK);
-    let kept = ALWAYS_F32.iter().any(|prefix| name.starts_with(prefix)) || last_residual(name);
-    if !matrix || profile == Profile::F32 || kept {
-        DType::F32
-    } else {
-        DType::Q7b32
-    }
-}
-
 pub fn run(checkpoint_dir: &Path, out: &Path, profile: Profile) -> Result<Manifest, Error> {
     let checkpoint = Checkpoint::read(&checkpoint_dir.join(WEIGHTS))?;
-    let mut tensors = Tensors::default();
+    let mut writer = BundleWriter::create(out)?;
+    let mut tensors = Tensors::new(&mut writer, profile);
     tables::flow_lm(&checkpoint, &mut tensors)?;
     tables::flow_head(&checkpoint, &mut tensors)?;
     tables::mimi(&checkpoint, &mut tensors)?;
     tables::voices(checkpoint_dir, &checkpoint, &mut tensors)?;
-    let mut writer = BundleWriter::create(out)?;
-    for entry in tensors.into_entries() {
-        if entry.values.len() != entry.shape.iter().product::<usize>() {
-            let (name, shape) = (entry.name, entry.shape);
-            return Err(Error::Format(format!("{name}: shape {shape:?}")));
-        }
-        let dtype = dtype(profile, &entry.name, &entry.shape);
-        let tensor = Tensor::encode(dtype, entry.shape, &entry.values);
-        writer.add_tensor(&entry.name, &tensor)?;
-    }
-    let path = checkpoint_dir.join(TOKENIZER_PART);
-    let tokenizer = std::fs::read(&path).map_err(|source| Error::Io { path, source })?;
-    writer.add_blob(TOKENIZER_PART, &tokenizer)?;
+    writer.add_blob_file(TOKENIZER_PART, &checkpoint_dir.join(TOKENIZER_PART))?;
     writer.finish(Source {
         repo: REPO.into(),
         revision: REVISION.into(),

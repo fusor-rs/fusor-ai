@@ -2,8 +2,10 @@
 //! the previous one: the transformer at the next position, its final norm `t`, the end-of-speech
 //! logit `eos · t` and the one-step flow head, `latent = noise + head(t, noise)`.
 
+use std::ops::Range;
+
 use blocks::adaln_mlp;
-use blocks::kyutai::{self, KvCache, Mask, Span};
+use blocks::transformer::{Buffers, KvCache, Mask, Span};
 use kernels::QuantizedRows;
 use team::{PerThread, SharedBuf, Team};
 
@@ -21,14 +23,16 @@ pub struct FlowStep {
     pub eos_logit: f32,
 }
 
-/// The transformer's KV cache and the activations of prompts and steps.
+/// The transformer's KV cache, the activations of prompts and steps, and the next position.
 pub(crate) struct LmState {
     cache: KvCache,
-    buffers: kyutai::Buffers,
+    buffers: Buffers,
     flow: adaln_mlp::Buffers,
     /// `t`, the final norm of the step's hidden state, per thread.
     normed: PerThread<Vec<f32>>,
     eos_logit: SharedBuf,
+    /// The position of the next step.
+    position: usize,
 }
 
 impl LmState {
@@ -36,56 +40,59 @@ impl LmState {
     pub(crate) fn new(lm: &FlowLm, capacity: usize, threads: usize) -> Self {
         Self {
             cache: KvCache::new(FLOW_LM_SHAPE, capacity),
-            buffers: kyutai::Buffers::new(FLOW_LM_SHAPE, PROMPT_ROWS, threads),
+            buffers: FLOW_LM_SHAPE.buffers(PROMPT_ROWS, threads),
             flow: adaln_mlp::Buffers::new(&lm.flow, threads),
             normed: PerThread::new(threads, || vec![0.0; HIDDEN]),
             eos_logit: SharedBuf::new(1),
+            position: 0,
         }
     }
 }
 
 impl FlowLm {
-    /// Runs `count` embedded positions from `first` through the transformer; `embed(i, row)`
-    /// writes the embedding of the `i`-th.
+    /// Runs the embedded `positions` through the transformer, `embed(i, row)` writing the
+    /// embedding of the `i`-th; the next step follows them.
     pub(crate) fn prompt(
         &self,
         team: &Team,
         state: &mut LmState,
-        (first, count): (usize, usize),
+        positions: Range<usize>,
         embed: impl Fn(usize, &mut [f32]),
     ) {
-        for start in (0..count).step_by(PROMPT_ROWS) {
-            let rows = (count - start).min(PROMPT_ROWS);
+        for first in positions.clone().step_by(PROMPT_ROWS) {
+            let rows = (positions.end - first).min(PROMPT_ROWS);
             let hidden = &mut state.buffers.hidden.get_mut()[..rows * HIDDEN];
             for (offset, row) in hidden.as_chunks_mut::<HIDDEN>().0.iter_mut().enumerate() {
-                embed(start + offset, row);
+                embed(first - positions.start + offset, row);
             }
             let span = Span {
                 rows,
-                first: first + start,
+                first,
                 mask: Mask::Causal,
             };
             let state = &*state;
             team.run(|ctx| self.body.forward(ctx, &state.cache, &state.buffers, span));
         }
+        state.position = positions.end;
     }
 
-    /// One frame at `position` from the previous latent (or BOS) and the noise.
+    /// One frame at the next position from the previous latent (or BOS) and the noise.
     pub(crate) fn step(
         &self,
         team: &Team,
         state: &mut LmState,
-        (input, position): (&[f32], usize),
+        input: &[f32],
         noise: &[f32],
     ) -> FlowStep {
         let hidden = &mut state.buffers.hidden.get_mut()[..HIDDEN];
         self.input
-            .apply(input, 1, &mut QuantizedRows::default(), hidden);
+            .apply(input, &mut QuantizedRows::default(), hidden);
         let span = Span {
             rows: 1,
-            first: position,
+            first: state.position,
             mask: Mask::Causal,
         };
+        state.position += 1;
         let state = &*state;
         team.run(|ctx| {
             self.body.forward(ctx, &state.cache, &state.buffers, span);
@@ -95,7 +102,7 @@ impl FlowLm {
             if ctx.is_first() {
                 let mut logit = [0.0];
                 let quant = &mut QuantizedRows::default();
-                self.eos.apply(normed, 1, quant, &mut logit);
+                self.eos.apply(normed, quant, &mut logit);
                 state.eos_logit.set(0, logit[0]);
             }
             self.flow.forward(ctx, &state.flow, normed, noise);

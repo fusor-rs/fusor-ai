@@ -55,24 +55,30 @@ impl Manifest {
         Ok(manifest)
     }
 
-    pub fn part_index(&self, file: &str) -> Result<usize, Error> {
+    pub(crate) fn part_index(&self, file: &str) -> Result<usize, Error> {
         self.parts
             .iter()
             .position(|part| part.file == file)
             .ok_or_else(|| Error::Format(format!("no part {file}")))
     }
 
-    /// Whether no tensor lives in part `part` (it is a blob).
-    pub fn is_blob(&self, part: usize) -> bool {
-        self.tensors.values().all(|entry| entry.part != part)
+    /// Per part, whether a tensor lives in it (else it is a blob).
+    pub(crate) fn holds_tensors(&self) -> Vec<bool> {
+        let mut holds = vec![false; self.parts.len()];
+        for entry in self.tensors.values() {
+            if let Some(part) = holds.get_mut(entry.part) {
+                *part = true;
+            }
+        }
+        holds
     }
 
     /// Bytes of the parts that hold tensors.
     pub fn tensor_bytes(&self) -> u64 {
-        let parts = self.parts.iter().enumerate();
+        let parts = self.parts.iter().zip(self.holds_tensors());
         parts
-            .filter(|(index, _)| !self.is_blob(*index))
-            .map(|(_, part)| part.bytes)
+            .filter(|(_, holds)| *holds)
+            .map(|(part, _)| part.bytes)
             .sum()
     }
 }

@@ -1,6 +1,6 @@
 //! Email and web addresses, read with their separators spoken.
 
-use super::{AT, PLUS, trailing_punctuation};
+use super::{AT, PLUS, UNDERSCORE, trailing_punctuation};
 
 const SCHEMES: [(&str, &str); 2] = [("https://", "H-T-T-P-S"), ("http://", "H-T-T-P")];
 const SCHEME_SEPARATOR: [&str; 3] = ["colon", "slash", "slash"];
@@ -8,7 +8,7 @@ const SEPARATORS: [(char, &str); 5] = [
     ('.', "dot"),
     ('-', "dash"),
     ('/', "slash"),
-    ('_', "underscore"),
+    ('_', UNDERSCORE),
     ('+', PLUS),
 ];
 /// Generic top-level domains; any two letters are taken as a country's.

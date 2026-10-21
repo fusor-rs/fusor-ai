@@ -5,7 +5,9 @@
 // whole pool. A compute thread that fails after start-up (a Rust panic traps it) would leave the
 // others waiting at a barrier forever, so it is reported to `onCrash` instead of ignored.
 
-export const SPAWN_COMPUTE = 'fusor-ai-spawn-compute';
+import { RAYON_ERROR, RAYON_INIT, RAYON_READY } from './protocol.js';
+
+export { SPAWN_COMPUTE } from './protocol.js';
 
 export class ComputePool {
   #workers = [];
@@ -38,18 +40,18 @@ export class ComputePool {
     return new Promise((resolve, reject) => {
       let started = false;
       worker.onmessage = ({ data }) => {
-        if (data?.type === 'fusor-ai-rayon-ready') {
+        if (data?.type === RAYON_READY) {
           started = true;
           resolve();
         }
-        if (data?.type === 'fusor-ai-rayon-error') reject(new Error(data.message));
+        if (data?.type === RAYON_ERROR) reject(new Error(data.message));
       };
       worker.onerror = (e) => {
         const message = e.message || 'a compute thread failed';
         if (started) this.#onCrash(message);
         else reject(new Error(message));
       };
-      worker.postMessage({ type: 'fusor-ai-rayon-init', ...init });
+      worker.postMessage({ type: RAYON_INIT, ...init });
     });
   }
 }

@@ -3,14 +3,12 @@
 
 use crate::arch::dot_f32;
 
-pub const NORM_EPS: f32 = 1e-6;
-
 /// `out = x · rsqrt(mean(x²) + eps) · weight` for every row of `x` (rows of `weight.len()`).
-pub fn rms_norm(x: &[f32], weight: &[f32], out: &mut [f32]) {
+pub fn rms_norm(x: &[f32], weight: &[f32], eps: f32, out: &mut [f32]) {
     let dim = weight.len();
     for (row, out_row) in x.chunks_exact(dim).zip(out.chunks_exact_mut(dim)) {
         let mean = dot_f32(row, row) / dim as f32;
-        let inverse = 1.0 / (mean + NORM_EPS).sqrt();
+        let inverse = 1.0 / (mean + eps).sqrt();
         for ((output, value), scale) in out_row.iter_mut().zip(row).zip(weight) {
             *output = value * inverse * scale;
         }
@@ -146,6 +144,24 @@ pub fn silu(x: f32) -> f32 {
     x / (1.0 + exp(-x))
 }
 
+#[inline(always)]
+pub fn sigmoid(x: f32) -> f32 {
+    1.0 / (1.0 + exp(-x))
+}
+
+/// `scores` replaced by their softmax.
+pub fn softmax(scores: &mut [f32]) {
+    let max = scores
+        .iter()
+        .fold(f32::NEG_INFINITY, |max, &score| max.max(score));
+    let mut total = 0.0;
+    for score in scores.iter_mut() {
+        *score = exp(*score - max);
+        total += *score;
+    }
+    scores.iter_mut().for_each(|score| *score /= total);
+}
+
 /// Softmax attention of one query over `keys` positions, with `1/√d` scaling. `key_value(j)`
 /// gives position `j`'s key and value (each `query.len()` long); `scores` is scratch.
 pub fn attend<'cache>(
@@ -158,17 +174,9 @@ pub fn attend<'cache>(
     let scale = 1.0 / (query.len() as f32).sqrt();
     scores.clear();
     scores.extend((0..keys).map(|j| dot_f32(query, key_value(j).0) * scale));
-    let max = scores
-        .iter()
-        .fold(f32::NEG_INFINITY, |max, &score| max.max(score));
-    let mut total = 0.0;
-    for score in scores.iter_mut() {
-        *score = (*score - max).exp();
-        total += *score;
-    }
+    softmax(scores);
     out.fill(0.0);
-    for (j, score) in scores.iter().enumerate() {
-        let weight = score / total;
+    for (j, weight) in scores.iter().enumerate() {
         for (output, component) in out.iter_mut().zip(key_value(j).1) {
             *output += weight * component;
         }
@@ -180,7 +188,7 @@ mod tests {
     use super::{elu, exp, gelu_erf, gelu_tanh, layer_norm};
 
     #[test]
-    fn exp_and_gelu_match_libm() {
+    fn exp_and_activations_match_the_f64_reference() {
         for i in -2000..=2000 {
             let x = i as f32 / 100.0;
             let want = f64::from(x).exp();

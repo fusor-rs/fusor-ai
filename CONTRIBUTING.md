@@ -8,12 +8,16 @@ natively and for `wasm32-unknown-unknown` (SIMD128 and relaxed SIMD), checks the
 package and the import-check self-test, and checks that every crate depends only on its own
 layer or lower ones (`AGENTS.md`, "Repository").
 
-A change to a primitive, a block or a model also has to run through the model's runtimes,
-because the wasm backends only execute there. A model's runtimes live in its own repository:
-for Ming, point [ming-wasm](https://github.com/fusor-rs/ming-wasm)'s `vendor/fusor-ai`
-submodule at your change, run `just build` there once, then `just runtimes`, `just smoke`,
-`just parity` and `just e2e`. Say in the pull request what they showed (parity numbers,
-real-time factor, word error rate).
+A change to a primitive, a block or a model also has to run through the runtimes of every
+model it reaches, because the wasm backends only execute there. A model's runtimes live in
+its own repository ([ming-wasm](https://github.com/fusor-rs/ming-wasm),
+[phonon-wasm](https://github.com/fusor-rs/phonon-wasm),
+[parakeet-redux-wasm](https://github.com/fusor-rs/parakeet-redux-wasm)): point its
+`vendor/fusor-ai` submodule at your change, run `just build` there once, then
+`just runtimes`, `just smoke`, `just parity` and `just e2e`. A change to a kernel backend
+reaches every model whose weight formats it reads: Ming for `Q7b32` and `Q4b32`, Parakeet
+Redux for `T2b128`. Say in the pull request what they showed (parity numbers, real-time
+factor, word error rate).
 
 The threaded runtimes need `nightly-2025-11-15` with `rust-src`
 (`rustup toolchain install nightly-2025-11-15 --component rust-src --target
@@ -30,7 +34,8 @@ advancing.
 Every crate shares one version: `version` under `[workspace.package]` in the root
 `Cargo.toml`. A release publishes every crate to crates.io under its `fusor-ai-*` package
 name; the library names stay `team`, `kernels`, `blocks`, `bundle`, `compile`, `ming`,
-`ming_compile`, `phonon`, `phonon_compile`, `parakeet` and `parakeet_compile`. A model's CLI, page and installer are released from its own repository.
+`ming_compile`, `phonon`, `phonon_compile`, `parakeet` and `parakeet_compile`. A model's CLI,
+page and installer are released from its own repository.
 
 1. Bump `version` and the `=x.y.z` pins under `[workspace.dependencies]`, run `just check`
    so `Cargo.lock` follows, and merge that to `main` with CI passing.

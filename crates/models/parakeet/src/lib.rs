@@ -17,42 +17,8 @@ mod segment;
 pub mod session;
 pub mod speech;
 pub mod vocabulary;
-pub use kernels::wav;
 
+pub use bundle::Error;
 pub use decoder::Step;
+pub use kernels::wav;
 pub use model::SAMPLE_RATE;
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("format: {0}")]
-    Format(String),
-    #[error("integrity: {0}")]
-    Integrity(String),
-    #[error("request: {0}")]
-    Request(String),
-}
-
-impl Error {
-    pub fn kind(&self) -> &'static str {
-        match self {
-            Error::Format(_) => "format",
-            Error::Integrity(_) => "integrity",
-            Error::Request(_) => "request",
-        }
-    }
-}
-
-impl From<kernels::Error> for Error {
-    fn from(error: kernels::Error) -> Self {
-        Error::Format(error.to_string())
-    }
-}
-
-impl From<bundle::Error> for Error {
-    fn from(error: bundle::Error) -> Self {
-        match error {
-            bundle::Error::Integrity(message) => Error::Integrity(message),
-            bundle::Error::Format(message) => Error::Format(message),
-        }
-    }
-}

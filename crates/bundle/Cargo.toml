@@ -19,6 +19,11 @@ serde.workspace = true
 serde_json.workspace = true
 blake3.workspace = true
 thiserror.workspace = true
+tokenizers = { workspace = true, optional = true }
+
+[features]
+# `Tokenizer`, for models that read text.
+tokenizer = ["dep:tokenizers"]
 
 [lints]
 workspace = true

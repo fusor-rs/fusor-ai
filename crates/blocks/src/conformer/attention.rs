@@ -1,17 +1,16 @@
 //! Transformer-XL relative-position attention and the sinusoids of its relative positions.
 
-use kernels::ops::{exp, rope_inv_freq};
+use kernels::ops::{rope_inv_freq, softmax};
 use kernels::{DOTS, dot_f32_many};
 
 use super::{Attention, Pass, Scratch, Shape};
-
-const POSITION_BASE: f32 = 1e4;
+use crate::SINUSOID_BASE;
 
 /// Row `r` holds the sinusoids of the relative position `p = frames − 1 − r`, for `r` from 0 to
 /// `2 · frames − 2`: `sin(p · fᵢ)` then `cos(p · fᵢ)` for each `fᵢ = 10000^(−2i / hidden)`.
 /// The rows of a shorter sequence are the middle `2 · n − 1` rows.
 pub(super) fn position_table(frames: usize, hidden: usize) -> Vec<f32> {
-    let frequencies = rope_inv_freq(POSITION_BASE, hidden);
+    let frequencies = rope_inv_freq(SINUSOID_BASE, hidden);
     let mut table = Vec::with_capacity((2 * frames - 1) * hidden);
     for row in 0..2 * frames - 1 {
         let position = (frames - 1) as f32 - row as f32;
@@ -71,7 +70,7 @@ impl Group {
     ) -> &'call [f32] {
         let hidden = shape.hidden;
         let head_dim = shape.head_dim();
-        let start = frame * 3 * hidden + part * hidden + self.head * head_dim;
+        let start = frame * shape.qkv() + part * hidden + self.head * head_dim;
         &pass.buffers.qkv.read()[start..start + head_dim]
     }
 
@@ -85,8 +84,8 @@ impl Group {
     ) {
         let head_dim = shape.head_dim();
         let lane = self.head * head_dim..(self.head + 1) * head_dim;
-        let bias_u = &weights.bias_u.values().expect("checked at load")[lane.clone()];
-        let bias_v = &weights.bias_v.values().expect("checked at load")[lane];
+        let bias_u = &weights.bias_u.values()[lane.clone()];
+        let bias_v = &weights.bias_v.values()[lane];
         let rows = content
             .chunks_exact_mut(head_dim)
             .zip(position.chunks_exact_mut(head_dim));
@@ -139,15 +138,7 @@ impl Group {
     fn mix(&self, shape: &Shape, pass: &Pass, scores: &mut [f32]) {
         let (hidden, head_dim, frames) = (shape.hidden, shape.head_dim(), pass.frames);
         for row in scores.chunks_exact_mut(frames).take(self.count) {
-            let max = row
-                .iter()
-                .fold(f32::NEG_INFINITY, |max, &score| max.max(score));
-            let mut total = 0.0;
-            for score in row.iter_mut() {
-                *score = exp(*score - max);
-                total += *score;
-            }
-            row.iter_mut().for_each(|score| *score /= total);
+            softmax(row);
         }
         let mut outputs: [Option<&mut [f32]>; DOTS] = std::array::from_fn(|member| {
             let at = (self.first + member) * hidden + self.head * head_dim;

@@ -3,6 +3,9 @@
     reason = "block loads through raw pointers, as on the SIMD targets"
 )]
 
+use super::ACTIVATION_MAX;
+use crate::quant::{BLOCK, QuantFormat, absmax, unpack_block};
+
 pub(crate) struct Weights([i32; 32]);
 pub(crate) struct Activations([i32; 32]);
 
@@ -15,43 +18,24 @@ impl super::Backend for Scalar {
     type Sums = f32;
     const TILE: usize = 4;
 
-    /// # Safety
-    /// 32 readable bytes at `at`.
     unsafe fn load_q7(at: *const u8) -> Self::Weights {
-        // SAFETY: the caller guarantees 32 readable bytes.
-        let bytes = unsafe { std::slice::from_raw_parts(at, 32) };
-        Weights(std::array::from_fn(|j| i32::from(bytes[j])))
+        // SAFETY: the caller guarantees a block's bytes.
+        unsafe { load_block(QuantFormat::Q7b32, at) }
     }
 
-    /// # Safety
-    /// 16 readable bytes at `at`.
     unsafe fn load_q4(at: *const u8) -> Self::Weights {
-        // SAFETY: the caller guarantees 16 readable bytes.
-        let bytes = unsafe { std::slice::from_raw_parts(at, 16) };
-        Weights(std::array::from_fn(|j| {
-            i32::from(if j < 16 {
-                bytes[j] & 0x0f
-            } else {
-                bytes[j - 16] >> 4
-            })
-        }))
+        // SAFETY: the caller guarantees a block's bytes.
+        unsafe { load_block(QuantFormat::Q4b32, at) }
     }
 
-    /// # Safety
-    /// 8 readable bytes at `at`.
     unsafe fn load_t2(at: *const u8) -> Self::Weights {
-        // SAFETY: the caller guarantees 8 readable bytes.
-        let bytes = unsafe { std::slice::from_raw_parts(at, 8) };
-        Weights(std::array::from_fn(|j| {
-            i32::from((bytes[j % 8] >> (2 * (j / 8))) & 0b11)
-        }))
+        // SAFETY: the caller guarantees a block's bytes.
+        unsafe { load_block(QuantFormat::T2b128, at) }
     }
 
-    /// # Safety
-    /// 32 readable bytes at `at`.
     unsafe fn load_activations(at: *const i8) -> Self::Activations {
         // SAFETY: the caller guarantees 32 readable bytes.
-        let bytes = unsafe { std::slice::from_raw_parts(at, 32) };
+        let bytes = unsafe { std::slice::from_raw_parts(at, BLOCK) };
         Activations(std::array::from_fn(|j| i32::from(bytes[j])))
     }
 
@@ -60,16 +44,13 @@ impl super::Backend for Scalar {
     }
 
     fn absmax(x: &[f32]) -> f32 {
-        x[..32]
-            .iter()
-            .fold(0.0f32, |max, value| max.max(value.abs()))
+        absmax(&x[..BLOCK])
     }
 
-    /// Quantizes 32 values to int8 at scale `d` (`round_ties_even(x / d)`); returns `Σq`.
     fn quantize_block(x: &[f32], scale: f32, out: &mut [i8]) -> i32 {
         let mut sum = 0;
-        for (output, value) in out[..32].iter_mut().zip(x) {
-            let limit = super::ACTIVATION_MAX;
+        for (output, value) in out[..BLOCK].iter_mut().zip(x) {
+            let limit = ACTIVATION_MAX;
             let level = (value / scale).round_ties_even().clamp(-limit, limit) as i8;
             sum += i32::from(level);
             *output = level;
@@ -99,4 +80,14 @@ impl super::Backend for Scalar {
     fn dot_f32(left: &[f32], right: &[f32]) -> f32 {
         left.iter().zip(right).map(|(x, y)| x * y).sum()
     }
+}
+
+/// The codes of one stored block of `format`, widened.
+///
+/// # Safety
+/// `format.quant_bytes(BLOCK)` readable bytes at `at`.
+unsafe fn load_block(format: QuantFormat, at: *const u8) -> Weights {
+    // SAFETY: forwarded from the caller.
+    let stored = unsafe { std::slice::from_raw_parts(at, format.quant_bytes(BLOCK)) };
+    Weights(unpack_block(format, stored).map(i32::from))
 }

@@ -3,23 +3,27 @@
 
 use std::path::Path;
 
-use compile::{Checkpoint, Error};
-use kernels::ops::silu;
-use phonon::model::{FLOW_SHAPE, HIDDEN, LATENT, SEANET_SHAPE, VOICE_FRAMES, voice_name};
+use compile::{Checkpoint, Error, Tensors};
+use kernels::ops::{rms_norm, silu};
+use phonon::model::{
+    FLOW_LM_SHAPE, FLOW_SHAPE, HIDDEN, LATENT, MIMI_TRANSFORMER_SHAPE, SEANET_SHAPE, VOICE_FRAMES,
+    voice_name,
+};
 use phonon::prompt::VOICES;
 
-use crate::VOICES_REVISION;
+use crate::{Profile, VOICES_REVISION};
 
-/// The voice file of each id in `VOICES`, in the checkpoint folder: the checkpoint's own, then
-/// voices of the `gradium/phonon-voices` catalog (at `VOICES_REVISION`) under their catalog path.
-const VOICE_FILES: [(&str, &str); 7] = [
-    ("default", "default-voice.safetensors"),
-    ("harper", "voices/4SZHfMpw-p46Ywgs.safetensors"),
-    ("miles", "voices/d9XCyhjo4JhkHF1d.safetensors"),
-    ("delia", "voices/nGzMHMPAWGaJFHOo.safetensors"),
-    ("preston", "voices/qIxlZ7Ei8KvWlyQH.safetensors"),
-    ("maeve", "voices/6PWnV0Nq4wu7RVBT.safetensors"),
-    ("edwin", "voices/zUCxzrOrugTSis03.safetensors"),
+/// The voice file of each voice of `VOICES`, in order, in the checkpoint folder: the checkpoint's
+/// own, then voices of the `gradium/phonon-voices` catalog (at `VOICES_REVISION`) under their
+/// catalog path.
+const VOICE_FILES: [&str; VOICES.len()] = [
+    "default-voice.safetensors",
+    "voices/4SZHfMpw-p46Ywgs.safetensors",
+    "voices/d9XCyhjo4JhkHF1d.safetensors",
+    "voices/nGzMHMPAWGaJFHOo.safetensors",
+    "voices/qIxlZ7Ei8KvWlyQH.safetensors",
+    "voices/6PWnV0Nq4wu7RVBT.safetensors",
+    "voices/zUCxzrOrugTSis03.safetensors",
 ];
 const VOICE_TENSOR: &str = "speaker_wavs";
 
@@ -35,90 +39,34 @@ const TIME_NORM_EPS: f32 = 1e-5;
 /// `(s, t)` of the flow head's single LSD step, the inputs of its two time embeddings.
 const STEP_TIMES: [f32; 2] = [0.0, 1.0];
 const SEANET: &str = "mimi.decoder.model";
-
-/// A runtime tensor before encoding.
-pub(crate) struct Entry {
-    pub(crate) name: String,
-    pub(crate) shape: Vec<usize>,
-    pub(crate) values: Vec<f32>,
-}
-
-/// The runtime tensors in bundle order.
-#[derive(Default)]
-pub(crate) struct Tensors(Vec<Entry>);
-
-impl Tensors {
-    pub(crate) fn into_entries(self) -> Vec<Entry> {
-        self.0
-    }
-
-    fn add(&mut self, name: String, shape: Vec<usize>, values: Vec<f32>) {
-        self.0.push(Entry {
-            name,
-            shape,
-            values,
-        });
-    }
-
-    fn vector(&mut self, name: String, values: Vec<f32>) {
-        self.add(name, vec![values.len()], values);
-    }
-
-    /// A linear layer of `rows` outputs and an optional bias.
-    fn linear(&mut self, name: &str, rows: usize, weight: Vec<f32>, bias: Option<Vec<f32>>) {
-        let cols = weight.len() / rows;
-        self.add(format!("{name}.weight"), vec![rows, cols], weight);
-        if let Some(bias) = bias {
-            self.vector(format!("{name}.bias"), bias);
-        }
-    }
-
-    /// A checkpoint linear layer `{source}.weight` (and `.bias` when present) as `name`.
-    fn copy_linear(
-        &mut self,
-        checkpoint: &Checkpoint,
-        name: &str,
-        source: &str,
-    ) -> Result<(), Error> {
-        let weight_name = format!("{source}.weight");
-        let rows = checkpoint.entry(&weight_name)?.shape[0];
-        let bias_name = format!("{source}.bias");
-        let bias = match checkpoint.entry(&bias_name) {
-            Ok(_) => Some(checkpoint.f32(&bias_name)?),
-            Err(_) => None,
-        };
-        self.linear(name, rows, checkpoint.f32(&weight_name)?, bias);
-        Ok(())
-    }
-
-    /// A checkpoint vector `source` as `name`.
-    fn copy_vector(
-        &mut self,
-        checkpoint: &Checkpoint,
-        name: String,
-        source: &str,
-    ) -> Result<(), Error> {
-        self.vector(name, checkpoint.f32(source)?);
-        Ok(())
-    }
-}
+/// SEANet's `nn.Sequential` numbering: the first conv, then per stage an ELU, the transposed
+/// conv and the residual unit (its convs after its ELUs, at 1 and 3), then an ELU and the last
+/// conv.
+const FIRST_CONV: usize = 0;
+const STAGE_LAYERS: usize = 3;
+const RESIDUAL_CONVS: [&str; 2] = ["block.1.conv", "block.3.conv"];
 
 /// The flow LM: text embeddings, the transformer, the input projection with the conditions as
 /// its bias, BOS, the final norm and the end-of-speech head.
-pub(crate) fn flow_lm(checkpoint: &Checkpoint, tensors: &mut Tensors) -> Result<(), Error> {
+pub(crate) fn flow_lm(
+    checkpoint: &Checkpoint,
+    tensors: &mut Tensors<Profile>,
+) -> Result<(), Error> {
     let embed = checkpoint.f32(&format!(
         "{CONDITIONERS}.transcript_in_segment.embed.weight"
     ))?;
     let rows = embed.len() / HIDDEN;
-    tensors.add("lm.embed".into(), vec![rows, HIDDEN], embed);
-    transformer(checkpoint, tensors, "lm", &format!("{LM}.transformer"))?;
+    tensors.add("lm.embed", vec![rows, HIDDEN], &embed)?;
+    let transformer = Transformer {
+        prefix: "lm",
+        source: &format!("{LM}.transformer"),
+        layers: FLOW_LM_SHAPE.layers,
+    };
+    transformer.write(checkpoint, tensors)?;
     let input = checkpoint.f32(&format!("{LM}.input_linear.weight"))?;
-    tensors.linear("lm.input", HIDDEN, input, Some(conditions(checkpoint)?));
-    tensors.copy_vector(checkpoint, "lm.bos".into(), &format!("{LM}.bos_emb"))?;
-    for part in ["weight", "bias"] {
-        let source = format!("{LM}.out_norm.{part}");
-        tensors.copy_vector(checkpoint, format!("lm.norm.{part}"), &source)?;
-    }
+    tensors.linear("lm.input", HIDDEN, &input, Some(&conditions(checkpoint)?))?;
+    tensors.vector("lm.bos", &checkpoint.f32(&format!("{LM}.bos_emb"))?)?;
+    tensors.copy_norm(checkpoint, "lm.norm", &format!("{LM}.out_norm"))?;
     tensors.copy_linear(checkpoint, "lm.eos", &format!("{LM}.out_eos"))
 }
 
@@ -126,7 +74,7 @@ pub(crate) fn flow_lm(checkpoint: &Checkpoint, tensors: &mut Tensors) -> Result<
 fn conditions(checkpoint: &Checkpoint) -> Result<Vec<f32>, Error> {
     let speakers = format!("{CONDITIONERS}.num_speakers");
     let table_name = format!("{speakers}.embed.weight");
-    let width = checkpoint.entry(&table_name)?.shape[1];
+    let width = checkpoint.shape(&table_name)?[1];
     let table = checkpoint.f32(&table_name)?;
     let speaker = &table[ONE_SPEAKER * width..(ONE_SPEAKER + 1) * width];
     let speaker = matvec(
@@ -145,60 +93,62 @@ fn conditions(checkpoint: &Checkpoint) -> Result<Vec<f32>, Error> {
         .collect())
 }
 
-/// The Kyutai transformer under `source` as `blocks::kyutai` names under `prefix`, its layer
-/// scales (when it has them) folded into the output rows of both residual branches.
-fn transformer(
-    checkpoint: &Checkpoint,
-    tensors: &mut Tensors,
-    prefix: &str,
-    source: &str,
-) -> Result<(), Error> {
-    let layers = (0..).take_while(|i| {
-        checkpoint
-            .entry(&format!("{source}.layers.{i}.norm1.weight"))
-            .is_ok()
-    });
-    for i in layers {
-        let (layer, from) = (
-            format!("{prefix}.layers.{i}"),
-            format!("{source}.layers.{i}"),
-        );
-        for norm in ["norm1", "norm2"] {
-            for part in ["weight", "bias"] {
-                let name = format!("{layer}.{norm}.{part}");
-                tensors.copy_vector(checkpoint, name, &format!("{from}.{norm}.{part}"))?;
+/// A Kyutai transformer of the checkpoint, as `blocks::transformer` names it.
+struct Transformer<'names> {
+    prefix: &'names str,
+    source: &'names str,
+    layers: usize,
+}
+
+impl Transformer<'_> {
+    /// Every layer, its layer scales (when it has them) folded into the output rows of both
+    /// residual branches.
+    fn write(&self, checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> Result<(), Error> {
+        for i in 0..self.layers {
+            let (layer, from) = (
+                format!("{}.layers.{i}", self.prefix),
+                format!("{}.layers.{i}", self.source),
+            );
+            for norm in ["norm1", "norm2"] {
+                tensors.copy_norm(
+                    checkpoint,
+                    &format!("{layer}.{norm}"),
+                    &format!("{from}.{norm}"),
+                )?;
+            }
+            let linears = [("qkv", "self_attn.in_proj"), ("ff1", "linear1")];
+            for (name, source) in linears {
+                tensors.copy_linear(
+                    checkpoint,
+                    &format!("{layer}.{name}"),
+                    &format!("{from}.{source}"),
+                )?;
+            }
+            let scaled = [("out", "self_attn.out_proj", 1), ("ff2", "linear2", 2)];
+            for (name, weight, scale) in scaled {
+                let mut values = checkpoint.f32(&format!("{from}.{weight}.weight"))?;
+                let layer_scale = format!("{from}.layer_scale_{scale}.scale");
+                if checkpoint.contains(&layer_scale) {
+                    scale_rows(&mut values, &checkpoint.f32(&layer_scale)?);
+                }
+                tensors.linear(&format!("{layer}.{name}"), HIDDEN, &values, None)?;
             }
         }
-        tensors.copy_linear(
-            checkpoint,
-            &format!("{layer}.qkv"),
-            &format!("{from}.self_attn.in_proj"),
-        )?;
-        tensors.copy_linear(
-            checkpoint,
-            &format!("{layer}.ff1"),
-            &format!("{from}.linear1"),
-        )?;
-        for (name, weight, scale) in [("out", "self_attn.out_proj", 1), ("ff2", "linear2", 2)] {
-            let mut values = checkpoint.f32(&format!("{from}.{weight}.weight"))?;
-            let layer_scale = format!("{from}.layer_scale_{scale}.scale");
-            if checkpoint.entry(&layer_scale).is_ok() {
-                scale_rows(&mut values, &checkpoint.f32(&layer_scale)?);
-            }
-            tensors.linear(&format!("{layer}.{name}"), HIDDEN, values, None);
-        }
+        Ok(())
     }
-    Ok(())
 }
 
 /// The flow head as `blocks::adaln_mlp`: the constant time embedding in the condition bias, the
 /// seven adaLN projections and the LayerNorm affines in one modulation matrix.
-pub(crate) fn flow_head(checkpoint: &Checkpoint, tensors: &mut Tensors) -> Result<(), Error> {
+pub(crate) fn flow_head(
+    checkpoint: &Checkpoint,
+    tensors: &mut Tensors<Profile>,
+) -> Result<(), Error> {
     let source = format!("{LM}.flow_net");
     let read = |name: &str| checkpoint.f32(&format!("{source}.{name}"));
     let width = FLOW_SHAPE.width;
     let time = time_embedding(checkpoint, &source)?;
-    let cond_bias = read("cond_embed.bias")?
+    let cond_bias: Vec<f32> = read("cond_embed.bias")?
         .iter()
         .zip(&time)
         .map(|(bias, time)| bias + time)
@@ -206,9 +156,9 @@ pub(crate) fn flow_head(checkpoint: &Checkpoint, tensors: &mut Tensors) -> Resul
     tensors.linear(
         "flow.cond",
         width,
-        read("cond_embed.weight")?,
-        Some(cond_bias),
-    );
+        &read("cond_embed.weight")?,
+        Some(&cond_bias),
+    )?;
     tensors.copy_linear(checkpoint, "flow.input", &format!("{source}.input_proj"))?;
     let mut modulation = Modulation::default();
     for i in 0..FLOW_SHAPE.depth {
@@ -237,9 +187,9 @@ pub(crate) fn flow_head(checkpoint: &Checkpoint, tensors: &mut Tensors) -> Resul
     tensors.linear(
         "flow.modulation",
         rows,
-        modulation.weight,
-        Some(modulation.bias),
-    );
+        &modulation.weight,
+        Some(&modulation.bias),
+    )?;
     tensors.copy_linear(
         checkpoint,
         "flow.final",
@@ -291,6 +241,7 @@ impl Modulation {
 /// The mean of the head's two time embeddings at its single LSD step.
 fn time_embedding(checkpoint: &Checkpoint, source: &str) -> Result<Vec<f32>, Error> {
     let mut sum = vec![0.0; FLOW_SHAPE.width];
+    let mut normed = vec![0.0; FLOW_SHAPE.width];
     for (index, time) in STEP_TIMES.into_iter().enumerate() {
         let read = |name: &str| checkpoint.f32(&format!("{source}.time_embed.{index}.{name}"));
         let frequencies = read("freqs")?;
@@ -308,12 +259,14 @@ fn time_embedding(checkpoint: &Checkpoint, source: &str) -> Result<Vec<f32>, Err
         for (value, bias) in embedding.iter_mut().zip(read("mlp.2.bias")?) {
             *value += bias;
         }
-        let mean_square =
-            embedding.iter().map(|value| value * value).sum::<f32>() / embedding.len() as f32;
-        let inverse = 1.0 / (mean_square + TIME_NORM_EPS).sqrt();
-        let terms = embedding.iter().zip(read("mlp.3.alpha")?);
-        for (total, (value, gain)) in sum.iter_mut().zip(terms) {
-            *total += value * inverse * gain / STEP_TIMES.len() as f32;
+        rms_norm(
+            &embedding,
+            &read("mlp.3.alpha")?,
+            TIME_NORM_EPS,
+            &mut normed,
+        );
+        for (total, value) in sum.iter_mut().zip(&normed) {
+            *total += value / STEP_TIMES.len() as f32;
         }
     }
     Ok(sum)
@@ -321,7 +274,7 @@ fn time_embedding(checkpoint: &Checkpoint, source: &str) -> Result<Vec<f32>, Err
 
 /// Mimi's decoder: the latent denormalization folded into the quantizer projection, the
 /// depthwise upsampling kernel, the transformer and SEANet.
-pub(crate) fn mimi(checkpoint: &Checkpoint, tensors: &mut Tensors) -> Result<(), Error> {
+pub(crate) fn mimi(checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> Result<(), Error> {
     let projection = checkpoint.f32("mimi.quantizer.output_proj.weight")?;
     let deviation = checkpoint.f32(&format!("{LM}.emb_std"))?;
     let bias = matvec(&projection, &checkpoint.f32(&format!("{LM}.emb_mean"))?);
@@ -331,82 +284,95 @@ pub(crate) fn mimi(checkpoint: &Checkpoint, tensors: &mut Tensors) -> Result<(),
             *value *= scale;
         }
     }
-    tensors.linear("mimi.latent", HIDDEN, weight, Some(bias));
+    tensors.linear("mimi.latent", HIDDEN, &weight, Some(&bias))?;
     let upsample = checkpoint.f32("mimi.upsample.convtr.convtr.weight")?;
     tensors.add(
-        "mimi.upsample".into(),
+        "mimi.upsample",
         vec![HIDDEN, upsample.len() / HIDDEN],
-        upsample,
-    );
-    transformer(
-        checkpoint,
-        tensors,
-        "mimi",
-        "mimi.decoder_transformer.transformer",
+        &upsample,
     )?;
+    let transformer = Transformer {
+        prefix: "mimi",
+        source: "mimi.decoder_transformer.transformer",
+        layers: MIMI_TRANSFORMER_SHAPE.layers,
+    };
+    transformer.write(checkpoint, tensors)?;
     seanet(checkpoint, tensors)
 }
 
-/// SEANet's layers as `blocks::seanet` causal-conv matrices. The checkpoint numbers them as
-/// `nn.Sequential` does: the first conv, then per stage an ELU, the transposed conv and the
-/// residual unit, then an ELU and the last conv.
-fn seanet(checkpoint: &Checkpoint, tensors: &mut Tensors) -> Result<(), Error> {
-    conv(checkpoint, tensors, "init", &format!("{SEANET}.0.conv"))?;
-    let mut layer = 1;
+/// SEANet's layers as `blocks::seanet` causal-conv matrices.
+fn seanet(checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> Result<(), Error> {
+    conv(
+        checkpoint,
+        tensors,
+        "init",
+        &format!("{SEANET}.{FIRST_CONV}.conv"),
+    )?;
     for (stage, &ratio) in SEANET_SHAPE.ratios.iter().enumerate() {
+        let elu = FIRST_CONV + 1 + stage * STAGE_LAYERS;
         let name = |part: &str| format!("stages.{stage}.{part}");
-        transposed_conv(
-            checkpoint,
-            tensors,
-            &name("upsample"),
-            (&format!("{SEANET}.{}.convtr", layer + 1), ratio),
-        )?;
-        let residual = format!("{SEANET}.{}.block", layer + 2);
-        conv(
-            checkpoint,
-            tensors,
-            &name("residual1"),
-            &format!("{residual}.1.conv"),
-        )?;
-        conv(
-            checkpoint,
-            tensors,
-            &name("residual2"),
-            &format!("{residual}.3.conv"),
-        )?;
-        layer += 3;
+        let upsample = format!("{SEANET}.{}.convtr", elu + 1);
+        transposed_conv(checkpoint, tensors, &name("upsample"), &upsample, ratio)?;
+        let [first, second] = RESIDUAL_CONVS.map(|conv| format!("{SEANET}.{}.{conv}", elu + 2));
+        conv(checkpoint, tensors, &name("residual1"), &first)?;
+        conv(checkpoint, tensors, &name("residual2"), &second)?;
     }
+    let last = FIRST_CONV + 1 + SEANET_SHAPE.ratios.len() * STAGE_LAYERS + 1;
     conv(
         checkpoint,
         tensors,
         "final",
-        &format!("{SEANET}.{}.conv", layer + 1),
+        &format!("{SEANET}.{last}.conv"),
     )
+}
+
+/// A conv layer of the checkpoint.
+struct Conv {
+    /// `[out, in, kernel]`, or `[in, out, kernel]` for a transposed conv.
+    shape: [usize; 3],
+    weight: Vec<f32>,
+    bias: Vec<f32>,
+}
+
+impl Conv {
+    fn read(checkpoint: &Checkpoint, source: &str) -> Result<Self, Error> {
+        let weight_name = format!("{source}.weight");
+        let [first, second, kernel] = checkpoint.shape(&weight_name)?[..] else {
+            return Err(Error::Format(format!("{weight_name} is not a conv weight")));
+        };
+        Ok(Self {
+            shape: [first, second, kernel],
+            weight: checkpoint.f32(&weight_name)?,
+            bias: checkpoint.f32(&format!("{source}.bias"))?,
+        })
+    }
 }
 
 /// A conv `[out, in, k]` as `[out, k · in]`, oldest input first.
 fn conv(
     checkpoint: &Checkpoint,
-    tensors: &mut Tensors,
+    tensors: &mut Tensors<Profile>,
     name: &str,
     source: &str,
 ) -> Result<(), Error> {
-    let weight_name = format!("{source}.weight");
-    let [outputs, inputs, kernel] = checkpoint.entry(&weight_name)?.shape[..] else {
-        return Err(Error::Format(format!("{weight_name} is not a conv weight")));
-    };
-    let weight = checkpoint.f32(&weight_name)?;
-    let at =
-        |output: usize, input: usize, tap: usize| weight[(output * inputs + input) * kernel + tap];
-    let matrix = (0..outputs)
-        .flat_map(|output| {
-            (0..kernel).flat_map(move |tap| (0..inputs).map(move |input| (output, input, tap)))
-        })
-        .map(|(output, input, tap)| at(output, input, tap))
-        .collect();
-    let bias = checkpoint.f32(&format!("{source}.bias"))?;
-    tensors.linear(&format!("mimi.decoder.{name}"), outputs, matrix, Some(bias));
-    Ok(())
+    let Conv {
+        shape: [outputs, inputs, kernel],
+        weight,
+        bias,
+    } = Conv::read(checkpoint, source)?;
+    let mut matrix = Vec::with_capacity(weight.len());
+    for output in 0..outputs {
+        for tap in 0..kernel {
+            matrix
+                .extend((0..inputs).map(|input| weight[(output * inputs + input) * kernel + tap]));
+        }
+    }
+    tensors.linear(
+        &format!("mimi.decoder.{name}"),
+        outputs,
+        &matrix,
+        Some(&bias),
+    )
 }
 
 /// A transposed conv `[in, out, 2s]` of stride `s` as a window-2 conv of `s` phases,
@@ -414,20 +380,21 @@ fn conv(
 /// `W[:, :, j]` times input `p`.
 fn transposed_conv(
     checkpoint: &Checkpoint,
-    tensors: &mut Tensors,
+    tensors: &mut Tensors<Profile>,
     name: &str,
-    (source, stride): (&str, usize),
+    source: &str,
+    stride: usize,
 ) -> Result<(), Error> {
-    let weight_name = format!("{source}.weight");
-    let [inputs, outputs, kernel] = checkpoint.entry(&weight_name)?.shape[..] else {
-        return Err(Error::Format(format!("{weight_name} is not a conv weight")));
-    };
+    let Conv {
+        shape: [inputs, outputs, kernel],
+        weight,
+        bias,
+    } = Conv::read(checkpoint, source)?;
     if kernel != 2 * stride {
         return Err(Error::Format(format!(
-            "{weight_name}: kernel {kernel} for stride {stride}"
+            "{source}: kernel {kernel} for stride {stride}"
         )));
     }
-    let weight = checkpoint.f32(&weight_name)?;
     let at =
         |input: usize, output: usize, tap: usize| weight[(input * outputs + output) * kernel + tap];
     let mut matrix = Vec::with_capacity(weight.len());
@@ -437,28 +404,23 @@ fn transposed_conv(
             matrix.extend((0..inputs).map(|input| at(input, output, phase)));
         }
     }
-    let bias = checkpoint.f32(&format!("{source}.bias"))?.repeat(stride);
+    let rows = stride * outputs;
     tensors.linear(
         &format!("mimi.decoder.{name}"),
-        stride * outputs,
-        matrix,
-        Some(bias),
-    );
-    Ok(())
+        rows,
+        &matrix,
+        Some(&bias.repeat(stride)),
+    )
 }
 
 /// The voices of `VOICES` through the speaker projection, `[VOICE_FRAMES, HIDDEN]` each.
 pub(crate) fn voices(
     dir: &Path,
     checkpoint: &Checkpoint,
-    tensors: &mut Tensors,
+    tensors: &mut Tensors<Profile>,
 ) -> Result<(), Error> {
     let projection = checkpoint.f32(&format!("{CONDITIONERS}.speaker_wavs.output_proj.weight"))?;
-    for (id, _) in VOICES {
-        let (_, file) = VOICE_FILES
-            .iter()
-            .find(|(voice, _)| *voice == id)
-            .ok_or_else(|| Error::Format(format!("no file for voice {id}")))?;
+    for ((id, _), file) in VOICES.iter().zip(VOICE_FILES) {
         let path = dir.join(file);
         if !path.exists() {
             return Err(Error::Format(format!(
@@ -474,7 +436,7 @@ pub(crate) fn voices(
                 .collect();
             embedded.extend(matvec(&projection, &column));
         }
-        tensors.add(voice_name(id), vec![VOICE_FRAMES, HIDDEN], embedded);
+        tensors.add(&voice_name(id), vec![VOICE_FRAMES, HIDDEN], &embedded)?;
     }
     Ok(())
 }

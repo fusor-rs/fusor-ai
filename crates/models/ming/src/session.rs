@@ -3,24 +3,24 @@
 //! Per text fragment: prefill the prompt; then per frame `z → flow head → latent`, the stop
 //! head on `z` (stop when `logit₁ > logit₀` after frame 3, keeping that frame), the latent into
 //! the streaming vocoder, and unless stopped `latent → aggregator → LLM → next z`. Trailing
-//! silence is trimmed per fragment as the reference does (0.1 s chunks, mean |x| ≤ 1e-3 is
-//! silent, keep 0.3 s after the last loud chunk) by holding back silent chunks while streaming.
+//! silence is trimmed per fragment (`silence`) by holding back silent chunks while streaming.
 
 use serde::{Deserialize, Serialize};
 
-use blocks::qwen2::{self, KvCache, Mask, Span};
-use bundle::Store;
+use blocks::transformer::{Buffers, KvCache, Mask, Span};
+use bundle::{Store, Tokenizer};
 use kernels::rng::Rng;
 use team::Team;
 
 use crate::Error;
-use crate::flow_head::{self, LATENT, Steps};
-use crate::model::{HIDDEN, Model, QWEN2_SHAPE, TOKENIZER_PART};
-use crate::prompt::{self, Prompt, Prompter, Voice};
+use crate::flow_head::{self, LATENT};
+use crate::model::{HIDDEN, Model, QWEN2_SHAPE, STOP_LOGITS};
+use crate::preset::{Preset, Schedules};
+use crate::prompt::{Language, Prompt, Prompter, Voice};
+use crate::silence::SilenceGate;
 use crate::text::{self, Segmentation};
 use crate::vocoder::VocoderState;
 
-pub const SAMPLE_RATE: u32 = 44_100;
 /// LLM positions (prompt + frames) one fragment may use.
 const LLM_CAPACITY: usize = 1024;
 /// Prompt rows per prefill call.
@@ -28,30 +28,7 @@ const PREFILL_ROWS: usize = 64;
 const DEFAULT_MAX_FRAMES: usize = 1000;
 /// The stop head is ignored on frames `0..=MIN_STOP_FRAME` (the reference's `step > 3`).
 const MIN_STOP_FRAME: usize = 3;
-const CFG_SCALE: f32 = 2.0;
 const DEFAULT_SEED: u64 = 1895;
-
-/// EPSS knots in units of 1/32 (`fm/CFM.py`).
-const EPSS_10: [u32; 11] = [0, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32];
-const EPSS_7: [u32; 8] = [0, 2, 4, 6, 8, 16, 24, 32];
-/// Guidance interval of the faster presets: CFG only for `t ∈ [0.05, 0.8)`.
-const GUIDED: std::ops::Range<f32> = 0.05..0.8;
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Preset {
-    /// 10 steps, CFG on every step: the reference sampler.
-    #[default]
-    Quality,
-    /// 10 steps, CFG on 5 of them.
-    Balanced,
-    /// 7 steps, CFG on 3 of them (may slur numbers).
-    Fast,
-}
-
-impl Preset {
-    pub const ALL: [Preset; 3] = [Preset::Quality, Preset::Balanced, Preset::Fast];
-}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Request {
@@ -59,12 +36,9 @@ pub struct Request {
     pub voice: Voice,
     #[serde(default)]
     pub preset: Preset,
-    #[serde(default)]
     pub seed: Option<u64>,
     /// Target language line ("English", "German", …); omitted for the built-in voices.
-    #[serde(default)]
     pub language: Option<String>,
-    #[serde(default)]
     pub max_frames: Option<usize>,
 }
 
@@ -86,16 +60,17 @@ pub struct Engine {
     prompter: Prompter,
     team: Team,
     llm_cache: KvCache,
-    llm: qwen2::Buffers,
+    llm: Buffers,
     flow: flow_head::Buffers,
     vocoder: VocoderState,
-    schedules: Vec<(Preset, Steps)>,
+    schedules: Schedules,
     job: Option<Job>,
     audio: Vec<f32>,
 }
 
 struct Job {
     request: Request,
+    language: Option<Language>,
     fragments: Vec<String>,
     fragment: usize,
     frame: Option<Frame>,
@@ -115,23 +90,18 @@ struct Frame {
 impl Engine {
     /// Builds the engine from a complete store.
     pub fn new(store: &mut Store) -> Result<Self, Error> {
-        if !store.complete() {
-            return Err(Error::Format("the bundle is not fully loaded".into()));
-        }
+        store.require_complete()?;
         let model = Model::load(store)?;
-        let prompter = Prompter::new(&store.take_blob(TOKENIZER_PART)?)?;
+        let prompter = Prompter::new(Tokenizer::take(store)?);
         let team = Team::global();
         let threads = team.threads();
-        let schedules = Preset::ALL
-            .iter()
-            .map(|&preset| (preset, schedule(&model, preset)))
-            .collect();
+        let schedules = Schedules::new(&model.flow);
         let vocoder = VocoderState::new(&model.vocoder, threads);
         Ok(Self {
             model,
             prompter,
             llm_cache: KvCache::new(QWEN2_SHAPE, LLM_CAPACITY),
-            llm: qwen2::Buffers::new(QWEN2_SHAPE, PREFILL_ROWS, threads),
+            llm: QWEN2_SHAPE.buffers(PREFILL_ROWS, threads),
             flow: flow_head::Buffers::new(threads),
             vocoder,
             team,
@@ -145,10 +115,10 @@ impl Engine {
         self.team.threads()
     }
 
-    pub fn start(&mut self, mut request: Request) -> Result<Plan, Error> {
-        request.language = request.language.filter(|name| !name.trim().is_empty());
-        let segmentation = match (&request.voice, &request.language) {
-            (_, Some(language)) if prompt::is_multilingual(language) => Segmentation::Verbatim,
+    pub fn start(&mut self, request: Request) -> Result<Plan, Error> {
+        let language = request.language.as_deref().and_then(Language::parse);
+        let segmentation = match (&request.voice, &language) {
+            (_, Some(language)) if language.is_multilingual() => Segmentation::Verbatim,
             (Voice::Builtin(_), _) => Segmentation::Sentences,
             (Voice::Design(text) | Voice::Freeform(text), _) if text.trim().is_empty() => {
                 return Err(Error::Request("the voice description is empty".into()));
@@ -163,6 +133,7 @@ impl Engine {
         self.audio.clear();
         self.job = Some(Job {
             request,
+            language,
             fragments: fragments.clone(),
             fragment: 0,
             frame: None,
@@ -240,7 +211,7 @@ impl Engine {
         let prompt = self.prompter.build(
             &job.fragments[job.fragment],
             &job.request.voice,
-            job.request.language.as_deref(),
+            job.language.as_ref(),
         )?;
         if prompt.ids.len() >= LLM_CAPACITY {
             return Err(Error::Request("the text fragment is too long".into()));
@@ -305,29 +276,21 @@ impl Engine {
     }
 
     fn llm_forward(&self, span: Span) {
-        self.team.run(|ctx| {
-            self.model
-                .llm
-                .body
-                .forward(ctx, &self.llm_cache, &self.llm, span)
-        });
+        let body = &self.model.llm.qwen2.body;
+        self.team
+            .run(|ctx| body.forward(ctx, &self.llm_cache, &self.llm, span));
     }
 
     /// `z`: the final norm of a hidden row.
     fn llm_output(&self, row: usize) -> Vec<f32> {
         let mut z = vec![0.0; HIDDEN];
-        self.model.llm.body.final_norm(&self.llm, row, &mut z);
+        self.model.llm.qwen2.final_norm(&self.llm, row, &mut z);
         z
     }
 
     /// The flow head: one frame latent from `z`, the previous latent and the initial noise.
     pub fn sample(&self, z: &[f32], history: &[f32], noise: &[f32], preset: Preset) -> Vec<f32> {
-        let schedule = &self
-            .schedules
-            .iter()
-            .find(|(candidate, _)| *candidate == preset)
-            .expect("every preset has a schedule")
-            .1;
+        let schedule = self.schedules.get(preset);
         let input = flow_head::FrameInput { z, history, noise };
         self.team
             .run(|ctx| self.model.flow.sample(ctx, &self.flow, &input, schedule));
@@ -335,11 +298,11 @@ impl Engine {
     }
 
     /// The stop head's `[continue, stop]` logits.
-    pub fn stop_logits(&self, z: &[f32]) -> [f32; 2] {
-        let mut logits = [0.0; 2];
+    pub fn stop_logits(&self, z: &[f32]) -> [f32; STOP_LOGITS] {
+        let mut logits = [0.0; STOP_LOGITS];
         self.model
             .stop
-            .apply(z, 1, &mut Default::default(), &mut logits);
+            .apply(z, &mut Default::default(), &mut logits);
         logits
     }
 
@@ -363,55 +326,5 @@ impl Engine {
             .vocoder
             .finish(&self.team, &mut self.vocoder, &mut samples);
         samples
-    }
-}
-
-fn schedule(model: &Model, preset: Preset) -> Steps {
-    match preset {
-        Preset::Quality => model.flow.steps(&EPSS_10, |_, _| true, CFG_SCALE),
-        Preset::Balanced => model
-            .flow
-            .steps(&EPSS_10, |_, time| GUIDED.contains(&time), CFG_SCALE),
-        Preset::Fast => model
-            .flow
-            .steps(&EPSS_7, |_, time| GUIDED.contains(&time), CFG_SCALE),
-    }
-}
-
-const CHUNK: usize = SAMPLE_RATE as usize / 10;
-const SILENCE: f32 = 1e-3;
-const TAIL: usize = 3 * CHUNK;
-
-/// Streams a fragment's audio while trimming its trailing silence like `trim_trailing_silence`:
-/// silent chunks are held until a loud one follows; at the end at most `TAIL` of them remain
-/// and the partial last chunk is dropped.
-#[derive(Default)]
-struct SilenceGate {
-    chunk: Vec<f32>,
-    held: Vec<f32>,
-}
-
-impl SilenceGate {
-    fn push(&mut self, samples: &[f32], out: &mut Vec<f32>) {
-        for &sample in samples {
-            self.chunk.push(sample);
-            if self.chunk.len() < CHUNK {
-                continue;
-            }
-            let loud =
-                self.chunk.iter().map(|sample| sample.abs()).sum::<f32>() / CHUNK as f32 > SILENCE;
-            if loud {
-                out.append(&mut self.held);
-                out.append(&mut self.chunk);
-            } else {
-                self.held.append(&mut self.chunk);
-            }
-        }
-    }
-
-    fn finish(&mut self, out: &mut Vec<f32>) {
-        let keep = self.held.len().min(TAIL);
-        out.extend_from_slice(&self.held[..keep]);
-        *self = Self::default();
     }
 }

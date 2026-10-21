@@ -11,9 +11,50 @@ const ASCII_FOLDS: [(&str, char); 4] = [
     ("…", '.'),
 ];
 
-/// Pairs of a subscript and the character it reads as.
-const SUBSCRIPTS: &str = "₀0₁1₂2₃3₄4₅5₆6₇7₈8₉9₊+₋-ₐaₑeₒoₓxₕhₖkₗlₘmₙnₚpₛsₜtᵢiⱼj";
-const SUPERSCRIPTS: &str = "⁰0¹1²2³3⁴4⁵5⁶6⁷7⁸8⁹9⁻-⁺+ⁿn";
+/// Subscripts and the characters they read as.
+const SUBSCRIPTS: [(char, char); 26] = [
+    ('₀', '0'),
+    ('₁', '1'),
+    ('₂', '2'),
+    ('₃', '3'),
+    ('₄', '4'),
+    ('₅', '5'),
+    ('₆', '6'),
+    ('₇', '7'),
+    ('₈', '8'),
+    ('₉', '9'),
+    ('₊', '+'),
+    ('₋', '-'),
+    ('ₐ', 'a'),
+    ('ₑ', 'e'),
+    ('ₒ', 'o'),
+    ('ₓ', 'x'),
+    ('ₕ', 'h'),
+    ('ₖ', 'k'),
+    ('ₗ', 'l'),
+    ('ₘ', 'm'),
+    ('ₙ', 'n'),
+    ('ₚ', 'p'),
+    ('ₛ', 's'),
+    ('ₜ', 't'),
+    ('ᵢ', 'i'),
+    ('ⱼ', 'j'),
+];
+const SUPERSCRIPTS: [(char, char); 13] = [
+    ('⁰', '0'),
+    ('¹', '1'),
+    ('²', '2'),
+    ('³', '3'),
+    ('⁴', '4'),
+    ('⁵', '5'),
+    ('⁶', '6'),
+    ('⁷', '7'),
+    ('⁸', '8'),
+    ('⁹', '9'),
+    ('⁻', '-'),
+    ('⁺', '+'),
+    ('ⁿ', 'n'),
+];
 
 /// Letters whose diacritic the tokenizer has no piece for, by the letter they fold to. The
 /// accented letters of Latin-1 other than these the tokenizer reads as they are.
@@ -199,7 +240,7 @@ pub(super) fn clean(text: &str) -> String {
         match ch {
             '★' | '☆' => sink.push_word(&stars(ch, &mut chars)),
             '°' => degrees(&mut sink, &mut chars),
-            _ if pair_lookup(SUPERSCRIPTS, ch).is_some() => {
+            _ if lookup(&SUPERSCRIPTS, ch).is_some() => {
                 power(&mut sink, ch, &mut chars, previous);
             }
             _ => {
@@ -271,8 +312,8 @@ fn degrees(sink: &mut Sink, chars: &mut Peekable<Chars>) {
 
 /// A run of superscripts: an exponent after a letter, digit or `)`, digits elsewhere ("¹³C").
 fn power(sink: &mut Sink, first: char, chars: &mut Peekable<Chars>, previous: Option<char>) {
-    let mut exponent: String = pair_lookup(SUPERSCRIPTS, first).into_iter().collect();
-    while let Some(digit) = chars.peek().and_then(|&ch| pair_lookup(SUPERSCRIPTS, ch)) {
+    let mut exponent: String = lookup(&SUPERSCRIPTS, first).into_iter().collect();
+    while let Some(digit) = chars.peek().and_then(|&ch| lookup(&SUPERSCRIPTS, ch)) {
         exponent.push(digit);
         chars.next();
     }
@@ -315,7 +356,7 @@ fn fold(ch: char) -> Option<char> {
     let ascii = ASCII_FOLDS.iter().find(|(from, _)| from.contains(ch));
     ascii
         .map(|&(_, to)| to)
-        .or_else(|| pair_lookup(SUBSCRIPTS, ch))
+        .or_else(|| lookup(&SUBSCRIPTS, ch))
         .or_else(|| unaccented(ch))
 }
 
@@ -328,13 +369,8 @@ fn unaccented(ch: char) -> Option<char> {
     })
 }
 
-/// What `ch` maps to in a string of `(from, to)` character pairs.
-fn pair_lookup(pairs: &str, ch: char) -> Option<char> {
-    let mut chars = pairs.chars();
-    while let (Some(from), Some(to)) = (chars.next(), chars.next()) {
-        if from == ch {
-            return Some(to);
-        }
-    }
-    None
+/// What `ch` maps to in a table of `(from, to)` characters.
+fn lookup(table: &[(char, char)], ch: char) -> Option<char> {
+    let pair = table.iter().find(|(from, _)| *from == ch);
+    pair.map(|&(_, to)| to)
 }

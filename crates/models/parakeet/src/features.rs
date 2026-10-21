@@ -6,7 +6,8 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use kernels::Tensor;
+use bundle::{Load, Scope, Store};
+use kernels::{Table, Vector};
 use realfft::num_complex::Complex;
 use realfft::{RealFftPlanner, RealToComplex};
 
@@ -18,8 +19,9 @@ const PREEMPHASIS: f32 = 0.97;
 const LOG_GUARD: f32 = 5.960_464_5e-8;
 /// Added to each bin's standard deviation before dividing by it.
 const DEVIATION_GUARD: f32 = 1e-5;
-/// The fewest samples with two frames, the least a deviation needs.
-pub const MIN_SAMPLES: usize = 2 * HOP;
+/// The fewest frames, the least a deviation needs.
+pub(crate) const MIN_FRAMES: usize = 2;
+pub(crate) const MIN_SAMPLES: usize = MIN_FRAMES * HOP;
 
 pub(crate) struct Frontend {
     fft: Arc<dyn RealToComplex<f32>>,
@@ -30,9 +32,7 @@ pub(crate) struct Frontend {
 }
 
 impl Frontend {
-    /// From the window (`FFT` values) and the filterbank (`[MELS, BINS]`).
-    pub(crate) fn new(window: &Tensor, mel: &Tensor) -> Result<Self, Error> {
-        let filters = mel.values()?.to_vec();
+    fn new(window: Vec<f32>, filters: Vec<f32>) -> Self {
         let supports = filters
             .as_chunks::<BINS>()
             .0
@@ -46,12 +46,12 @@ impl Frontend {
                     .map_or(0..0, |(first, last)| first..last + 1)
             })
             .collect();
-        Ok(Self {
+        Self {
             fft: RealFftPlanner::<f32>::new().plan_fft_forward(FFT),
-            window: window.values()?.to_vec(),
+            window,
             filters,
             supports,
-        })
+        }
     }
 
     /// The normalized features of `pcm` (16 kHz), `frames × MELS` row-major, into `out`.
@@ -99,6 +99,19 @@ impl Frontend {
             let mel: f32 = bins.map(|(bin, weight)| bin.norm_sqr() * weight).sum();
             *energy = (mel + LOG_GUARD).ln();
         }
+    }
+}
+
+/// `p.window`, the Hann window centred in `FFT` samples, and `p.mel`, the Slaney filterbank
+/// `[MELS, BINS]`.
+impl Load for Frontend {
+    type Shape = ();
+
+    fn load(store: &mut Store, prefix: &str, (): ()) -> Result<Self, Error> {
+        let mut scope = Scope::new(store, prefix);
+        let window: Vector = scope.load("window", FFT)?;
+        let mel: Table = scope.load("mel", [MELS, BINS])?;
+        Ok(Self::new(window.values().to_vec(), mel.dequantize()))
     }
 }
 

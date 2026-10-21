@@ -9,9 +9,9 @@ use parakeet::model::{BINS, FFT, MELS, WINDOW};
 
 /// The Slaney scale's corner between its linear and logarithmic parts.
 const LINEAR_HZ: f64 = 1000.0;
-const LINEAR_MEL: f64 = 15.0;
 /// Hz per mel in the linear part.
 const HZ_PER_MEL: f64 = 200.0 / 3.0;
+const LINEAR_MEL: f64 = LINEAR_HZ / HZ_PER_MEL;
 /// The logarithmic part: frequencies grow 6.4-fold over 27 mels.
 const OCTAVE_RATIO: f64 = 6.4;
 const OCTAVE_MELS: f64 = 27.0;

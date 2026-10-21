@@ -3,8 +3,8 @@
 //! previous frame's projection), the transformer over a sliding window of `MIMI_WINDOW`
 //! positions, then SEANet to `FRAME_SAMPLES` samples at 24 kHz.
 
-use blocks::kyutai::{self, KvCache, Mask, Span};
 use blocks::seanet;
+use blocks::transformer::{Buffers, KvCache, Mask, Span};
 use kernels::QuantizedRows;
 use team::Team;
 
@@ -13,7 +13,7 @@ use crate::model::{HIDDEN, LATENT, MIMI_TRANSFORMER_SHAPE, MIMI_WINDOW, Mimi, UP
 /// One stream's decoding state.
 pub(crate) struct MimiState {
     cache: KvCache,
-    buffers: kyutai::Buffers,
+    buffers: Buffers,
     decoder: seanet::State,
     /// The previous frame's projected latent (zeros before the first).
     previous: Vec<f32>,
@@ -25,7 +25,7 @@ impl MimiState {
     pub(crate) fn new(mimi: &Mimi, threads: usize) -> Self {
         Self {
             cache: KvCache::new(MIMI_TRANSFORMER_SHAPE, MIMI_WINDOW + UPSAMPLE),
-            buffers: kyutai::Buffers::new(MIMI_TRANSFORMER_SHAPE, UPSAMPLE, threads),
+            buffers: MIMI_TRANSFORMER_SHAPE.buffers(UPSAMPLE, threads),
             decoder: seanet::State::new(&mimi.decoder, UPSAMPLE, threads),
             previous: vec![0.0; HIDDEN],
             position: 0,
@@ -73,12 +73,12 @@ impl Mimi {
     /// The transformer's input rows for one frame: `UPSAMPLE` positions of
     /// `kernel[c][j] · q[c] + kernel[c][UPSAMPLE + j] · previous[c]`.
     fn upsample(&self, state: &mut MimiState, latent: &[f32; LATENT]) {
-        let kernel = self.upsample.values().expect("checked at load");
         let mut projected = vec![0.0; HIDDEN];
         self.latent
-            .apply(latent, 1, &mut QuantizedRows::default(), &mut projected);
+            .apply(latent, &mut QuantizedRows::default(), &mut projected);
         let rows = &mut state.buffers.hidden.get_mut()[..UPSAMPLE * HIDDEN];
-        for (channel, taps) in kernel.as_chunks::<{ 2 * UPSAMPLE }>().0.iter().enumerate() {
+        let kernel = self.upsample.as_chunks::<{ 2 * UPSAMPLE }>().0;
+        for (channel, taps) in kernel.iter().enumerate() {
             for (j, row) in rows.as_chunks_mut::<HIDDEN>().0.iter_mut().enumerate() {
                 row[channel] =
                     taps[j] * projected[channel] + taps[UPSAMPLE + j] * state.previous[channel];

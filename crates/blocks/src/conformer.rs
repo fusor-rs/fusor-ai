@@ -3,7 +3,7 @@
 //! feed-forward, Transformer-XL relative-position self-attention, a convolution module (pointwise
 //! to twice the width, GLU, depthwise over time, BatchNorm, SiLU, pointwise back) and a second
 //! half-step feed-forward, each pre-LayerNorm with a residual, then a final LayerNorm. The
-//! feed-forwards use SiLU; no projection has a bias.
+//! feed-forwards use SiLU.
 //!
 //! A checkpoint's compiler folds the half steps into the feed-forwards' `down` projections and
 //! the BatchNorm into the depthwise kernel and its bias.
@@ -25,28 +25,20 @@
 mod attention;
 pub mod subsampling;
 
-use bundle::{Load, Store};
+use bundle::{Load, Scope, Store, load_each};
 use kernels::ops::{exp, silu};
 use kernels::{
-    COLUMN_ALIGN, DType, Error, Input, Linear, MatrixStorage, QuantizedRows, SharedRows, Tensor,
+    COLUMN_ALIGN, Input, Linear, MatrixStorage, QuantFormat, QuantizedRows, SharedRows, Vector,
+    project, project_residual,
 };
-use kernels::{matmul, project_residual};
 use team::{Ctx, PerThread, SharedBuf};
 
-use crate::kyutai::Norm;
+use crate::norm::LayerNorm;
 pub use subsampling::Subsampling;
 
-/// The dimensions of one encoder.
+/// The dimensions of one encoder's conformer layers.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shape {
-    /// Mel bins of the input features.
-    pub mels: usize,
-    /// Channels of the subsampler's convolutions.
-    pub channels: usize,
-    /// The side of the subsampler's square windows, their stride, and how many stages it has.
-    pub subsampling_kernel: usize,
-    pub subsampling_stride: usize,
-    pub subsampling_stages: usize,
     pub hidden: usize,
     pub layers: usize,
     pub heads: usize,
@@ -60,37 +52,42 @@ impl Shape {
     fn head_dim(&self) -> usize {
         self.hidden / self.heads
     }
+
+    /// Columns of the fused QKV projection: the queries, then the keys, then the values.
+    fn qkv(&self) -> usize {
+        3 * self.hidden
+    }
 }
 
-pub struct FeedForward {
-    pub norm: Norm,
-    pub up: Linear,
-    pub down: Linear,
+struct FeedForward {
+    norm: LayerNorm,
+    up: Linear,
+    down: Linear,
 }
 
-pub struct Attention {
-    pub norm: Norm,
-    pub qkv: Linear,
-    pub position: Linear,
-    pub bias_u: Tensor,
-    pub bias_v: Tensor,
-    pub out: Linear,
+struct Attention {
+    norm: LayerNorm,
+    qkv: Linear,
+    position: Linear,
+    bias_u: Vector,
+    bias_v: Vector,
+    out: Linear,
 }
 
-pub struct Convolution {
-    pub norm: Norm,
-    pub pointwise1: Linear,
-    pub depthwise: Tensor,
-    pub depthwise_bias: Tensor,
-    pub pointwise2: Linear,
+struct Convolution {
+    norm: LayerNorm,
+    pointwise1: Linear,
+    depthwise: Vector,
+    depthwise_bias: Vector,
+    pointwise2: Linear,
 }
 
-pub struct Layer {
-    pub ff1: FeedForward,
-    pub attention: Attention,
-    pub conv: Convolution,
-    pub ff2: FeedForward,
-    pub norm: Norm,
+struct Layer {
+    ff1: FeedForward,
+    attention: Attention,
+    conv: Convolution,
+    ff2: FeedForward,
+    norm: LayerNorm,
 }
 
 pub struct Encoder {
@@ -138,7 +135,7 @@ impl Buffers {
             frames,
             hidden: SharedBuf::new(frames * shape.hidden),
             normed: SharedBuf::new(frames * shape.hidden),
-            qkv: SharedBuf::new(frames * 3 * shape.hidden),
+            qkv: SharedBuf::new(frames * shape.qkv()),
             positions: SharedBuf::new(positions * shape.hidden),
             wide: SharedBuf::new(frames * wide),
             mixed: SharedBuf::new(frames * shape.hidden),
@@ -146,10 +143,6 @@ impl Buffers {
             table_input: PerThread::new(threads, QuantizedRows::default),
             scratch: PerThread::new(threads, Scratch::default),
         }
-    }
-
-    pub fn frames(&self) -> usize {
-        self.frames
     }
 }
 
@@ -170,31 +163,6 @@ impl Pass<'_> {
 }
 
 impl Encoder {
-    pub fn new(shape: Shape, layers: Vec<Layer>) -> Result<Self, Error> {
-        if layers.len() != shape.layers || !shape.hidden.is_multiple_of(shape.heads) {
-            return Err(Error::Format(format!(
-                "{} layers for a shape of {} layers of {} split in {} heads",
-                layers.len(),
-                shape.layers,
-                shape.hidden,
-                shape.heads
-            )));
-        }
-        if layers
-            .iter()
-            .any(|layer| position_dtype(layer) != position_dtype(&layers[0]))
-        {
-            return Err(Error::Format(
-                "relative-position projections of different formats".into(),
-            ));
-        }
-        Ok(Self { shape, layers })
-    }
-
-    pub fn shape(&self) -> Shape {
-        self.shape
-    }
-
     /// Runs every layer over `buffers.hidden[..frames]` (in and out).
     ///
     /// # Panics
@@ -216,7 +184,7 @@ impl Encoder {
         let start = (buffers.frames - frames) * self.shape.hidden;
         let table = &buffers.table[start..start + rows * self.shape.hidden];
         let position = first.attention.position.matrix();
-        let table = buffers.table_input.get(ctx).input(&position, table, rows);
+        let table = buffers.table_input.get(ctx).input(&position, table);
         for layer in &self.layers {
             self.feed_forward(&pass, &layer.ff1);
             self.attention(&pass, &layer.attention, &table);
@@ -228,7 +196,7 @@ impl Encoder {
     }
 
     /// `out = norm(hidden)` for this thread's rows (`out` may be `hidden`).
-    fn normalize(&self, pass: &Pass, norm: &Norm, out: &SharedBuf) {
+    fn normalize(&self, pass: &Pass, norm: &LayerNorm, out: &SharedBuf) {
         let hidden = self.shape.hidden;
         let rows = pass.ctx.split(pass.frames, 1);
         let range = rows.start * hidden..rows.end * hidden;
@@ -248,17 +216,13 @@ impl Encoder {
         self.normalize(pass, &weights.norm, &buffers.normed);
         pass.ctx.barrier();
         let quant = &mut buffers.scratch.get(pass.ctx).quant;
-        project(pass, &weights.up, &buffers.normed, quant, |at, value| {
+        let normed = pass.rows(&buffers.normed);
+        project(pass.ctx, &weights.up, normed, quant, |at, value| {
             buffers.wide.set(at, silu(value));
         });
         pass.ctx.barrier();
-        project_residual(
-            pass.ctx,
-            &weights.down,
-            pass.rows(&buffers.wide),
-            &buffers.hidden,
-            quant,
-        );
+        let wide = pass.rows(&buffers.wide);
+        project_residual(pass.ctx, &weights.down, wide, &buffers.hidden, quant);
         pass.ctx.barrier();
     }
 
@@ -268,32 +232,27 @@ impl Encoder {
         self.normalize(pass, &weights.norm, &buffers.normed);
         pass.ctx.barrier();
         let scratch = buffers.scratch.get(pass.ctx);
+        let normed = pass.rows(&buffers.normed);
         project(
-            pass,
+            pass.ctx,
             &weights.qkv,
-            &buffers.normed,
+            normed,
             &mut scratch.quant,
             |at, value| {
                 buffers.qkv.set(at, value);
             },
         );
-        let position = weights.position.matrix();
-        let positions = 2 * pass.frames - 1;
-        let cols = pass.ctx.split(position.rows, COLUMN_ALIGN);
-        matmul(&position, table, positions, cols, |row, col, value| {
-            buffers.positions.set(row * position.rows + col, value);
+        let outputs = weights.position.matrix().rows;
+        let cols = pass.ctx.split(outputs, COLUMN_ALIGN);
+        weights.position.project(table, cols, |row, col, value| {
+            buffers.positions.set(row * outputs + col, value);
         });
         pass.ctx.barrier();
         attention::attend(self.shape, pass, weights, scratch);
         pass.ctx.barrier();
         let mixed = pass.rows(&buffers.mixed);
-        project_residual(
-            pass.ctx,
-            &weights.out,
-            mixed,
-            &buffers.hidden,
-            &mut scratch.quant,
-        );
+        let quant = &mut scratch.quant;
+        project_residual(pass.ctx, &weights.out, mixed, &buffers.hidden, quant);
         pass.ctx.barrier();
     }
 
@@ -304,10 +263,11 @@ impl Encoder {
         self.normalize(pass, &weights.norm, &buffers.normed);
         pass.ctx.barrier();
         let scratch = buffers.scratch.get(pass.ctx);
+        let normed = pass.rows(&buffers.normed);
         project(
-            pass,
+            pass.ctx,
             &weights.pointwise1,
-            &buffers.normed,
+            normed,
             &mut scratch.quant,
             |at, value| {
                 buffers.wide.set(at, value);
@@ -339,8 +299,8 @@ impl Encoder {
                 .zip(&gates[channels.clone()]);
             gated.extend(pairs.map(|(value, gate)| value / (1.0 + exp(-gate))));
         }
-        let taps = weights.depthwise.values().expect("checked at load");
-        let bias = &weights.depthwise_bias.values().expect("checked at load")[channels.clone()];
+        let taps = weights.depthwise.values();
+        let bias = &weights.depthwise_bias.values()[channels.clone()];
         let reach = kernel / 2;
         sums.resize(width, 0.0);
         for frame in 0..pass.frames {
@@ -365,44 +325,27 @@ impl Encoder {
 
 /// The format of a layer's relative-position projection (`forward` prepares the sinusoids for
 /// the first layer's and every layer reads them).
-fn position_dtype(layer: &Layer) -> DType {
+fn position_format(layer: &Layer) -> Option<QuantFormat> {
     match layer.attention.position.matrix().storage {
-        MatrixStorage::F32(_) => DType::F32,
-        MatrixStorage::Quant { dtype, .. } => dtype,
+        MatrixStorage::F32(_) => None,
+        MatrixStorage::Quant { format, .. } => Some(format),
     }
 }
 
-/// `linear(input rows)` for this thread's share of the output columns, each value stored at
-/// `row · outputs + col`.
-fn project(
-    pass: &Pass,
-    linear: &Linear,
-    input: &SharedBuf,
-    quant: &mut QuantizedRows,
-    mut store: impl FnMut(usize, f32),
-) {
-    let matrix = linear.matrix();
-    let outputs = matrix.rows;
-    let x = quant.input(
-        &matrix,
-        &input.read()[..pass.frames * matrix.cols],
-        pass.frames,
-    );
-    let cols = pass.ctx.split(outputs, COLUMN_ALIGN);
-    matmul(&matrix, &x, pass.frames, cols, |row, col, value| {
-        store(row * outputs + col, value);
-    });
-}
-
 impl Load for FeedForward {
-    type Shape = ();
+    type Shape = Shape;
 
-    fn load(store: &mut Store, prefix: &str, (): ()) -> Result<Self, bundle::Error> {
-        let name = |part: &str| format!("{prefix}.{part}");
+    fn load(store: &mut Store, prefix: &str, shape: Shape) -> Result<Self, bundle::Error> {
+        let Shape {
+            hidden,
+            feed_forward,
+            ..
+        } = shape;
+        let mut scope = Scope::new(store, prefix);
         Ok(Self {
-            norm: Norm::load(store, &name("norm"), ())?,
-            up: Linear::load(store, &name("up"), ())?,
-            down: Linear::load(store, &name("down"), ())?,
+            norm: scope.load("norm", hidden)?,
+            up: scope.load("up", [feed_forward, hidden])?,
+            down: scope.load("down", [hidden, feed_forward])?,
         })
     }
 }
@@ -411,14 +354,15 @@ impl Load for Attention {
     type Shape = Shape;
 
     fn load(store: &mut Store, prefix: &str, shape: Shape) -> Result<Self, bundle::Error> {
-        let name = |part: &str| format!("{prefix}.{part}");
+        let hidden = shape.hidden;
+        let mut scope = Scope::new(store, prefix);
         Ok(Self {
-            norm: Norm::load(store, &name("norm"), ())?,
-            qkv: Linear::load(store, &name("qkv"), ())?,
-            position: Linear::load(store, &name("position"), ())?,
-            bias_u: vector(store, &name("bias_u"), shape.hidden)?,
-            bias_v: vector(store, &name("bias_v"), shape.hidden)?,
-            out: Linear::load(store, &name("out"), ())?,
+            norm: scope.load("norm", hidden)?,
+            qkv: scope.load("qkv", [shape.qkv(), hidden])?,
+            position: scope.load("position", [hidden, hidden])?,
+            bias_u: scope.load("bias_u", hidden)?,
+            bias_v: scope.load("bias_v", hidden)?,
+            out: scope.load("out", [hidden, hidden])?,
         })
     }
 }
@@ -427,13 +371,14 @@ impl Load for Convolution {
     type Shape = Shape;
 
     fn load(store: &mut Store, prefix: &str, shape: Shape) -> Result<Self, bundle::Error> {
-        let name = |part: &str| format!("{prefix}.{part}");
+        let hidden = shape.hidden;
+        let mut scope = Scope::new(store, prefix);
         Ok(Self {
-            norm: Norm::load(store, &name("norm"), ())?,
-            pointwise1: Linear::load(store, &name("pointwise1"), ())?,
-            depthwise: vector(store, &name("depthwise"), shape.kernel * shape.hidden)?,
-            depthwise_bias: vector(store, &name("depthwise_bias"), shape.hidden)?,
-            pointwise2: Linear::load(store, &name("pointwise2"), ())?,
+            norm: scope.load("norm", hidden)?,
+            pointwise1: scope.load("pointwise1", [2 * hidden, hidden])?,
+            depthwise: scope.load("depthwise", shape.kernel * hidden)?,
+            depthwise_bias: scope.load("depthwise_bias", hidden)?,
+            pointwise2: scope.load("pointwise2", [hidden, hidden])?,
         })
     }
 }
@@ -442,13 +387,13 @@ impl Load for Layer {
     type Shape = Shape;
 
     fn load(store: &mut Store, prefix: &str, shape: Shape) -> Result<Self, bundle::Error> {
-        let name = |part: &str| format!("{prefix}.{part}");
+        let mut scope = Scope::new(store, prefix);
         Ok(Self {
-            ff1: FeedForward::load(store, &name("ff1"), ())?,
-            attention: Attention::load(store, &name("attention"), shape)?,
-            conv: Convolution::load(store, &name("conv"), shape)?,
-            ff2: FeedForward::load(store, &name("ff2"), ())?,
-            norm: Norm::load(store, &name("norm"), ())?,
+            ff1: scope.load("ff1", shape)?,
+            attention: scope.load("attention", shape)?,
+            conv: scope.load("conv", shape)?,
+            ff2: scope.load("ff2", shape)?,
+            norm: scope.load("norm", shape.hidden)?,
         })
     }
 }
@@ -457,21 +402,27 @@ impl Load for Encoder {
     type Shape = Shape;
 
     fn load(store: &mut Store, prefix: &str, shape: Shape) -> Result<Self, bundle::Error> {
-        let layers = (0..shape.layers)
-            .map(|i| Layer::load(store, &format!("{prefix}.layers.{i}"), shape))
-            .collect::<Result<_, _>>()?;
-        Ok(Self::new(shape, layers)?)
+        if !shape.hidden.is_multiple_of(shape.heads) {
+            return Err(bundle::Error::Format(format!(
+                "{prefix}: a width of {} in {} heads",
+                shape.hidden, shape.heads
+            )));
+        }
+        let layers: Vec<Layer> = load_each(
+            store,
+            &format!("{prefix}.layers"),
+            shape.layers,
+            |store, name| Layer::load(store, name, shape),
+        )?;
+        if let Some(first) = layers.first()
+            && layers
+                .iter()
+                .any(|layer| position_format(layer) != position_format(first))
+        {
+            return Err(bundle::Error::Format(format!(
+                "{prefix}: relative-position projections of different formats"
+            )));
+        }
+        Ok(Self { shape, layers })
     }
-}
-
-/// Tensor `name`, which must hold `len` f32 values.
-fn vector(store: &mut Store, name: &str, len: usize) -> Result<Tensor, bundle::Error> {
-    let tensor = store.take(name)?;
-    let found = tensor.values()?.len();
-    if found != len {
-        return Err(bundle::Error::Format(format!(
-            "{name}: {found} values, not {len}"
-        )));
-    }
-    Ok(tensor)
 }

@@ -9,21 +9,25 @@
 //! gives.
 
 use blocks::istft::{FftScratch, Istft, OverlapAdd};
-use blocks::qwen2::{Buffers, KvCache, Mask, Qwen2, Span};
-use bundle::{Load, Store};
-use kernels::{Linear, QuantizedRows, Tensor, matmul};
+use blocks::transformer::{Buffers, KvCache, Mask, Span};
+use bundle::{Load, Scope, Store};
+use kernels::{Linear, QuantizedRows, Vector};
 use team::{Ctx, PerThread, SharedBuf, Team};
 
-use crate::model::{HIDDEN, QWEN2_SHAPE};
+use crate::flow_head::LATENT;
+use crate::model::{HIDDEN, QWEN2_SHAPE, Qwen2};
 
 const HOP: usize = 882;
 const UPSAMPLE: usize = 4;
-/// Samples per latent frame (80 ms at 44.1 kHz).
+/// Samples per latent frame (80 ms at 44.1 kHz), and of an iSTFT frame.
 pub const FRAME_SAMPLES: usize = UPSAMPLE * HOP;
 const WINDOW: usize = 64;
 /// Ring slots: the window plus one call's positions, rounded up.
 const RING: usize = 128;
 const MAX_MAGNITUDE: f32 = 100.0;
+/// Column granularity of the spectrum split: its `2 · bins` columns are even, not a multiple of
+/// `COLUMN_ALIGN`.
+const SPECTRUM_ALIGN: usize = 2;
 /// `(weight of h_{i−1}, weight of h_i)` for positions `4i + 0, 4i + 1` …
 const EARLY: [(f32, f32); 2] = [(0.375, 0.625), (0.125, 0.875)];
 /// … and for positions `4(i−1) + 2, 4(i−1) + 3`, which needed `h_i`.
@@ -33,7 +37,7 @@ const LATE_THEN_EARLY: [(f32, f32); 4] = [LATE[0], LATE[1], EARLY[0], EARLY[1]];
 
 pub(crate) struct Vocoder {
     fc1: Linear,
-    body: Qwen2,
+    qwen2: Qwen2,
     head: Linear,
     istft: Istft,
 }
@@ -47,7 +51,6 @@ pub(crate) struct VocoderState {
     fft_scratch: PerThread<FftScratch>,
     quant: PerThread<(Vec<f32>, QuantizedRows)>,
     previous: Option<Vec<f32>>,
-    n_fft: usize,
     overlap: OverlapAdd,
 }
 
@@ -56,14 +59,13 @@ impl VocoderState {
         let istft = &vocoder.istft;
         Self {
             cache: KvCache::new(QWEN2_SHAPE, RING),
-            buffers: Buffers::new(QWEN2_SHAPE, UPSAMPLE, threads),
+            buffers: QWEN2_SHAPE.buffers(UPSAMPLE, threads),
             spectrum: SharedBuf::new(UPSAMPLE * 2 * istft.bins()),
             frames: SharedBuf::new(UPSAMPLE * istft.n_fft()),
             fft_scratch: PerThread::new(threads, || istft.scratch()),
             quant: PerThread::new(threads, Default::default),
             previous: None,
-            n_fft: istft.n_fft(),
-            overlap: OverlapAdd::new(istft.n_fft(), HOP),
+            overlap: istft.overlap_add(HOP),
         }
     }
 
@@ -71,7 +73,7 @@ impl VocoderState {
     /// slot is written before it is read).
     pub(crate) fn reset(&mut self) {
         self.previous = None;
-        self.overlap = OverlapAdd::new(self.n_fft, HOP);
+        self.overlap.reset();
     }
 }
 
@@ -86,7 +88,7 @@ impl Vocoder {
     ) {
         let mut current = vec![0.0; HIDDEN];
         let mut quant = QuantizedRows::default();
-        self.fc1.apply(latent, 1, &mut quant, &mut current);
+        self.fc1.apply(latent, &mut quant, &mut current);
         // The first frame clamps h_{−1} to h_0 and has no earlier positions to complete.
         let (previous, weights) = match state.previous.take() {
             None => (current.clone(), &EARLY[..]),
@@ -130,14 +132,16 @@ impl Vocoder {
         };
         let shared = &*state;
         team.run(|ctx| {
-            self.body.forward(ctx, &shared.cache, &shared.buffers, span);
+            self.qwen2
+                .body
+                .forward(ctx, &shared.cache, &shared.buffers, span);
             self.spectrum(ctx, shared, rows);
             ctx.barrier();
             self.frames(ctx, shared, rows);
         });
         let n_fft = self.istft.n_fft();
         for frame in state.frames.read()[..rows * n_fft].chunks_exact(n_fft) {
-            state.overlap.add(frame, self.istft.window());
+            state.overlap.add(frame);
         }
     }
 
@@ -147,20 +151,13 @@ impl Vocoder {
         let (normed, quant) = state.quant.get(ctx);
         normed.resize(rows * HIDDEN, 0.0);
         for (row, out) in normed.as_chunks_mut::<HIDDEN>().0.iter_mut().enumerate() {
-            self.body.final_norm(&state.buffers, row, out);
+            self.qwen2.final_norm(&state.buffers, row, out);
         }
-        let matrix = self.head.matrix();
-        let input = quant.input(&matrix, normed, rows);
-        let bias = self.head.bias().expect("head.out has a bias");
-        matmul(
-            &matrix,
-            &input,
-            rows,
-            ctx.split(width, 2),
-            |row, col, value| {
-                state.spectrum.set(row * width + col, value + bias[col]);
-            },
-        );
+        let input = quant.input(&self.head.matrix(), normed);
+        let cols = ctx.split(width, SPECTRUM_ALIGN);
+        self.head.project(&input, cols, |row, col, value| {
+            state.spectrum.set(row * width + col, value);
+        });
     }
 
     /// The time frames of this thread's rows of `spectrum`.
@@ -181,18 +178,13 @@ impl Load for Vocoder {
     type Shape = ();
 
     fn load(store: &mut Store, prefix: &str, (): ()) -> Result<Self, bundle::Error> {
-        let window = Tensor::load(store, &format!("{prefix}.window"), ())?;
-        let istft = Istft::new(window.values()?.to_vec());
-        if istft.n_fft() != UPSAMPLE * HOP {
-            return Err(bundle::Error::Format(format!(
-                "an iSTFT window of {}",
-                istft.n_fft()
-            )));
-        }
+        let mut scope = Scope::new(store, prefix);
+        let window: Vector = scope.load("window", FRAME_SAMPLES)?;
+        let istft = Istft::new(window.values().to_vec());
         Ok(Self {
-            fc1: Linear::load(store, &format!("{prefix}.fc1"), ())?,
-            body: Qwen2::load(store, prefix, QWEN2_SHAPE)?,
-            head: Linear::load(store, &format!("{prefix}.head"), ())?,
+            fc1: scope.load("fc1", [HIDDEN, LATENT])?,
+            head: scope.load("head", [2 * istft.bins(), HIDDEN])?,
+            qwen2: Qwen2::load(store, prefix, ())?,
             istft,
         })
     }

@@ -16,11 +16,8 @@ wasm:
       --config 'target.wasm32-unknown-unknown.rustflags=["-C", "target-feature=+simd128,+relaxed-simd"]' -- -D warnings
 
 host:
-    node --check packages/host/loader.js
-    node --check packages/host/compute.js
-    node --check packages/host/thread-host.js
-    node --check scripts/serve.mjs
-    bash -n scripts/build-runtime.sh
+    for file in packages/host/*.js scripts/*.mjs; do node --check "$file" || exit 1; done
+    for file in scripts/*.sh; do bash -n "$file" || exit 1; done
     node scripts/check-wasm-imports.mjs --selftest
 
 # Models → blocks → primitives (AGENTS.md, "Repository").

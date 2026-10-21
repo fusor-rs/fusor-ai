@@ -20,52 +20,61 @@ fusor-ai is a toolkit for on-device inference: SIMD kernels for quantized weight
 A model is ordinary Rust over the toolkit's blocks. Here, a Qwen2-0.5B language model that loads its weights from a bundle and runs one token through every layer:
 
 ```rust
-use blocks::qwen2::{Buffers, KvCache, Mask, Qwen2, Shape, Span};
+use blocks::transformer::{Architecture, Buffers, KvCache, Mask, Shape, Span, Transformer};
 use bundle::{Load, Store};
-use kernels::Tensor;
+use kernels::ops::rms_norm;
+use kernels::{Table, Vector};
 use team::Team;
 
 const QWEN2_0_5B: Shape = Shape {
+    architecture: Architecture::Qwen2,
     hidden: 896,
     layers: 24,
     heads: 14,
     kv_heads: 2,
     head_dim: 64,
-    intermediate: 4864,
+    feed_forward: 4864,
     rope_base: 1e6,
+    norm_eps: 1e-6,
 };
+const VOCABULARY: usize = 151_936;
 
 pub struct LanguageModel {
-    embed: Tensor,
-    body: Qwen2,
+    embed: Table,
+    body: Transformer,
+    norm: Vector,
 }
 
 impl LanguageModel {
     pub fn load(store: &mut Store) -> Result<Self, bundle::Error> {
+        let hidden = QWEN2_0_5B.hidden;
         Ok(Self {
-            embed: Tensor::load(store, "embed", ())?,
-            body: Qwen2::load(store, "llm", QWEN2_0_5B)?,
+            embed: Table::load(store, "embed", [VOCABULARY, hidden])?,
+            body: Transformer::load(store, "llm", QWEN2_0_5B)?,
+            norm: Vector::load(store, "llm.norm", hidden)?,
         })
     }
 
     /// The hidden state after `token` at `position`, the positions before it already cached.
     pub fn step(&self, team: &Team, cache: &KvCache, buffers: &mut Buffers, token: u32, position: usize) -> Vec<f32> {
-        let row = &mut buffers.hidden.get_mut()[..QWEN2_0_5B.hidden];
-        self.embed.matrix().expect("embed is a matrix").dequantize_row(token as usize, row);
+        let hidden = QWEN2_0_5B.hidden;
+        let row = &mut buffers.hidden.get_mut()[..hidden];
+        self.embed.matrix().dequantize_row(token as usize, row);
         let span = Span { rows: 1, first: position, mask: Mask::Causal };
         team.run(|ctx| self.body.forward(ctx, cache, buffers, span));
-        let mut state = vec![0.0; QWEN2_0_5B.hidden];
-        self.body.final_norm(buffers, 0, &mut state);
+        let mut state = vec![0.0; hidden];
+        let last = &buffers.hidden.read()[..hidden];
+        rms_norm(last, self.norm.values(), QWEN2_0_5B.norm_eps, &mut state);
         state
     }
 }
 ```
 
-`Qwen2::load` reads the stack's tensors under the `llm` prefix and checks them against the shape. `forward` runs inside one `Team::run`: every thread takes its share of each layer's heads and columns, with barriers between the phases that depend on each other. The matrix products quantize activations to int8 on the fly and use the target's dot-product instruction: relaxed SIMD or SIMD128 in WebAssembly, `sdot` on Apple silicon, scalar code elsewhere. The same file builds natively, for single-threaded WebAssembly, and for WebAssembly workers that share memory.
+`Transformer::load` reads the stack's tensors under the `llm` prefix and checks each against the shape. `forward` runs inside one `Team::run`: every thread takes its share of each layer's heads and columns, with barriers between the phases that depend on each other. The matrix products quantize activations to int8 on the fly and use the target's dot-product instruction: relaxed SIMD or SIMD128 in WebAssembly, `sdot` on Apple silicon, scalar code elsewhere. The same file builds natively, for single-threaded WebAssembly, and for WebAssembly workers that share memory.
 
 ## Get started
 
-You need Rust 1.99 or newer, installed with [rustup](https://rustup.rs), Node.js 20 or newer and [`just`](https://github.com/casey/just). Threaded WebAssembly builds also need the `nightly-2025-11-15` toolchain with `rust-src`; `scripts/install-tools.sh` installs the pinned wasm-bindgen and binaryen beside it. No release is published yet; until the first one, work from a checkout.
+You need Rust 1.99 or newer, installed with [rustup](https://rustup.rs), Node.js 20 or newer and [`just`](https://github.com/casey/just). Threaded WebAssembly builds also need the `nightly-2025-11-15` toolchain with `rust-src`; `scripts/install-tools.sh` installs the pinned wasm-bindgen and binaryen beside it. Each release publishes the crates to crates.io (`fusor-ai-kernels`, `fusor-ai-blocks`, …); a model's app also needs this repository as a submodule for the browser host and scripts.
 
 ### Run a model
 
@@ -109,14 +118,14 @@ ming-wasm is a complete worked example, and [AGENTS.md](AGENTS.md#repository) sa
 | Layer | Crate or package | Holds |
 | --- | --- | --- |
 | Primitives | `team` | `Team`, `Ctx` (`split`, `barrier`), `SharedBuf`, `PerThread` |
-| | `kernels` | `Tensor` and its formats, `matmul` over per-target backends, `ops` (RMSNorm, LayerNorm, RoPE, GELU, SiLU, ELU, `exp`, `erf`, attention), `Linear`, `rng`, `wav` (16-bit PCM WAV encoding, and decoding to mono) |
-| | `bundle` | `Manifest`, `Store` (streamed, hashed parts; tensors and blobs), the `Load` trait |
-| | `compile` | `Checkpoint` (safetensors), `BundleWriter` |
-| Blocks | `blocks` | `qwen2` (the Qwen2 decoder stack, causal or sliding-window KV cache), `kyutai` (Kyutai's streaming transformer: LayerNorm, interleaved RoPE, causal or sliding-window KV cache, GELU MLP), `dit` (diffusion-transformer blocks), `adaln_mlp` (the adaLN residual MLP of MAR-style flow heads), `flow` (flow-matching Euler steps with classifier-free guidance), `istft` (streaming inverse STFT), `seanet` (SEANet's streaming decoder, every conv one matrix), `conformer` (NVIDIA's FastConformer encoder: the convolutional subsampler, Transformer-XL relative-position attention, the convolution module) |
+| | `kernels` | `Tensor` and its formats, the checked views `Vector` and `Table`, `matmul` over per-target backends, `ops` (RMSNorm, LayerNorm, RoPE, GELU, SiLU, ELU, `exp`, `erf`, softmax, attention), `Linear`, `rng`, `wav` (16-bit PCM WAV encoding, and decoding to mono) |
+| | `bundle` | `Manifest`, `Store` (streamed, hashed parts; tensors and blobs), the `Load` trait that checks every tensor's shape, `Tokenizer` (with the `tokenizer` feature) |
+| | `compile` | `Checkpoint` (safetensors), `BundleWriter`, `Profile` and `Tensors` (each tensor in its profile's format) |
+| Blocks | `blocks` | `transformer` (decoder stacks with a causal or sliding-window KV cache, in the Qwen2 and Kyutai architectures), `dit` (diffusion-transformer blocks), `norm` (LayerNorm), `adaln_mlp` (the adaLN residual MLP of MAR-style flow heads), `flow` (flow-matching Euler steps with classifier-free guidance), `istft` (streaming inverse STFT), `seanet` (SEANet's streaming decoder, every conv one matrix), `conformer` (NVIDIA's FastConformer encoder: the convolutional subsampler, Transformer-XL relative-position attention, the convolution module) |
 | Models | `ming`, `ming-compile` | Ming-3.0-tts-0.5B and the compiler that writes its bundles |
 | | `phonon`, `phonon-compile` | Phonon-31m-en and the compiler that writes its bundles |
 | | `parakeet`, `parakeet-compile` | Moondream's Parakeet Redux and the compiler that writes its bundles |
-| Browser | `packages/host` | `loader.js` (build choice, part streaming, OPFS cache), `compute.js` (the compute-worker pool), `thread-host.js` |
+| Browser | `packages/host` | `loader.js` (build choice, part streaming, OPFS cache), `compute.js` (the compute-worker pool), `thread-host.js` and the `protocol.js` they share |
 | Tools | `scripts/` | `build-runtime.sh`, `check-wasm-imports.mjs`, `check-layers.mjs`, `serve.mjs`, `install-tools.sh` |
 
 On crates.io each crate is `fusor-ai-<name>`, such as `fusor-ai-kernels`, and its library keeps the short name (`use kernels::…`).
@@ -125,8 +134,8 @@ On crates.io each crate is `fusor-ai-<name>`, such as `fusor-ai-kernels`, and it
 
 | Model | Task | Blocks | In the browser |
 | --- | --- | --- | --- |
-| Ming-3.0-tts-0.5B: `ming`, `ming-compile`; app in [ming-wasm](https://github.com/fusor-rs/ming-wasm) | Text to speech, 44.1 kHz | `qwen2`, `dit`, `flow`, `istft` | 1.5–2× faster than real time in Chrome on an Apple M4 Pro; 850 MB bundle |
-| Phonon-31m-en: `phonon`, `phonon-compile`; app in [phonon-wasm](https://github.com/fusor-rs/phonon-wasm) | Text to speech, 24 kHz, English | `kyutai`, `adaln_mlp`, `seanet` | 9× faster than real time on one thread and 40× on eight in Chrome on an Apple M4 Pro; 46 MB bundle |
+| Ming-3.0-tts-0.5B: `ming`, `ming-compile`; app in [ming-wasm](https://github.com/fusor-rs/ming-wasm) | Text to speech, 44.1 kHz | `transformer`, `dit`, `flow`, `istft` | 1.5–2× faster than real time in Chrome on an Apple M4 Pro; 850 MB bundle |
+| Phonon-31m-en: `phonon`, `phonon-compile`; app in [phonon-wasm](https://github.com/fusor-rs/phonon-wasm) | Text to speech, 24 kHz, English | `transformer`, `norm`, `adaln_mlp`, `seanet` | 9× faster than real time on one thread and 40× on eight in Chrome on an Apple M4 Pro; 46 MB bundle |
 | Parakeet Redux: `parakeet`, `parakeet-compile`; app in [parakeet-redux-wasm](https://github.com/fusor-rs/parakeet-redux-wasm) | Speech to text, 16 kHz, 25 European languages, live or from a recording | `conformer` | 34× faster than real time on eight threads and 7× on one in Chrome on an Apple M4 Pro; 199 MB bundle |
 
 Each model's library lives in `crates/models/`. Its runtime, CLI, page, documentation and releases live in its app's repository.
@@ -135,7 +144,9 @@ Each model's library lives in `crates/models/`. Its runtime, CLI, page, document
 
 | Guide | Covers |
 | --- | --- |
-| [ming-wasm](https://github.com/fusor-rs/ming-wasm) | Running the text-to-speech page and the `ming` CLI, releases, and benchmarks of the first model against PyTorch and other runtimes |
+| [ming-wasm](https://github.com/fusor-rs/ming-wasm) | Running the Ming text-to-speech page and the `ming` CLI, releases, and benchmarks of the first model against PyTorch and other runtimes |
+| [phonon-wasm](https://github.com/fusor-rs/phonon-wasm) | Running the Phonon text-to-speech page and the `phonon` CLI, releases and benchmarks |
+| [parakeet-redux-wasm](https://github.com/fusor-rs/parakeet-redux-wasm) | Running the Parakeet Redux speech-to-text page and the `parakeet` CLI, releases and benchmarks |
 | [Repository rules](AGENTS.md) | The layers, where new code goes, and the rules every change follows |
 | [Contributing](CONTRIBUTING.md) | Setup, checks and releasing |
 | [Brand](assets/brand/BRANDING.md) | The logo, its construction and its colors |
@@ -150,9 +161,9 @@ fusor-ai is v0.1 and experimental. Until 1.0, each minor release may change the 
 | --- | --- |
 | macOS on Apple silicon (NEON `sdot`) | CI gate |
 | Linux on x86-64 (scalar kernels) | CI gate |
-| Runtime builds and the sealed-import check | CI gate in ming-wasm |
-| Chrome and Edge, threads and relaxed SIMD | Headless Chrome end-to-end check in ming-wasm, run before each change to a kernel, block or model |
-| Browsers without relaxed SIMD (Safari, older Firefox) | SIMD128 builds, exercised in Node by ming-wasm |
+| Runtime builds and the sealed-import check | CI gate in each model's repository |
+| Chrome and Edge, threads and relaxed SIMD | Headless Chrome end-to-end check in each model's repository, run before each change to a kernel, block or model it uses |
+| Browsers without relaxed SIMD (Safari, older Firefox) | SIMD128 builds, exercised in Node by each model's repository |
 | Pages without cross-origin isolation | Single-threaded builds |
 | x86 SIMD natively | Scalar kernels only |
 | WebGPU | Not implemented |

@@ -4,7 +4,6 @@
 )]
 
 /// An 8-byte aligned byte buffer, so f32 views of it are always aligned.
-#[derive(Clone, Default)]
 pub(crate) struct Blob {
     words: Vec<u64>,
     len: usize,

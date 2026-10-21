@@ -22,6 +22,8 @@ mod scalar;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
+use crate::quant::group_scale;
+
 #[cfg(all(target_arch = "aarch64", target_feature = "dotprod"))]
 pub(crate) type Active = neon::Neon;
 #[cfg(not(any(
@@ -91,8 +93,8 @@ pub(crate) trait Backend {
 
     fn dot_f32(left: &[f32], right: &[f32]) -> f32;
 
-    /// `dot_f32(left, right)` for four `rights`, each summed in exactly its order.
-    fn dot_f32_4(left: &[f32], rights: [&[f32]; 4]) -> [f32; 4] {
+    /// `dot_f32(left, right)` for each of `rights`, each summed in exactly its order.
+    fn dot_f32_many(left: &[f32], rights: [&[f32]; DOTS]) -> [f32; DOTS] {
         rights.map(|right| Self::dot_f32(left, right))
     }
 }
@@ -107,16 +109,12 @@ pub const DOTS: usize = 4;
 
 /// `dot_f32(left, right)` for each of `rights`, reading `left` once.
 pub fn dot_f32_many(left: &[f32], rights: [&[f32]; DOTS]) -> [f32; DOTS] {
-    <Active as Backend>::dot_f32_4(left, rights)
+    <Active as Backend>::dot_f32_many(left, rights)
 }
 
 const ACTIVATION_MAX: f32 = 127.0;
 
 /// `d = absmax / 127` (1 for an all-zero group): an activation group's scale.
 pub(crate) fn activation_scale(absmax: f32) -> f32 {
-    if absmax == 0.0 {
-        1.0
-    } else {
-        absmax / ACTIVATION_MAX
-    }
+    group_scale(absmax, ACTIVATION_MAX)
 }

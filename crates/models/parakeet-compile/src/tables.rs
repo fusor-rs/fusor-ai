@@ -1,11 +1,13 @@
 //! The runtime tensors (`parakeet::model`'s names) computed from the checkpoint's, with the folds
 //! the crate docs list.
 
-use compile::{Checkpoint, Error};
+use compile::{Checkpoint, Error, Tensors};
 use parakeet::model::{
-    DECODER_HIDDEN, DECODER_LAYERS, ENCODER_SHAPE, MELS, SPEECH_HIDDEN, SPEECH_KERNEL,
+    DECODER_HIDDEN, DECODER_LAYERS, ENCODER_SHAPE, GATES, MELS, SPEECH_HIDDEN, SPEECH_KERNEL,
+    SUBSAMPLING_SHAPE,
 };
 
+use crate::Profile;
 use crate::filterbank;
 use crate::ternary::Export;
 
@@ -14,117 +16,27 @@ const HALF_STEP: f32 = 0.5;
 /// The convolution module's BatchNorm epsilon (PyTorch's default).
 const BATCH_NORM_EPS: f32 = 1e-5;
 /// Taps of the subsampler's square kernels.
-const TAPS: usize = ENCODER_SHAPE.subsampling_kernel * ENCODER_SHAPE.subsampling_kernel;
+const TAPS: usize = SUBSAMPLING_SHAPE.kernel * SUBSAMPLING_SHAPE.kernel;
 /// Frequencies of the subsampler's output.
-const SUBSAMPLED_MELS: usize = MELS / ENCODER_SHAPE.subsampling_factor();
-/// The LSTM gates per unit, in PyTorch's row order: input, forget, cell, output.
-const GATES: usize = 4;
+const SUBSAMPLED_MELS: usize = MELS / SUBSAMPLING_SHAPE.factor();
 /// Each conformer layer's feed-forwards: runtime name, norm and module in the checkpoint.
 const FEED_FORWARDS: [(&str, &str, &str); 2] = [
     ("ff1", "norm_feed_forward1", "feed_forward1"),
     ("ff2", "norm_feed_forward2", "feed_forward2"),
 ];
 
-/// How a tensor may be stored.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Kind {
-    /// One of the encoder's ternary projections.
-    Ternary,
-    /// A large dense matrix.
-    Matrix,
-    /// Kept f32 in every profile: vectors, kernels, the speech head and the frontend.
-    F32,
-}
-
-/// A runtime tensor before encoding.
-pub(crate) struct Entry {
-    pub(crate) name: String,
-    pub(crate) shape: Vec<usize>,
-    pub(crate) values: Vec<f32>,
-    pub(crate) kind: Kind,
-}
-
-/// The runtime tensors in bundle order.
-#[derive(Default)]
-pub(crate) struct Tensors(Vec<Entry>);
-
-impl Tensors {
-    pub(crate) fn into_entries(self) -> Vec<Entry> {
-        self.0
-    }
-
-    fn add(&mut self, name: String, shape: Vec<usize>, values: Vec<f32>, kind: Kind) {
-        self.0.push(Entry {
-            name,
-            shape,
-            values,
-            kind,
-        });
-    }
-
-    fn vector(&mut self, name: String, values: Vec<f32>) {
-        self.add(name, vec![values.len()], values, Kind::F32);
-    }
-
-    /// Linear `name`: a weight of `cols` inputs and an optional bias.
-    fn linear(
-        &mut self,
-        (name, kind): (&str, Kind),
-        cols: usize,
-        weight: Vec<f32>,
-        bias: Option<Vec<f32>>,
-    ) {
-        let shape = vec![weight.len() / cols, cols];
-        self.add(format!("{name}.weight"), shape, weight, kind);
-        if let Some(bias) = bias {
-            self.vector(format!("{name}.bias"), bias);
-        }
-    }
-
-    /// The checkpoint's linear (or 1-wide convolution) `source`, its weight and bias, as `name`.
-    fn copy_linear(
-        &mut self,
-        checkpoint: &Checkpoint,
-        (name, kind): (&str, Kind),
-        source: &str,
-    ) -> Result<(), Error> {
-        let weight_name = format!("{source}.weight");
-        let shape = &checkpoint.entry(&weight_name)?.shape;
-        let cols = shape[1..].iter().product();
-        let weight = checkpoint.f32(&weight_name)?;
-        let bias = checkpoint.f32(&format!("{source}.bias"))?;
-        self.linear((name, kind), cols, weight, Some(bias));
-        Ok(())
-    }
-
-    /// A LayerNorm's `weight` and `bias` as norm `name`.
-    fn copy_norm(
-        &mut self,
-        checkpoint: &Checkpoint,
-        name: &str,
-        source: &str,
-    ) -> Result<(), Error> {
-        for part in ["weight", "bias"] {
-            let values = checkpoint.f32(&format!("{source}.{part}"))?;
-            self.vector(format!("{name}.{part}"), values);
-        }
-        Ok(())
-    }
-}
-
 /// The frontend's window and filterbank.
-pub(crate) fn frontend(tensors: &mut Tensors) {
-    tensors.vector("features.window".into(), filterbank::window());
+pub(crate) fn frontend(tensors: &mut Tensors<Profile>) -> Result<(), Error> {
+    tensors.vector("features.window", &filterbank::window())?;
     let mel = filterbank::mel();
-    let shape = vec![MELS, mel.len() / MELS];
-    tensors.add("features.mel".into(), shape, mel, Kind::F32);
+    tensors.add("features.mel", vec![MELS, mel.len() / MELS], &mel)
 }
 
 /// The subsampler and every conformer layer.
 pub(crate) fn encoder(
     checkpoint: &Checkpoint,
     export: &Export,
-    tensors: &mut Tensors,
+    tensors: &mut Tensors<Profile>,
 ) -> Result<(), Error> {
     subsampling(checkpoint, tensors)?;
     for layer in 0..ENCODER_SHAPE.layers {
@@ -146,57 +58,36 @@ struct Layer<'checkpoint> {
 }
 
 impl Layer<'_> {
-    fn write(&self, tensors: &mut Tensors) -> Result<(), Error> {
+    fn write(&self, tensors: &mut Tensors<Profile>) -> Result<(), Error> {
         let checkpoint = self.checkpoint;
-        for (name, norm, module) in FEED_FORWARDS {
-            tensors.copy_norm(
-                checkpoint,
-                &self.path(&format!("{name}.norm")),
-                &self.path(norm),
-            )?;
-            self.ternary(
-                tensors,
-                &format!("{name}.up"),
-                &[&format!("{module}.linear1")],
-                1.0,
-            )?;
-            let down = [&format!("{module}.linear2")];
-            self.ternary(
-                tensors,
-                &format!("{name}.down"),
-                &down.map(String::as_str),
-                HALF_STEP,
-            )?;
+        let norm = |tensors: &mut Tensors<Profile>, name: &str, source: &str| {
+            tensors.copy_norm(checkpoint, &self.path(name), &self.path(source))
+        };
+        for (name, norm_source, module) in FEED_FORWARDS {
+            norm(tensors, &format!("{name}.norm"), norm_source)?;
+            let up = [format!("{module}.linear1")];
+            self.ternary(tensors, &format!("{name}.up"), &up, 1.0)?;
+            let down = [format!("{module}.linear2")];
+            self.ternary(tensors, &format!("{name}.down"), &down, HALF_STEP)?;
         }
         let attention = |part: &str| format!("self_attn.{part}");
-        tensors.copy_norm(
-            checkpoint,
-            &self.path("attention.norm"),
-            &self.path("norm_self_att"),
-        )?;
+        norm(tensors, "attention.norm", "norm_self_att")?;
         let qkv = ["q_proj", "k_proj", "v_proj"].map(attention);
-        self.ternary(
-            tensors,
-            "attention.qkv",
-            &qkv.each_ref().map(String::as_str),
-            1.0,
-        )?;
-        self.ternary(
-            tensors,
-            "attention.position",
-            &[&attention("relative_k_proj")],
-            1.0,
-        )?;
+        self.ternary(tensors, "attention.qkv", &qkv, 1.0)?;
+        let position = [attention("relative_k_proj")];
+        self.ternary(tensors, "attention.position", &position, 1.0)?;
         for bias in ["bias_u", "bias_v"] {
             let values = checkpoint.f32(&self.path(&attention(bias)))?;
-            tensors.vector(self.path(&format!("attention.{bias}")), values);
+            tensors.vector(&self.path(&format!("attention.{bias}")), &values)?;
         }
-        self.ternary(tensors, "attention.out", &[&attention("o_proj")], 1.0)?;
-        tensors.copy_norm(checkpoint, &self.path("conv.norm"), &self.path("norm_conv"))?;
-        self.ternary(tensors, "conv.pointwise1", &["conv.pointwise_conv1"], 1.0)?;
+        self.ternary(tensors, "attention.out", &[attention("o_proj")], 1.0)?;
+        norm(tensors, "conv.norm", "norm_conv")?;
+        let pointwise1 = ["conv.pointwise_conv1".to_string()];
+        self.ternary(tensors, "conv.pointwise1", &pointwise1, 1.0)?;
         self.depthwise(tensors)?;
-        self.ternary(tensors, "conv.pointwise2", &["conv.pointwise_conv2"], 1.0)?;
-        tensors.copy_norm(checkpoint, &self.path("norm"), &self.path("norm_out"))
+        let pointwise2 = ["conv.pointwise_conv2".to_string()];
+        self.ternary(tensors, "conv.pointwise2", &pointwise2, 1.0)?;
+        norm(tensors, "norm", "norm_out")
     }
 
     fn path(&self, part: &str) -> String {
@@ -206,25 +97,29 @@ impl Layer<'_> {
     /// The ternary modules `modules`, their rows stacked and scaled by `scale`, as linear `name`.
     fn ternary(
         &self,
-        tensors: &mut Tensors,
+        tensors: &mut Tensors<Profile>,
         name: &str,
-        modules: &[&str],
+        modules: &[String],
         scale: f32,
     ) -> Result<(), Error> {
-        let mut weight = Vec::new();
-        let mut cols = 0;
+        let (mut weight, mut rows, mut cols) = (Vec::new(), 0, None);
         for module in modules {
             let matrix = self.export.weight(self.checkpoint, &self.path(module))?;
-            cols = matrix.cols;
+            if *cols.get_or_insert(matrix.cols) != matrix.cols {
+                return Err(Error::Format(format!(
+                    "{}: modules of different widths stacked",
+                    self.path(name)
+                )));
+            }
+            rows += matrix.values.len() / matrix.cols;
             weight.extend(matrix.values.iter().map(|value| value * scale));
         }
-        tensors.linear((&self.path(name), Kind::Ternary), cols, weight, None);
-        Ok(())
+        tensors.linear(&self.path(name), rows, &weight, None)
     }
 
     /// The depthwise convolution with the BatchNorm after it folded in: its kernel tap-major,
     /// `[kernel, hidden]`, and a bias.
-    fn depthwise(&self, tensors: &mut Tensors) -> Result<(), Error> {
+    fn depthwise(&self, tensors: &mut Tensors<Profile>) -> Result<(), Error> {
         let read = |part: &str| self.checkpoint.f32(&self.path(&format!("conv.{part}")));
         let kernel = read("depthwise_conv.weight")?;
         let (gamma, beta) = (read("norm.weight")?, read("norm.bias")?);
@@ -242,81 +137,74 @@ impl Layer<'_> {
                 folded[tap * hidden + channel] = kernel[channel * taps + tap] * scale;
             }
         }
-        let bias = (0..hidden).map(|channel| beta[channel] - mean[channel] * scales[channel]);
-        tensors.vector(self.path("conv.depthwise"), folded);
-        tensors.vector(self.path("conv.depthwise_bias"), bias.collect());
-        Ok(())
+        let bias: Vec<f32> = (0..hidden)
+            .map(|channel| beta[channel] - mean[channel] * scales[channel])
+            .collect();
+        tensors.vector(&self.path("conv.depthwise"), &folded)?;
+        tensors.vector(&self.path("conv.depthwise_bias"), &bias)
     }
 }
 
 /// The subsampler: its square kernels tap-major (`[taps, channels]`), its pointwise convolutions as
 /// linears, and its last linear's inputs reordered from channel-major to frequency-major.
-fn subsampling(checkpoint: &Checkpoint, tensors: &mut Tensors) -> Result<(), Error> {
+fn subsampling(checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> Result<(), Error> {
     const SOURCE: &str = "encoder.subsampling";
     for (name, layer) in [("conv", 0), ("depthwise1", 2), ("depthwise2", 5)] {
         let weight = checkpoint.f32(&format!("{SOURCE}.layers.{layer}.weight"))?;
         let channels = weight.len() / TAPS;
-        let tap_major =
-            (0..TAPS * channels).map(|at| weight[(at % channels) * TAPS + at / channels]);
-        tensors.vector(format!("{SOURCE}.{name}.weight"), tap_major.collect());
+        let tap_major: Vec<f32> = (0..TAPS * channels)
+            .map(|at| weight[(at % channels) * TAPS + at / channels])
+            .collect();
+        tensors.vector(&format!("{SOURCE}.{name}.weight"), &tap_major)?;
         let bias = checkpoint.f32(&format!("{SOURCE}.layers.{layer}.bias"))?;
-        tensors.vector(format!("{SOURCE}.{name}.bias"), bias);
+        tensors.vector(&format!("{SOURCE}.{name}.bias"), &bias)?;
     }
     for (name, layer) in [("pointwise1", 3), ("pointwise2", 6)] {
         let source = format!("{SOURCE}.layers.{layer}");
-        tensors.copy_linear(
-            checkpoint,
-            (&format!("{SOURCE}.{name}"), Kind::F32),
-            &source,
-        )?;
+        tensors.copy_linear(checkpoint, &format!("{SOURCE}.{name}"), &source)?;
     }
     let weight = checkpoint.f32(&format!("{SOURCE}.linear.weight"))?;
-    let cols = ENCODER_SHAPE.channels * SUBSAMPLED_MELS;
-    let reordered = (0..weight.len()).map(|at| {
-        let (row, input) = (at / cols, at % cols);
-        let (frequency, channel) = (
-            input / ENCODER_SHAPE.channels,
-            input % ENCODER_SHAPE.channels,
-        );
-        weight[row * cols + channel * SUBSAMPLED_MELS + frequency]
-    });
+    let channels = SUBSAMPLING_SHAPE.channels;
+    let cols = channels * SUBSAMPLED_MELS;
+    let reordered: Vec<f32> = (0..weight.len())
+        .map(|at| {
+            let (row, input) = (at / cols, at % cols);
+            let (frequency, channel) = (input / channels, input % channels);
+            weight[row * cols + channel * SUBSAMPLED_MELS + frequency]
+        })
+        .collect();
     let bias = checkpoint.f32(&format!("{SOURCE}.linear.bias"))?;
-    let name = format!("{SOURCE}.out");
-    tensors.linear((&name, Kind::Matrix), cols, reordered.collect(), Some(bias));
-    Ok(())
+    let rows = reordered.len() / cols;
+    tensors.linear(&format!("{SOURCE}.out"), rows, &reordered, Some(&bias))
 }
 
 /// The speech head: its 1-wide convolutions as linears, its context convolution's inputs
 /// frame-major (oldest first).
-pub(crate) fn speech(checkpoint: &Checkpoint, tensors: &mut Tensors) -> Result<(), Error> {
-    tensors.copy_linear(
-        checkpoint,
-        ("speech.projection", Kind::F32),
-        "vad_head.proj",
-    )?;
+pub(crate) fn speech(checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> Result<(), Error> {
+    tensors.copy_linear(checkpoint, "speech.projection", "vad_head.proj")?;
     let weight = checkpoint.f32("vad_head.ctx.weight")?;
     let cols = SPEECH_KERNEL * SPEECH_HIDDEN;
-    let frame_major = (0..weight.len()).map(|at| {
-        let (row, input) = (at / cols, at % cols);
-        let (tap, channel) = (input / SPEECH_HIDDEN, input % SPEECH_HIDDEN);
-        weight[(row * SPEECH_HIDDEN + channel) * SPEECH_KERNEL + tap]
-    });
+    let frame_major: Vec<f32> = (0..weight.len())
+        .map(|at| {
+            let (row, input) = (at / cols, at % cols);
+            let (tap, channel) = (input / SPEECH_HIDDEN, input % SPEECH_HIDDEN);
+            weight[(row * SPEECH_HIDDEN + channel) * SPEECH_KERNEL + tap]
+        })
+        .collect();
     let bias = checkpoint.f32("vad_head.ctx.bias")?;
-    tensors.linear(
-        ("speech.context", Kind::F32),
-        cols,
-        frame_major.collect(),
-        Some(bias),
-    );
-    tensors.copy_linear(checkpoint, ("speech.out", Kind::F32), "vad_head.out")
+    tensors.linear("speech.context", SPEECH_HIDDEN, &frame_major, Some(&bias))?;
+    tensors.copy_linear(checkpoint, "speech.out", "vad_head.out")
 }
 
 /// The prediction network and the joint: each LSTM layer's input and recurrent matrices side by
 /// side and their biases summed, rows unit-major.
-pub(crate) fn decoder(checkpoint: &Checkpoint, tensors: &mut Tensors) -> Result<(), Error> {
+pub(crate) fn decoder(
+    checkpoint: &Checkpoint,
+    tensors: &mut Tensors<Profile>,
+) -> Result<(), Error> {
     let embedding = checkpoint.f32("decoder.embedding.weight")?;
     let shape = vec![embedding.len() / DECODER_HIDDEN, DECODER_HIDDEN];
-    tensors.add("decoder.embedding".into(), shape, embedding, Kind::Matrix);
+    tensors.add("decoder.embedding", shape, &embedding)?;
     for layer in 0..DECODER_LAYERS {
         let read = |part: &str| checkpoint.f32(&format!("decoder.lstm.{part}_l{layer}"));
         let (input, recurrent) = (read("weight_ih")?, read("weight_hh")?);
@@ -331,22 +219,9 @@ pub(crate) fn decoder(checkpoint: &Checkpoint, tensors: &mut Tensors) -> Result<
             bias.push(input_bias[row] + recurrent_bias[row]);
         }
         let name = format!("decoder.layers.{layer}");
-        tensors.linear(
-            (&name, Kind::Matrix),
-            2 * DECODER_HIDDEN,
-            weight,
-            Some(bias),
-        );
+        tensors.linear(&name, rows, &weight, Some(&bias))?;
     }
-    tensors.copy_linear(
-        checkpoint,
-        ("decoder.projector", Kind::Matrix),
-        "decoder.decoder_projector",
-    )?;
-    tensors.copy_linear(
-        checkpoint,
-        ("joint.encoder", Kind::Matrix),
-        "encoder_projector",
-    )?;
-    tensors.copy_linear(checkpoint, ("joint.head", Kind::Matrix), "joint.head")
+    tensors.copy_linear(checkpoint, "decoder.projector", "decoder.decoder_projector")?;
+    tensors.copy_linear(checkpoint, "joint.encoder", "encoder_projector")?;
+    tensors.copy_linear(checkpoint, "joint.head", "joint.head")
 }

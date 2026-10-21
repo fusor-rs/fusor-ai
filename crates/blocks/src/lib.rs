@@ -10,6 +10,10 @@ pub mod conformer;
 pub mod dit;
 pub mod flow;
 pub mod istft;
-pub mod kyutai;
-pub mod qwen2;
+mod layer;
+pub mod norm;
 pub mod seanet;
+pub mod transformer;
+
+/// The base of the sinusoids that encode a position or a time (`10000^(−2i/d)`).
+const SINUSOID_BASE: f32 = 10_000.0;

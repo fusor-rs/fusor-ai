@@ -1,27 +1,16 @@
-//! Weight tensors and their storage formats.
+//! Weight tensors, and the views of them a model reads once their type is checked.
 //!
 //! A quantized matrix `[rows, cols]` is stored as one byte buffer: the quants of every row
 //! (row-major, `cols` bytes per row for `Q7b32`, `cols / 2` for `Q4b32`, `cols / 4` for `T2b128`)
 //! followed by one f32 scale per group along a row (32 values for `Q7b32` and `Q4b32`, 128 for
-//! `T2b128`; row-major). Both planes start 16-byte aligned because `cols` is a multiple of the
-//! group.
-//!
-//! - `Q7b32`: `u = q + 64` with `q ∈ [−63, 63]`, so every stored byte is a valid unsigned 7-bit
-//!   operand of `i32x4.relaxed_dot_i8x16_i7x16_add_s`; value = `d · (u − 64)`.
-//! - `Q4b32`: ggml Q4_0 nibbles, `u = q + 8` with `q ∈ [−8, 7]`; byte `j` of a block holds element
-//!   `j` in its low nibble and element `j + 16` in its high nibble; value = `d · (u − 8)`.
-//! - `T2b128`: ternary weights, two-bit codes `u = q + 1` with `q ∈ {−1, 0, 1}` and one scale per
-//!   128 values; byte `j` of a block of 32 (8 bytes) holds elements `j`, `j + 8`, `j + 16` and
-//!   `j + 24` in bits 0–1, 2–3, 4–5 and 6–7; value = `d · (u − 1)`.
+//! `T2b128`; row-major). `cols` is a multiple of the group, so the scales start on a 4-byte
+//! boundary and are read as f32 in place. The formats are `quant`'s.
 
 use serde::{Deserialize, Serialize};
 
 use crate::Error;
 use crate::blob::Blob;
-
-pub const BLOCK: usize = 32;
-/// Values sharing one scale in `T2b128`.
-pub const TERNARY_GROUP: usize = 128;
+use crate::quant::{BLOCK, QuantFormat};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -33,51 +22,30 @@ pub enum DType {
 }
 
 impl DType {
+    /// The block-quantized format, `None` for f32.
+    pub fn quant_format(self) -> Option<QuantFormat> {
+        match self {
+            DType::F32 => None,
+            DType::Q7b32 => Some(QuantFormat::Q7b32),
+            DType::Q4b32 => Some(QuantFormat::Q4b32),
+            DType::T2b128 => Some(QuantFormat::T2b128),
+        }
+    }
+
     /// Bytes of a tensor of this type with the given shape (`[rows, cols]` for quantized
     /// matrices).
-    pub fn byte_len(self, shape: &[usize]) -> usize {
+    fn byte_len(self, shape: &[usize]) -> usize {
         let count: usize = shape.iter().product();
-        match self {
-            DType::F32 => count * 4,
-            DType::Q7b32 | DType::Q4b32 | DType::T2b128 => {
-                self.quant_bytes(count) + count / self.group() * 4
-            }
-        }
-    }
-
-    /// Bytes of the quants of `count` values (0 for f32).
-    pub(crate) fn quant_bytes(self, count: usize) -> usize {
-        match self {
-            DType::F32 => 0,
-            DType::Q7b32 => count,
-            DType::Q4b32 => count / 2,
-            DType::T2b128 => count / 4,
-        }
-    }
-
-    /// Values sharing one scale (1 for f32).
-    pub(crate) fn group(self) -> usize {
-        match self {
-            DType::F32 => 1,
-            DType::Q7b32 | DType::Q4b32 => BLOCK,
-            DType::T2b128 => TERNARY_GROUP,
-        }
-    }
-
-    /// What a quantized weight byte must have subtracted to give the signed value.
-    pub(crate) fn zero_point(self) -> i32 {
-        match self {
-            DType::F32 => 0,
-            DType::Q7b32 => 64,
-            DType::Q4b32 => 8,
-            DType::T2b128 => 1,
+        match self.quant_format() {
+            None => count * size_of::<f32>(),
+            Some(format) => format.quant_bytes(count) + count / format.group() * size_of::<f32>(),
         }
     }
 }
 
 pub struct Tensor {
-    pub dtype: DType,
-    pub shape: Vec<usize>,
+    dtype: DType,
+    shape: Vec<usize>,
     blob: Blob,
 }
 
@@ -93,7 +61,7 @@ pub struct Matrix<'tensor> {
 pub enum MatrixStorage<'tensor> {
     F32(&'tensor [f32]),
     Quant {
-        dtype: DType,
+        format: QuantFormat,
         quants: &'tensor [u8],
         scales: &'tensor [f32],
     },
@@ -107,33 +75,49 @@ impl Tensor {
     }
 
     /// Encodes row-major `values` of `shape` as `dtype`. Quantized types need a matrix whose
-    /// rows are a multiple of the group long; quantization rounds ties to even. `T2b128` keeps
-    /// ternary weights (`d · {−1, 0, 1}` per group) exactly; other values lose all but their sign
-    /// and the largest magnitude of their group.
-    pub fn encode(dtype: DType, shape: Vec<usize>, values: &[f32]) -> Self {
-        let mut tensor = Self::zeroed(dtype, shape);
-        let quant_len = dtype.quant_bytes(values.len());
-        let (quants, scales) = tensor.blob.bytes_mut().split_at_mut(quant_len);
-        let encoder = match dtype {
-            DType::F32 => {
-                let words = scales.as_chunks_mut::<4>().0;
-                for (word, value) in words.iter_mut().zip(values) {
-                    word.copy_from_slice(&value.to_le_bytes());
-                }
-                return tensor;
-            }
-            DType::Q7b32 => quantize_q7,
-            DType::Q4b32 => quantize_q4,
-            DType::T2b128 => quantize_t2,
-        };
-        let group = dtype.group();
-        let groups = values.chunks_exact(group);
-        let outputs = quants.chunks_exact_mut(dtype.quant_bytes(group));
-        let scale_slots = scales.as_chunks_mut::<4>().0;
-        for ((values, output), slot) in groups.zip(outputs).zip(scale_slots) {
-            slot.copy_from_slice(&encoder(values, output).to_le_bytes());
+    /// rows are whole groups; quantization rounds ties to even. `T2b128` keeps ternary weights
+    /// (`d · {−1, 0, 1}` per group) exactly; other values lose all but their sign and the
+    /// largest magnitude of their group.
+    ///
+    /// # Errors
+    /// When `values` does not fill `shape`, or a quantized `shape` is not such a matrix.
+    pub fn encode(dtype: DType, shape: Vec<usize>, values: &[f32]) -> Result<Self, Error> {
+        let count: usize = shape.iter().product();
+        if values.len() != count {
+            return Err(Error::Format(format!(
+                "{} values for a tensor of shape {shape:?}",
+                values.len()
+            )));
         }
-        tensor
+        let format = dtype.quant_format();
+        if let Some(format) = format {
+            check_quantized(format, &shape)?;
+        }
+        let mut tensor = Self::zeroed(dtype, shape);
+        let Some(format) = format else {
+            let words = tensor.blob.bytes_mut().as_chunks_mut::<4>().0;
+            for (word, value) in words.iter_mut().zip(values) {
+                word.copy_from_slice(&value.to_le_bytes());
+            }
+            return Ok(tensor);
+        };
+        let quant_len = format.quant_bytes(count);
+        let (quants, scales) = tensor.blob.bytes_mut().split_at_mut(quant_len);
+        let group = format.group();
+        let outputs = quants.chunks_exact_mut(format.quant_bytes(group));
+        let slots = scales.as_chunks_mut::<4>().0;
+        for ((values, output), slot) in values.chunks_exact(group).zip(outputs).zip(slots) {
+            slot.copy_from_slice(&format.quantize(values, output).to_le_bytes());
+        }
+        Ok(tensor)
+    }
+
+    pub fn dtype(&self) -> DType {
+        self.dtype
+    }
+
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
     }
 
     pub fn bytes(&self) -> &[u8] {
@@ -143,39 +127,88 @@ impl Tensor {
     pub fn bytes_mut(&mut self) -> &mut [u8] {
         self.blob.bytes_mut()
     }
+}
 
-    pub fn values(&self) -> Result<&[f32], Error> {
-        match self.dtype {
-            DType::F32 => Ok(self.blob.f32s(0)),
-            dtype => Err(Error::Format(format!(
-                "expected an f32 tensor, got {dtype:?}"
-            ))),
+/// A quantized tensor must be a `[rows, cols]` matrix of whole groups.
+fn check_quantized(format: QuantFormat, shape: &[usize]) -> Result<(), Error> {
+    match shape {
+        [_, cols] if cols.is_multiple_of(format.group()) => Ok(()),
+        _ => Err(Error::Format(format!(
+            "a {format:?} tensor of shape {shape:?}: a matrix of whole groups of {} expected",
+            format.group()
+        ))),
+    }
+}
+
+/// An f32 vector: a norm's weights, a bias, a window.
+pub struct Vector(Tensor);
+
+impl Vector {
+    /// # Errors
+    /// When `tensor` is not a vector of f32.
+    pub fn new(tensor: Tensor) -> Result<Self, Error> {
+        if tensor.dtype != DType::F32 || tensor.shape.len() != 1 {
+            return Err(Error::Format(format!(
+                "a {:?} tensor of shape {:?}: an f32 vector expected",
+                tensor.dtype, tensor.shape
+            )));
         }
+        Ok(Self(tensor))
     }
 
-    pub fn matrix(&self) -> Result<Matrix<'_>, Error> {
-        let [rows, cols] = self.shape[..] else {
+    pub fn values(&self) -> &[f32] {
+        self.0.blob.f32s(0)
+    }
+}
+
+/// A `[rows, cols]` matrix in any format: a linear layer's weights, an embedding table.
+pub struct Table(Tensor);
+
+impl Table {
+    /// # Errors
+    /// When `tensor` is not a matrix, or a quantized one's rows are not whole groups.
+    pub fn new(tensor: Tensor) -> Result<Self, Error> {
+        if let Some(format) = tensor.dtype.quant_format() {
+            check_quantized(format, &tensor.shape)?;
+        }
+        if tensor.shape.len() != 2 {
             return Err(Error::Format(format!(
-                "expected a matrix, got shape {:?}",
-                self.shape
+                "a tensor of shape {:?}: a matrix expected",
+                tensor.shape
             )));
-        };
-        let storage = match self.dtype {
-            DType::F32 => MatrixStorage::F32(self.blob.f32s(0)),
-            dtype => {
-                let quant_len = dtype.quant_bytes(rows * cols);
+        }
+        Ok(Self(tensor))
+    }
+
+    pub fn matrix(&self) -> Matrix<'_> {
+        let Tensor { dtype, shape, blob } = &self.0;
+        let (rows, cols) = (shape[0], shape[1]);
+        let storage = match dtype.quant_format() {
+            None => MatrixStorage::F32(blob.f32s(0)),
+            Some(format) => {
+                let quant_len = format.quant_bytes(rows * cols);
                 MatrixStorage::Quant {
-                    dtype,
-                    quants: &self.blob.bytes()[..quant_len],
-                    scales: self.blob.f32s(quant_len),
+                    format,
+                    quants: &blob.bytes()[..quant_len],
+                    scales: blob.f32s(quant_len),
                 }
             }
         };
-        Ok(Matrix {
+        Matrix {
             rows,
             cols,
             storage,
-        })
+        }
+    }
+
+    /// Every row as f32, row-major.
+    pub fn dequantize(&self) -> Vec<f32> {
+        let matrix = self.matrix();
+        let mut values = vec![0.0; matrix.rows * matrix.cols];
+        for (row, out) in values.chunks_exact_mut(matrix.cols).enumerate() {
+            matrix.dequantize_row(row, out);
+        }
+        values
     }
 }
 
@@ -188,100 +221,28 @@ impl Matrix<'_> {
                 out.copy_from_slice(&weights[row * cols..(row + 1) * cols])
             }
             MatrixStorage::Quant {
-                dtype,
+                format,
                 quants,
                 scales,
             } => {
-                let block_bytes = dtype.quant_bytes(BLOCK);
+                let block_bytes = format.quant_bytes(BLOCK);
                 let first = row * cols / BLOCK;
                 let row_quants = quants[first * block_bytes..].chunks_exact(block_bytes);
                 let outputs = out.as_chunks_mut::<BLOCK>().0;
-                let blocks_per_scale = dtype.group() / BLOCK;
+                let blocks_per_scale = format.group() / BLOCK;
                 for (block, (stored, output)) in row_quants.zip(outputs).enumerate() {
                     let scale = scales[(first + block) / blocks_per_scale];
-                    dequantize_block(dtype, stored, scale, output);
+                    format.dequantize_block(stored, scale, output);
                 }
             }
         }
     }
 }
 
-fn dequantize_block(dtype: DType, stored: &[u8], scale: f32, out: &mut [f32]) {
-    let level = |stored: u8| scale * (i32::from(stored) - dtype.zero_point()) as f32;
-    match dtype {
-        DType::Q7b32 => {
-            for (output, &byte) in out.iter_mut().zip(stored) {
-                *output = level(byte);
-            }
-        }
-        DType::Q4b32 => {
-            for (j, &byte) in stored.iter().enumerate() {
-                out[j] = level(byte & 0x0f);
-                out[j + BLOCK / 2] = level(byte >> 4);
-            }
-        }
-        DType::T2b128 => {
-            for (j, output) in out.iter_mut().enumerate() {
-                let shift = TERNARY_BITS * (j / TERNARY_BYTES);
-                *output = level((stored[j % TERNARY_BYTES] >> shift) & TERNARY_MASK);
-            }
-        }
-        DType::F32 => unreachable!("F32 has no blocks"),
-    }
-}
-
-const Q7_MAX: f32 = 63.0;
-
-/// Symmetric 7-bit: `d = absmax / 63`, `q = round_ties_even(x / d)`. Returns `d`.
-fn quantize_q7(block: &[f32], out: &mut [u8]) -> f32 {
-    let absmax = block.iter().fold(0.0f32, |max, x| max.max(x.abs()));
-    let scale = if absmax == 0.0 { 1.0 } else { absmax / Q7_MAX };
-    for (stored, x) in out.iter_mut().zip(block) {
-        let level = (x / scale).round_ties_even().clamp(-Q7_MAX, Q7_MAX) as i32;
-        *stored = (level + 64) as u8;
-    }
-    scale
-}
-
-/// ggml Q4_0: `d = signed extreme / −8`, `u = clamp(round(x / d) + 8, 0, 15)`. Returns `d`.
-fn quantize_q4(block: &[f32], out: &mut [u8]) -> f32 {
-    let extreme = block.iter().fold(
-        0.0f32,
-        |extreme, &x| {
-            if x.abs() > extreme.abs() { x } else { extreme }
-        },
-    );
-    let scale = if extreme == 0.0 { 1.0 } else { extreme / -8.0 };
-    let nibble = |x: f32| ((x / scale).round_ties_even() + 8.0).clamp(0.0, 15.0) as u8;
-    for j in 0..BLOCK / 2 {
-        out[j] = nibble(block[j]) | (nibble(block[j + BLOCK / 2]) << 4);
-    }
-    scale
-}
-
-const TERNARY_BITS: usize = 2;
-const TERNARY_MASK: u8 = 0b11;
-/// Bytes of one `T2b128` block of 32 values.
-const TERNARY_BYTES: usize = BLOCK / 4;
-
-/// Ternary: `d = absmax`, `q = round_ties_even(x / d)` clamped to `[−1, 1]`. Returns `d`.
-fn quantize_t2(group: &[f32], out: &mut [u8]) -> f32 {
-    let absmax = group.iter().fold(0.0f32, |max, x| max.max(x.abs()));
-    let scale = if absmax == 0.0 { 1.0 } else { absmax };
-    out.fill(0);
-    let blocks = group.as_chunks::<BLOCK>().0;
-    for (block, stored) in blocks.iter().zip(out.as_chunks_mut::<TERNARY_BYTES>().0) {
-        for (j, x) in block.iter().enumerate() {
-            let code = (x / scale).round_ties_even().clamp(-1.0, 1.0) as i32 + 1;
-            stored[j % TERNARY_BYTES] |= (code as u8) << (TERNARY_BITS * (j / TERNARY_BYTES));
-        }
-    }
-    scale
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{BLOCK, DType, TERNARY_GROUP, Tensor};
+    use super::{DType, Table, Tensor};
+    use crate::quant::{BLOCK, TERNARY_GROUP};
 
     fn ramp(len: usize) -> Vec<f32> {
         (0..len)
@@ -292,10 +253,10 @@ mod tests {
     /// Q4_0 maps the signed extreme to −8, so the opposite extreme clamps at +7: up to one full
     /// step of error there.
     fn assert_within_one_step(dtype: DType, block: &[f32], decoded: &[f32]) {
-        let absmax = block.iter().fold(0.0f32, |max, x| max.max(x.abs()));
+        let largest = block.iter().fold(0.0f32, |max, x| max.max(x.abs()));
         let tolerance = match dtype {
-            DType::Q7b32 => absmax / 126.0,
-            _ => absmax / 8.0,
+            DType::Q7b32 => largest / 126.0,
+            _ => largest / 8.0,
         };
         for (x, got) in block.iter().zip(decoded) {
             assert!(
@@ -309,8 +270,9 @@ mod tests {
     fn quantized_rows_dequantize_within_one_step() {
         let values = ramp(4 * 64);
         for dtype in [DType::Q7b32, DType::Q4b32] {
-            let tensor = Tensor::encode(dtype, vec![4, 64], &values);
-            let matrix = tensor.matrix().unwrap();
+            let tensor = Tensor::encode(dtype, vec![4, 64], &values).unwrap();
+            let table = Table::new(tensor).unwrap();
+            let matrix = table.matrix();
             let mut row_values = vec![0.0; 64];
             for row in 0..4 {
                 matrix.dequantize_row(row, &mut row_values);
@@ -329,14 +291,40 @@ mod tests {
         let values: Vec<f32> = (0..2 * cols)
             .map(|i| scales[i / TERNARY_GROUP] * ((i * 7 % 3) as f32 - 1.0))
             .collect();
-        let tensor = Tensor::encode(DType::T2b128, vec![2, cols], &values);
+        let tensor = Tensor::encode(DType::T2b128, vec![2, cols], &values).unwrap();
         // Elements 0, 8, 16 and 24 have codes 1 − 1, 1 + 1, 1 + 0 and 1 − 1: 0b00_01_10_00.
         assert_eq!(tensor.bytes()[0], 0b0001_1000);
-        let matrix = tensor.matrix().unwrap();
-        let mut row = vec![0.0; cols];
-        for index in 0..2 {
-            matrix.dequantize_row(index, &mut row);
-            assert_eq!(row, values[index * cols..(index + 1) * cols]);
+        assert_eq!(Table::new(tensor).unwrap().dequantize(), values);
+    }
+
+    #[test]
+    fn encoding_rejects_values_that_do_not_fill_the_shape() {
+        let cases = [
+            (DType::F32, vec![3], 4, "4 values for a tensor of shape [3]"),
+            (
+                DType::Q7b32,
+                vec![2, 32],
+                63,
+                "63 values for a tensor of shape [2, 32]",
+            ),
+            (
+                DType::Q7b32,
+                vec![64],
+                64,
+                "a Q7b32 tensor of shape [64]: a matrix of whole groups of 32 expected",
+            ),
+            (
+                DType::T2b128,
+                vec![1, 64],
+                64,
+                "a T2b128 tensor of shape [1, 64]: a matrix of whole groups of 128 expected",
+            ),
+        ];
+        for (dtype, shape, len, message) in cases {
+            let Err(error) = Tensor::encode(dtype, shape, &vec![1.0; len]) else {
+                panic!("{message}: encoded");
+            };
+            assert_eq!(error.to_string(), message);
         }
     }
 }

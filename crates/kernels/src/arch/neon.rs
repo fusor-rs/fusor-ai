@@ -8,6 +8,8 @@ use std::arch::aarch64::{
     vreinterpretq_s8_u8, vrndnq_f32, vsetq_lane_s32, vshr_n_u8, vshrq_n_u8, vst1q_s8,
 };
 
+use super::DOTS;
+
 pub(crate) struct Weights(int8x16_t, int8x16_t);
 pub(crate) struct Activations(int8x16_t, int8x16_t);
 
@@ -20,8 +22,6 @@ impl super::Backend for Neon {
     type Sums = float32x4_t;
     const TILE: usize = 6;
 
-    /// # Safety
-    /// 32 readable bytes at `at`.
     #[inline(always)]
     unsafe fn load_q7(at: *const u8) -> Self::Weights {
         // SAFETY: the caller guarantees 32 readable bytes; NEON loads are unaligned. Stored values
@@ -29,8 +29,6 @@ impl super::Backend for Neon {
         unsafe { Weights(vld1q_s8(at.cast()), vld1q_s8(at.add(16).cast())) }
     }
 
-    /// # Safety
-    /// 16 readable bytes at `at`.
     #[inline(always)]
     unsafe fn load_q4(at: *const u8) -> Self::Weights {
         // SAFETY: the caller guarantees 16 readable bytes; NEON loads are unaligned.
@@ -43,8 +41,6 @@ impl super::Backend for Neon {
         }
     }
 
-    /// # Safety
-    /// 8 readable bytes at `at`.
     #[inline(always)]
     unsafe fn load_t2(at: *const u8) -> Self::Weights {
         // SAFETY: the caller guarantees 8 readable bytes; NEON loads are unaligned.
@@ -61,8 +57,6 @@ impl super::Backend for Neon {
         }
     }
 
-    /// # Safety
-    /// 32 readable bytes at `at`.
     #[inline(always)]
     unsafe fn load_activations(at: *const i8) -> Self::Activations {
         // SAFETY: the caller guarantees 32 readable bytes; NEON loads are unaligned.
@@ -87,7 +81,6 @@ impl super::Backend for Neon {
         }
     }
 
-    /// Quantizes 32 values to int8 at scale `d` (`round_ties_even(x / d)`); returns `Σq`.
     fn quantize_block(x: &[f32], scale: f32, out: &mut [i8]) -> i32 {
         assert!(
             x.len() >= 32 && out.len() >= 32,
@@ -159,7 +152,7 @@ impl super::Backend for Neon {
         head + tail.map(|(x, y)| x * y).sum::<f32>()
     }
 
-    fn dot_f32_4(left: &[f32], rights: [&[f32]; 4]) -> [f32; 4] {
+    fn dot_f32_many(left: &[f32], rights: [&[f32]; DOTS]) -> [f32; DOTS] {
         assert!(
             rights.iter().all(|right| right.len() == left.len()),
             "dot products of equal lengths"
@@ -167,7 +160,7 @@ impl super::Backend for Neon {
         let chunks = left.len() / 4;
         // SAFETY: i·4 + 4 ≤ len for every slice (asserted equal); NEON loads are unaligned.
         let heads = unsafe {
-            let mut sums = [vdupq_n_f32(0.0); 4];
+            let mut sums = [vdupq_n_f32(0.0); DOTS];
             for i in 0..chunks {
                 let x = vld1q_f32(left.as_ptr().add(i * 4));
                 for (sum, right) in sums.iter_mut().zip(rights) {
@@ -176,7 +169,7 @@ impl super::Backend for Neon {
             }
             sums.map(|sum| vaddvq_f32(sum))
         };
-        let mut out = [0.0; 4];
+        let mut out = [0.0; DOTS];
         for ((value, head), right) in out.iter_mut().zip(heads).zip(rights) {
             let tail = left[chunks * 4..].iter().zip(&right[chunks * 4..]);
             *value = head + tail.map(|(x, y)| x * y).sum::<f32>();

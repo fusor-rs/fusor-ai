@@ -12,10 +12,12 @@
 // shared memory, then run Rayon's worker loop. As a module imported by the runtime glue:
 // export `startWorkers`, which asks the page for workers and waits until they are all ready.
 
+import { RAYON_ERROR, RAYON_INIT, RAYON_READY, SPAWN_COMPUTE } from './protocol.js';
+
 self.addEventListener('message', ({ data }) => {
-  if (data?.type !== 'fusor-ai-rayon-init') return;
+  if (data?.type !== RAYON_INIT) return;
   initialize(data).catch((error) => {
-    postMessage({ type: 'fusor-ai-rayon-error', message: String(error) });
+    postMessage({ type: RAYON_ERROR, message: String(error) });
     self.close();
   });
 });
@@ -23,7 +25,7 @@ self.addEventListener('message', ({ data }) => {
 async function initialize(data) {
   const pkg = await import(data.mainJS);
   pkg.initSync({ module: data.module, memory: data.memory });
-  postMessage({ type: 'fusor-ai-rayon-ready' });
+  postMessage({ type: RAYON_READY });
   pkg.wbg_rayon_start_worker(data.receiver);
 }
 
@@ -34,10 +36,17 @@ export async function startWorkers(module, memory, builder) {
   try {
     await new Promise((resolve, reject) => {
       channel.port1.onmessage = ({ data }) => (data.ready ? resolve() : reject(new Error(data.error)));
-      postMessage(
-        { type: 'fusor-ai-spawn-compute', url: import.meta.url, count, module, memory, receiver: builder.receiver(), mainJS: builder.mainJS(), port: channel.port2 },
-        [channel.port2],
-      );
+      const spawn = {
+        type: SPAWN_COMPUTE,
+        url: import.meta.url,
+        count,
+        module,
+        memory,
+        receiver: builder.receiver(),
+        mainJS: builder.mainJS(),
+        port: channel.port2,
+      };
+      postMessage(spawn, [channel.port2]);
     });
     builder.build();
   } finally {

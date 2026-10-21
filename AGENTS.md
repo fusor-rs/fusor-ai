@@ -16,18 +16,20 @@ The crates are layers. A crate depends only on its own layer or the ones below i
 
 | Layer | Path | Holds |
 | --- | --- | --- |
-| Primitives | `crates/team`, `crates/kernels`, `crates/bundle`, `crates/compile` | the SPMD thread team; tensors and their block-quantized formats, the int8 matmul over per-target `arch` backends, f32 operations, `Linear`, `rng`; the bundle manifest, the streaming `Store` and the `Load` trait; the safetensors reader and `BundleWriter` |
-| Blocks | `crates/blocks` | architecture pieces parameterized by a shape: `qwen2`, `dit`, `flow` (flow-matching integration), `istft` |
+| Primitives | `crates/team`, `crates/kernels`, `crates/bundle`, `crates/compile` | the SPMD thread team; tensors and their block-quantized formats, the int8 matmul over per-target `arch` backends, f32 operations, `Linear`, `rng`, `wav`; the bundle manifest, the streaming `Store`, the `Load` trait and the bundled `Tokenizer`; the safetensors reader, `BundleWriter` and the profile-driven `Tensors` |
+| Blocks | `crates/blocks` | architecture pieces parameterized by a shape: `transformer` (Qwen2 and Kyutai), `dit`, `norm`, `adaln_mlp`, `flow` (flow-matching integration), `istft`, `seanet`, `conformer` |
 | Models | `crates/models/<model>`, `crates/models/<model>-compile` | one model: its dimensions, tensor names, wiring, sampler settings, prompts and text frontend; its compiler |
 
 Beside the crates: `packages/host`, the browser side every model shares (`loader.js`,
-`compute.js`, `thread-host.js`), and `scripts/`: the runtime build, the import and layer
-checks, the dev server and the pinned tool installer.
+`compute.js`, `thread-host.js`, `protocol.js`), and `scripts/`: the runtime build, the import
+and layer checks, the dev server and the pinned tool installer.
 
 A model's products live in its own repository, which consumes fusor-ai as the git submodule
 `vendor/fusor-ai`: its wasm-bindgen runtime, its native CLI, its page, its goldens and
 end-to-end checks, its documentation and its releases. Ming's is
-[ming-wasm](https://github.com/fusor-rs/ming-wasm).
+[ming-wasm](https://github.com/fusor-rs/ming-wasm), Phonon's
+[phonon-wasm](https://github.com/fusor-rs/phonon-wasm) and Parakeet Redux's
+[parakeet-redux-wasm](https://github.com/fusor-rs/parakeet-redux-wasm).
 
 Where code goes, asked in order:
 
@@ -66,9 +68,11 @@ Constraints that hold everywhere:
   storage, a clock or entropy. `scripts/check-wasm-imports.mjs` is the check;
   never widen its allowlists to make a build pass.
 - Kernels must agree across targets: a change to an `arch` backend is not done
-  until the f64 reference test passes for every backend natively and Ming's
-  runtimes (both SIMD128 and relaxed SIMD) produce the same result they did
-  before (`just smoke` and `just e2e` in ming-wasm, its submodule at the change).
+  until the f64 reference test passes for every backend natively and the
+  runtimes (both SIMD128 and relaxed SIMD) of every model whose weight formats
+  it touches produce the same result they did before (`just smoke` and
+  `just e2e` in the model's repository, its submodule at the change): Ming for
+  `Q7b32` and `Q4b32`, Parakeet Redux for `T2b128`.
 - Every crate shares the version in `[workspace.package]`.
 
 ## The standard
@@ -309,10 +313,11 @@ just check
 It runs formatting, the workspace tests, Clippy natively and for
 `wasm32-unknown-unknown` (SIMD128 and relaxed SIMD), docs, the host package and
 import-check self-test, and the layer check. A change to a primitive, a block or
-a model also needs that model's runtime build and checks, run in the model's
-repository with its `vendor/fusor-ai` submodule at the change; for Ming, in
-ming-wasm: `just runtimes`, `just smoke`, `just parity` (the same numbers as
-before unless the change is meant to move them) and `just e2e`.
+a model also needs the runtime build and checks of every model it reaches, run
+in the model's repository (ming-wasm, phonon-wasm, parakeet-redux-wasm) with its
+`vendor/fusor-ai` submodule at the change: `just runtimes`, `just smoke`,
+`just parity` (the same numbers as before unless the change is meant to move
+them) and `just e2e`.
 
 ## Final review
 

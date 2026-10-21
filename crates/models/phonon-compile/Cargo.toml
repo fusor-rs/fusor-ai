@@ -15,7 +15,7 @@ name = "phonon_compile"
 
 [dependencies]
 phonon.workspace = true
-bundle.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
 compile.workspace = true
 kernels.workspace = true
 

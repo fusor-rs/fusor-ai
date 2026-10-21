@@ -9,13 +9,14 @@ use crate::features::MIN_SAMPLES;
 use crate::model::SAMPLE_RATE;
 use crate::speech::Span;
 
-pub const SEGMENT_SECONDS: f64 = 30.0;
+pub(crate) const SEGMENT_SECONDS: f64 = 30.0;
 /// Shorter silences are not pauses.
 const MIN_PAUSE_SECONDS: f64 = 0.2;
 /// No cut falls before this.
 const MIN_SEGMENT_SECONDS: f64 = 1.0;
-/// The speech head reads a long recording in blocks of this many seconds.
-pub const BLOCK_SECONDS: f64 = 120.0;
+/// The speech head reads a long recording in blocks of this many seconds (no fewer than a
+/// segment's).
+pub(crate) const BLOCK_SECONDS: f64 = 120.0;
 /// Pause edges lie on the speech head's frame grid, so a pause of exactly `MIN_PAUSE_SECONDS`
 /// can measure a rounding error short.
 const PAUSE_EPSILON: f64 = 1e-6;
@@ -30,14 +31,12 @@ pub(crate) fn seconds(samples: usize) -> f64 {
 }
 
 /// The silences of at least `MIN_PAUSE_SECONDS` between, before and after the speech of a
-/// recording of `duration` seconds.
+/// recording of `duration` seconds (its spans in order).
 pub(crate) fn pauses(speech: &[Span], duration: f64) -> Vec<Span> {
     let least = MIN_PAUSE_SECONDS - PAUSE_EPSILON;
-    let mut sorted = speech.to_vec();
-    sorted.sort_by(|left, right| left.start.total_cmp(&right.start));
     let mut pauses = Vec::new();
     let mut previous = 0.0;
-    for span in sorted {
+    for span in speech {
         if span.start - previous >= least {
             pauses.push(Span {
                 start: previous,
@@ -70,11 +69,14 @@ pub(crate) fn next_cut(pauses: &[Span]) -> f64 {
     within.or_else(centred).map_or(SEGMENT_SECONDS, middle)
 }
 
-/// Whether any speech falls in the first `seconds`.
-pub(crate) fn has_speech(speech: &[Span], seconds: f64) -> bool {
-    speech
-        .iter()
-        .any(|span| span.end > 0.0 && span.start < seconds)
+/// Whether the first `samples` of audio are worth transcribing: long enough for the features,
+/// with speech in them.
+pub(crate) fn transcribable(speech: &[Span], samples: usize) -> bool {
+    let duration = seconds(samples);
+    samples >= MIN_SAMPLES
+        && speech
+            .iter()
+            .any(|span| span.end > 0.0 && span.start < duration)
 }
 
 /// The speech after the first `seconds`, from there.
@@ -115,15 +117,43 @@ pub(crate) fn plan(
         carried.end += block.len();
         while carried.len() > cap {
             let cut = samples(next_cut(&pauses(&regions, seconds(carried.len()))));
-            if has_speech(&regions, seconds(cut)) {
+            if transcribable(&regions, cut) {
                 segments.push(carried.start..carried.start + cut);
             }
             carried.start += cut;
             regions = after(&regions, seconds(cut));
         }
     }
-    if carried.len() >= MIN_SAMPLES && has_speech(&regions, seconds(carried.len())) {
+    if transcribable(&regions, carried.len()) {
         segments.push(carried);
     }
     Ok(segments)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{plan, samples};
+    use crate::speech::Span;
+
+    #[test]
+    fn cuts_long_recordings_in_the_middle_of_their_last_pause() {
+        let speech = [
+            (0.5, 10.0),
+            (10.5, 25.0),
+            (26.0, 40.0),
+            (41.0, 60.0),
+            (61.0, 69.0),
+        ];
+        let speech: Vec<Span> = speech
+            .into_iter()
+            .map(|(start, end)| Span { start, end })
+            .collect();
+        let pcm = vec![0.0; samples(70.0)];
+        let segments = plan(&pcm, |_| Ok(speech.clone())).unwrap();
+        let cuts = [0.0, 25.5, 40.5, 70.0].map(samples);
+        assert_eq!(
+            segments,
+            [cuts[0]..cuts[1], cuts[1]..cuts[2], cuts[2]..cuts[3]]
+        );
+    }
 }

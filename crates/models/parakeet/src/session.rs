@@ -12,14 +12,14 @@ use team::Team;
 
 use crate::Error;
 use crate::decoder::{self, Step};
-use crate::features::Frontend;
+use crate::features::{MIN_FRAMES, MIN_SAMPLES};
 use crate::live::Live;
-use crate::model::{DECODER_HIDDEN, ENCODER_SHAPE, HOP, MELS, Model, VOCABULARY_PART};
+use crate::model::{
+    DECODER_HIDDEN, ENCODER_SHAPE, HOP, MELS, Model, SUBSAMPLING_SHAPE, VOCABULARY_PART,
+};
 use crate::segment::{self, BLOCK_SECONDS, SEGMENT_SECONDS, samples, seconds};
 use crate::speech::{self, Span};
 use crate::vocabulary::{Timed, Vocabulary, sentences};
-
-pub use crate::features::MIN_SAMPLES;
 
 /// Encoder frames each thread computes through the subsampler at a time: its working set, about
 /// 2 MB.
@@ -27,7 +27,6 @@ const SUBSAMPLING_BLOCK_FRAMES: usize = 8;
 
 pub struct Engine {
     model: Model,
-    frontend: Frontend,
     vocabulary: Vocabulary,
     team: Team,
     /// The features of the audio being read, `frames × MELS`.
@@ -74,28 +73,24 @@ struct Job {
 
 impl Engine {
     pub fn new(store: &mut Store) -> Result<Self, Error> {
-        if !store.complete() {
-            return Err(Error::Format("the bundle is not fully loaded".into()));
-        }
+        store.require_complete()?;
         let model = Model::load(store)?;
-        let frontend = Frontend::new(&model.window, &model.mel)?;
         let vocabulary = Vocabulary::parse(&store.take_blob(VOCABULARY_PART)?)?;
         let team = Team::global();
         let threads = team.threads();
-        let mel_frames = samples(BLOCK_SECONDS.max(SEGMENT_SECONDS)) / HOP;
-        let frames = Frames::of(&ENCODER_SHAPE, samples(SEGMENT_SECONDS) / HOP).valid;
+        let block_frames = mel_frames(BLOCK_SECONDS);
+        let frames = Frames::of(&SUBSAMPLING_SHAPE, mel_frames(SEGMENT_SECONDS)).valid;
         Ok(Self {
             model,
-            frontend,
             vocabulary,
             features: Vec::new(),
             subsampling: subsampling::Buffers::new(
-                ENCODER_SHAPE,
-                mel_frames,
+                SUBSAMPLING_SHAPE,
+                block_frames,
                 SUBSAMPLING_BLOCK_FRAMES,
                 threads,
             ),
-            speech: speech::Buffers::new(Frames::of(&ENCODER_SHAPE, mel_frames).all),
+            speech: speech::Buffers::new(Frames::of(&SUBSAMPLING_SHAPE, block_frames).all),
             encoder: conformer::Buffers::new(ENCODER_SHAPE, frames, threads),
             decoder: decoder::State::new(frames, threads),
             team,
@@ -110,13 +105,19 @@ impl Engine {
 
     /// The normalized log-mel features of `pcm` (16 kHz mono), `frames × MELS`.
     pub fn features(&mut self, pcm: &[f32]) -> Result<Vec<f32>, Error> {
-        self.frontend.compute(pcm, &mut self.features)?;
+        self.model.frontend.compute(pcm, &mut self.features)?;
         Ok(self.features.clone())
+    }
+
+    /// Takes `features` as those of the audio being read.
+    fn read_features(&mut self, features: &[f32]) {
+        self.features.clear();
+        self.features.extend_from_slice(features);
     }
 
     /// The subsampler's output for `features`, `Frames::all` rows of the encoder's width.
     pub fn subsample(&mut self, features: &[f32]) -> Result<Vec<f32>, Error> {
-        self.features = features.to_vec();
+        self.read_features(features);
         let frames = frames_of(&self.features, self.subsampling.mel_frames())?;
         let Self {
             model,
@@ -133,14 +134,14 @@ impl Engine {
 
     /// The speech probability of every encoder frame of `features`.
     pub fn speech(&mut self, features: &[f32]) -> Result<Vec<f32>, Error> {
-        self.features = features.to_vec();
+        self.read_features(features);
         self.run_speech()
     }
 
     /// The encoder's frames of `features` through the joint's encoder projection,
     /// `Frames::valid × DECODER_HIDDEN`.
     pub fn encode(&mut self, features: &[f32]) -> Result<Vec<f32>, Error> {
-        self.features = features.to_vec();
+        self.read_features(features);
         let frames = self.run_encoder()?;
         Ok(self.decoder.encoded.read()[..frames * DECODER_HIDDEN].to_vec())
     }
@@ -167,7 +168,7 @@ impl Engine {
                 seconds(pcm.len())
             )));
         }
-        self.frontend.compute(pcm, &mut self.features)?;
+        self.model.frontend.compute(pcm, &mut self.features)?;
         let frames = self.run_encoder()?;
         let steps = self.run_decoder(frames);
         Ok(Recognition {
@@ -213,7 +214,7 @@ impl Engine {
                 end: duration,
             }]);
         }
-        self.frontend.compute(pcm, &mut self.features)?;
+        self.model.frontend.compute(pcm, &mut self.features)?;
         let regions = speech::regions(&self.run_speech()?);
         let clipped = regions.into_iter().map(|span| Span {
             end: span.end.min(duration),
@@ -299,7 +300,7 @@ impl Engine {
     /// The subsampler, the encoder and the joint's encoder projection over `features`; returns
     /// the encoder frames.
     fn run_encoder(&mut self) -> Result<usize, Error> {
-        let frames = frames_of(&self.features, samples(SEGMENT_SECONDS) / HOP)?;
+        let frames = frames_of(&self.features, mel_frames(SEGMENT_SECONDS))?;
         let Self {
             model,
             features,
@@ -332,14 +333,20 @@ impl Engine {
     }
 }
 
-/// The frames of `features`, which must be whole rows of `MELS`, 2 to `capacity` of them.
+/// The mel frames of `seconds` of audio.
+fn mel_frames(seconds: f64) -> usize {
+    samples(seconds) / HOP
+}
+
+/// The frames of `features`, which must be whole rows of `MELS`, `MIN_FRAMES` to `capacity` of
+/// them.
 fn frames_of(features: &[f32], capacity: usize) -> Result<Frames, Error> {
     let mel_frames = features.len() / MELS;
-    if !features.len().is_multiple_of(MELS) || !(2..=capacity).contains(&mel_frames) {
+    if !features.len().is_multiple_of(MELS) || !(MIN_FRAMES..=capacity).contains(&mel_frames) {
         return Err(Error::Request(format!(
-            "{} feature values: whole rows of {MELS}, 2 to {capacity} of them",
+            "{} feature values: whole rows of {MELS}, {MIN_FRAMES} to {capacity} of them",
             features.len()
         )));
     }
-    Ok(Frames::of(&ENCODER_SHAPE, mel_frames))
+    Ok(Frames::of(&SUBSAMPLING_SHAPE, mel_frames))
 }

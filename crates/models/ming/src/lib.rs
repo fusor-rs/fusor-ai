@@ -9,43 +9,13 @@
 pub mod flow_head;
 pub mod model;
 pub mod pipeline;
+pub mod preset;
 pub mod prompt;
 pub mod session;
+mod silence;
 mod text;
 pub mod vocoder;
+
+pub use bundle::Error;
 pub use kernels::wav;
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("format: {0}")]
-    Format(String),
-    #[error("integrity: {0}")]
-    Integrity(String),
-    #[error("request: {0}")]
-    Request(String),
-}
-
-impl Error {
-    pub fn kind(&self) -> &'static str {
-        match self {
-            Error::Format(_) => "format",
-            Error::Integrity(_) => "integrity",
-            Error::Request(_) => "request",
-        }
-    }
-}
-
-impl From<kernels::Error> for Error {
-    fn from(error: kernels::Error) -> Self {
-        Error::Format(error.to_string())
-    }
-}
-
-impl From<bundle::Error> for Error {
-    fn from(error: bundle::Error) -> Self {
-        match error {
-            bundle::Error::Integrity(message) => Error::Integrity(message),
-            bundle::Error::Format(message) => Error::Format(message),
-        }
-    }
-}
+pub use model::SAMPLE_RATE;

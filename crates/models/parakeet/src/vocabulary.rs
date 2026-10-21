@@ -10,9 +10,9 @@ use crate::model::FRAME_SECONDS;
 
 /// The word separator of the pieces.
 const SPACE: char = '▁';
-/// A sentence ends after a word ending with one of these, or after this many seconds.
+/// A sentence ends after a word ending with one of these, or with the words (a segment's, at
+/// most `segment::SEGMENT_SECONDS` long).
 const SENTENCE_ENDS: [char; 3] = ['.', '?', '!'];
-const SENTENCE_SECONDS: f64 = 30.0;
 /// The characters of the vocabulary that are neither letters, digits nor Unicode punctuation
 /// (category P): currency and math symbols.
 const SYMBOLS: [char; 6] = ['$', '<', '>', '|', '£', '€'];
@@ -131,7 +131,7 @@ pub fn sentences(words: &[Timed]) -> Vec<Timed> {
     let mut first = 0;
     for (index, word) in words.iter().enumerate() {
         let ends = word.text.trim_end().ends_with(SENTENCE_ENDS);
-        if ends || word.end - words[first].start >= SENTENCE_SECONDS || index + 1 == words.len() {
+        if ends || index + 1 == words.len() {
             let group = &words[first..=index];
             let text: Vec<&str> = group.iter().map(|word| word.text.as_str()).collect();
             sentences.push(Timed {

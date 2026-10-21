@@ -7,8 +7,8 @@
 use serde::Serialize;
 
 use crate::Error;
-use crate::segment::{self, has_speech, next_cut, pauses, samples, seconds};
-use crate::session::{Engine, MIN_SAMPLES};
+use crate::segment::{self, next_cut, pauses, samples, seconds, transcribable};
+use crate::session::Engine;
 use crate::speech::Span;
 use crate::vocabulary::Timed;
 
@@ -73,8 +73,7 @@ impl Engine {
             committed.extend(self.commit(pending, cut, &regions)?);
         };
         let mut provisional = Vec::new();
-        let speaking = pending.len() >= MIN_SAMPLES && has_speech(&regions, seconds(pending.len()));
-        if speaking {
+        if transcribable(&regions, pending.len()) {
             provisional = self.sentences(pending, seconds(self.live.offset))?;
         }
         Ok(Update {
@@ -92,8 +91,7 @@ impl Engine {
         regions: &[Span],
     ) -> Result<Vec<Timed>, Error> {
         let offset = seconds(self.live.offset);
-        let speaking = cut >= MIN_SAMPLES && has_speech(regions, seconds(cut));
-        let sentences = if speaking {
+        let sentences = if transcribable(regions, cut) {
             self.sentences(&pending[..cut], offset)?
         } else {
             Vec::new()
