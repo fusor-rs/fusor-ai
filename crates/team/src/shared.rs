@@ -102,8 +102,8 @@ mod tests {
     fn barrier_orders_phases() {
         let team = Team::global();
         let total = team.threads() * 16;
-        let values = SharedBuf::new(total);
-        let sums = SharedBuf::new(team.threads());
+        let values: SharedBuf = SharedBuf::new(total);
+        let sums: SharedBuf = SharedBuf::new(team.threads());
         team.run(|ctx| {
             for index in ctx.split(total, 16) {
                 values.set(index, 1.0);
