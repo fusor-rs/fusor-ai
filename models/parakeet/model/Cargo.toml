@@ -6,9 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-readme = "../../../README.md"
-keywords = ["fusor", "asr", "speech", "wasm", "inference"]
-categories = ["multimedia::audio", "science", "wasm"]
+publish = false
 
 [lib]
 name = "parakeet"

@@ -6,9 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-readme = "../../../README.md"
-keywords = ["fusor", "ocr", "safetensors", "quantization", "wasm"]
-categories = ["development-tools", "computer-vision"]
+publish = false
 
 [lib]
 name = "oxr_compile"

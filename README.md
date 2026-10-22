@@ -133,7 +133,7 @@ ming-wasm is a complete worked example, and [AGENTS.md](AGENTS.md#repository) sa
 | Browser | `packages/host` | `loader.js` (build choice, part streaming, OPFS cache), `worker.js` (the shared half of a model's engine worker: loading with stale-part eviction, the clamp-free yield, error routing, the request count), `compute.js` (the compute-worker pool), `thread-host.js` and the `protocol.js` they share |
 | Tools | `scripts/` | `build-runtime.sh`, `check-wasm-imports.mjs`, `check-layers.mjs`, `serve.mjs`, `install-tools.sh`, `integrate.mjs` (every model's outputs against its baseline) |
 
-On crates.io each crate is `fusor-ai-<name>`, such as `fusor-ai-kernels`, and its library keeps the short name (`use kernels::…`).
+On crates.io each toolkit crate is `fusor-ai-<name>`, such as `fusor-ai-kernels`, and its library keeps the short name (`use kernels::…`). The model crates are not published.
 
 ## Models
 

@@ -6,9 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-readme = "../../../README.md"
-keywords = ["fusor", "diffusion", "safetensors", "quantization", "wasm"]
-categories = ["development-tools", "multimedia::images"]
+publish = false
 
 [lib]
 name = "realistic_vision_compile"

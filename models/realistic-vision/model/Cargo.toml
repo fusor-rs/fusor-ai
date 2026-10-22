@@ -6,9 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-readme = "../../../README.md"
-keywords = ["fusor", "diffusion", "image", "wasm", "inference"]
-categories = ["multimedia::images", "science", "wasm"]
+publish = false
 
 [lib]
 name = "realistic_vision"

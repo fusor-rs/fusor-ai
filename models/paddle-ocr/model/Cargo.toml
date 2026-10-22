@@ -6,9 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-readme = "../../../README.md"
-keywords = ["fusor", "ocr", "vision", "wasm", "inference"]
-categories = ["computer-vision", "science", "wasm"]
+publish = false
 
 [lib]
 name = "paddle_ocr"

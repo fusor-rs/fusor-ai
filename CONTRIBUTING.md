@@ -44,19 +44,19 @@ advancing.
 ## Releasing
 
 Every crate shares one version: `version` under `[workspace.package]` in the root
-`Cargo.toml`. A release publishes every crate to crates.io under its `fusor-ai-*` package
-name; the library names stay `team`, `kernels`, `blocks`, `bundle`, `compile`, `ming`,
-`ming_compile`, `phonon`, `phonon_compile`, `parakeet`, `parakeet_compile`, `realistic_vision`
-and `realistic_vision_compile`. A model's CLI,
-page and installer are released from its own repository.
+`Cargo.toml`. A release publishes the toolkit's crates to crates.io under their `fusor-ai-*`
+package names; the library names stay `team`, `kernels`, `blocks`, `bundle`, `compile`,
+`runtime` and `harness`. The crates under `models/` are `publish = false`: a model's CLI, page
+and installer are released from its own repository, built from its `vendor/fusor-ai`.
 
-1. Bump `version` and the `=x.y.z` pins under `[workspace.dependencies]`, run `just check`
+1. Run `just integrate --all` on `main`: every model gives its baseline's outputs.
+2. Bump `version` and the `=x.y.z` pins under `[workspace.dependencies]`, run `just check`
    so `Cargo.lock` follows, and merge that to `main` with CI passing.
-2. On GitHub, publish a release whose tag is the version with a `v`, such as `v0.2.0`, on
+3. On GitHub, publish a release whose tag is the version with a `v`, such as `v0.2.0`, on
    that commit.
 
 The [Release workflow](.github/workflows/release.yml) then runs Check, checks that the tag
-matches the version, packages and verifies every crate (`cargo publish --dry-run`), and
+matches the version, packages and verifies every toolkit crate (`cargo publish --dry-run`), and
 publishes the crates that are not on crates.io at this version yet, so rerunning a release
 that stopped halfway finishes it. The `crates-io` environment holds the
 `CARGO_REGISTRY_TOKEN` secret; add required reviewers to it to approve each upload. Running
