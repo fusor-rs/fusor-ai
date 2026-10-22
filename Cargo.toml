@@ -5,6 +5,7 @@ members = [
     "crates/blocks",
     "crates/bundle",
     "crates/compile",
+    "crates/runtime",
     "crates/models/ming",
     "crates/models/ming-compile",
     "crates/models/phonon",
@@ -58,6 +59,7 @@ kernels = { package = "fusor-ai-kernels", path = "crates/kernels", version = "=0
 blocks = { package = "fusor-ai-blocks", path = "crates/blocks", version = "=0.1.2" }
 bundle = { package = "fusor-ai-bundle", path = "crates/bundle", version = "=0.1.2" }
 compile = { package = "fusor-ai-compile", path = "crates/compile", version = "=0.1.2" }
+runtime = { package = "fusor-ai-runtime", path = "crates/runtime", version = "=0.1.2" }
 ming = { package = "fusor-ai-ming", path = "crates/models/ming", version = "=0.1.2" }
 ming-compile = { package = "fusor-ai-ming-compile", path = "crates/models/ming-compile", version = "=0.1.2" }
 phonon = { package = "fusor-ai-phonon", path = "crates/models/phonon", version = "=0.1.2" }
@@ -78,6 +80,9 @@ thiserror = "=2.0.21"
 tokenizers = { version = "=0.22.2", default-features = false, features = ["unstable_wasm"] }
 realfft = "=3.5.0"
 regex = "=1.13.1"
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-rayon = { version = "=1.3.0", features = ["no-bundler"] }
+getrandom = "=0.3.4"
 
 [profile.dev]
 debug = "line-tables-only"

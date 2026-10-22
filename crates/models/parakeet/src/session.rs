@@ -71,9 +71,8 @@ struct Job {
     next: usize,
 }
 
-impl Engine {
-    pub fn new(store: &mut Store) -> Result<Self, Error> {
-        store.require_complete()?;
+impl bundle::Engine for Engine {
+    fn new(store: &mut Store) -> Result<Self, Error> {
         let model = Model::load(store)?;
         let vocabulary = Vocabulary::parse(&store.take_blob(VOCABULARY_PART)?)?;
         let team = Team::global();
@@ -99,10 +98,16 @@ impl Engine {
         })
     }
 
-    pub fn threads(&self) -> usize {
+    fn threads(&self) -> usize {
         self.team.threads()
     }
 
+    fn cancel(&mut self) {
+        self.job = None;
+    }
+}
+
+impl Engine {
     /// The normalized log-mel features of `pcm` (16 kHz mono), `frames × MELS`.
     pub fn features(&mut self, pcm: &[f32]) -> Result<Vec<f32>, Error> {
         self.model.frontend.compute(pcm, &mut self.features)?;
@@ -271,10 +276,6 @@ impl Engine {
             sentences,
             done,
         })
-    }
-
-    pub fn cancel(&mut self) {
-        self.job = None;
     }
 
     /// The subsampler and the speech head over `features`: the valid frames' probabilities.

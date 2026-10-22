@@ -1,0 +1,34 @@
+[package]
+name = "fusor-ai-runtime"
+description = "The browser runtime shell of a fusor-ai model: its engine behind a wasm-bindgen surface, bundle parts in, sealed from the network."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["fusor", "wasm", "wasm-bindgen", "inference"]
+categories = ["wasm"]
+
+[lib]
+name = "runtime"
+
+[dependencies]
+bundle.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[features]
+# Threaded runtimes (scripts/build-runtime.sh): the team runs on a wasm-bindgen-rayon pool of
+# page-owned workers sharing the module's memory.
+threads = ["dep:wasm-bindgen-rayon"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+getrandom.workspace = true
+wasm-bindgen-rayon = { workspace = true, optional = true }
+# Not called here: SIMD for the BLAKE3 that checks every part.
+blake3 = { workspace = true, features = ["wasm32_simd"] }
+
+[lints]
+workspace = true

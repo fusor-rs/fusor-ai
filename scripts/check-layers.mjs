@@ -8,7 +8,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
 const LAYERS = [
-  { name: "primitive", match: /^crates\/(team|kernels|bundle|compile)$/ },
+  { name: "primitive", match: /^crates\/(team|kernels|bundle|compile|runtime)$/ },
   { name: "block", match: /^crates\/blocks$/ },
   { name: "model", match: /^crates\/models\/[^/]+$/ },
 ];

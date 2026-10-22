@@ -7,12 +7,14 @@
 //! `end_part` checks the size and the hash. Once every part is in, each part of a model loads
 //! itself from the store (`Load`), checking the shape of every tensor it takes.
 
+mod engine;
 mod load;
 mod manifest;
 mod store;
 #[cfg(feature = "tokenizer")]
 mod tokenizer;
 
+pub use engine::Engine;
 pub use load::{Load, Scope, load_each};
 pub use manifest::{FORMAT, Manifest, Part, Source, TensorEntry};
 pub use store::Store;

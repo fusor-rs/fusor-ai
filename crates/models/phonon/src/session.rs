@@ -78,11 +78,10 @@ struct Frame {
     remaining: Option<usize>,
 }
 
-impl Engine {
+impl bundle::Engine for Engine {
     /// Builds the engine from a complete store, with the first voice already run through the LM
     /// so that a request starts speaking after its text alone.
-    pub fn new(store: &mut Store) -> Result<Self, Error> {
-        store.require_complete()?;
+    fn new(store: &mut Store) -> Result<Self, Error> {
         let model = Model::load(store)?;
         let prompter = Prompter::new(Tokenizer::take(store)?);
         let team = Team::global();
@@ -102,10 +101,16 @@ impl Engine {
         Ok(engine)
     }
 
-    pub fn threads(&self) -> usize {
+    fn threads(&self) -> usize {
         self.team.threads()
     }
 
+    fn cancel(&mut self) {
+        self.job = None;
+    }
+}
+
+impl Engine {
     pub fn start(&mut self, request: Request) -> Result<Plan, Error> {
         let Request {
             text,
@@ -133,10 +138,6 @@ impl Engine {
             noise_scale: temperature.sqrt(),
         });
         Ok(Plan { fragments })
-    }
-
-    pub fn cancel(&mut self) {
-        self.job = None;
     }
 
     /// Samples produced since the last call.

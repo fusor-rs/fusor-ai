@@ -16,7 +16,7 @@ The crates are layers. A crate depends only on its own layer or the ones below i
 
 | Layer | Path | Holds |
 | --- | --- | --- |
-| Primitives | `crates/team`, `crates/kernels`, `crates/bundle`, `crates/compile` | the SPMD thread team; tensors and their block-quantized formats, the int8 matmul over per-target `arch` backends, f32 operations, `Linear`, `conv` (products over many rows, 2-D convolutions), `rng`, `wav`, `image`; the bundle manifest, the streaming `Store`, the `Load` trait and the bundled `Tokenizer`; the safetensors reader, `BundleWriter` and the profile-driven `Tensors` |
+| Primitives | `crates/team`, `crates/kernels`, `crates/bundle`, `crates/compile`, `crates/runtime` | the SPMD thread team; tensors and their block-quantized formats, the int8 matmul over per-target `arch` backends, f32 operations, `Linear`, `conv` (products over many rows, 2-D convolutions), `rng`, `wav`, `image`; the bundle manifest, the streaming `Store`, the `Load` and `Engine` traits and the bundled `Tokenizer`; the safetensors reader, `BundleWriter` and the profile-driven `Tensors`; the browser runtime shell every model's runtime is built on |
 | Blocks | `crates/blocks` | architecture pieces parameterized by a shape: `transformer` (Qwen2, Qwen3, Kyutai and CLIP), `rotary`, `vit`, `dit`, `norm` (LayerNorm, GroupNorm), `adaln_mlp`, `flow` (flow-matching integration), `istft`, `seanet`, `conformer`, `unet` (latent diffusion's UNet), `vae` (its autoencoder's decoder), `dpm` (DPM-Solver++ sampling) |
 | Models | `crates/models/<model>`, `crates/models/<model>-compile` | one model: its dimensions, tensor names, wiring, sampler settings, prompts and text frontend; its compiler |
 
@@ -61,7 +61,8 @@ Constraints that hold everywhere:
   `#![expect(unsafe_code, reason = "…")]`: in `kernels`, the `arch` backends
   and `matmul` (SIMD and unchecked block loads after one bounds assertion per
   call) and `blob` (aligned byte and f32 views); in `team`, `shared` (interior
-  mutability under the barrier discipline). Every unsafe block carries a
+  mutability under the barrier discipline); in `runtime`, `entropy` (getrandom's
+  custom backend, an unmangled extern function). Every unsafe block carries a
   `// SAFETY:` comment stating the invariant it relies on. Adding a module to
   that list is a design change; say so.
 - Shared buffers follow one discipline: between two barriers, each element is

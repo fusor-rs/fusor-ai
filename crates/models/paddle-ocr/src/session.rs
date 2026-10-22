@@ -92,9 +92,8 @@ impl Next {
     }
 }
 
-impl Engine {
-    pub fn new(store: &mut Store) -> Result<Self, Error> {
-        store.require_complete()?;
+impl bundle::Engine for Engine {
+    fn new(store: &mut Store) -> Result<Self, Error> {
         let model = Model::load(store)?;
         let tokenizer = Tokenizer::take(store)?;
         let team = Team::global();
@@ -109,10 +108,16 @@ impl Engine {
         })
     }
 
-    pub fn threads(&self) -> usize {
+    fn threads(&self) -> usize {
         self.team.threads()
     }
 
+    fn cancel(&mut self) {
+        self.job = None;
+    }
+}
+
+impl Engine {
     pub fn prompt(&self, task: Task, grid: Grid) -> Result<Prompt, Error> {
         let prompt = Prompt::new(&self.tokenizer, task, grid)?;
         if prompt.ids.len() - prompt.image.len() > TEXT_ROWS {
@@ -234,10 +239,6 @@ impl Engine {
             self.job = Some(job);
         }
         Ok(progress)
-    }
-
-    pub fn cancel(&mut self) {
-        self.job = None;
     }
 
     /// The vision tower and the projector over `patches`, in one team run, into `tokens`.

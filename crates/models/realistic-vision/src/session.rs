@@ -92,9 +92,8 @@ struct Job {
     image: Option<Vec<u8>>,
 }
 
-impl Engine {
-    pub fn new(store: &mut Store) -> Result<Self, Error> {
-        store.require_complete()?;
+impl bundle::Engine for Engine {
+    fn new(store: &mut Store) -> Result<Self, Error> {
         let model = Model::load(store)?;
         let tokenizer = Tokenizer::take(store)?;
         let team = Team::global();
@@ -113,10 +112,16 @@ impl Engine {
         })
     }
 
-    pub fn threads(&self) -> usize {
+    fn threads(&self) -> usize {
         self.team.threads()
     }
 
+    fn cancel(&mut self) {
+        self.job = None;
+    }
+}
+
+impl Engine {
     pub fn tokens(&self, text: &str) -> Result<Tokens, Error> {
         tokenize(&self.tokenizer, text)
     }
@@ -291,10 +296,6 @@ impl Engine {
         let image = image.ok_or_else(no_generation)?;
         self.job = None;
         Ok(image)
-    }
-
-    pub fn cancel(&mut self) {
-        self.job = None;
     }
 
     /// Every cross-attention's keys and values of `text`, one context per image.

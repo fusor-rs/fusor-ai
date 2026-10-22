@@ -87,10 +87,8 @@ struct Frame {
     history: Vec<f32>,
 }
 
-impl Engine {
-    /// Builds the engine from a complete store.
-    pub fn new(store: &mut Store) -> Result<Self, Error> {
-        store.require_complete()?;
+impl bundle::Engine for Engine {
+    fn new(store: &mut Store) -> Result<Self, Error> {
         let model = Model::load(store)?;
         let prompter = Prompter::new(Tokenizer::take(store)?);
         let team = Team::global();
@@ -111,10 +109,16 @@ impl Engine {
         })
     }
 
-    pub fn threads(&self) -> usize {
+    fn threads(&self) -> usize {
         self.team.threads()
     }
 
+    fn cancel(&mut self) {
+        self.job = None;
+    }
+}
+
+impl Engine {
     pub fn start(&mut self, request: Request) -> Result<Plan, Error> {
         let language = request.language.as_deref().and_then(Language::parse);
         let segmentation = match (&request.voice, &language) {
@@ -141,10 +145,6 @@ impl Engine {
             silence: SilenceGate::default(),
         });
         Ok(Plan { fragments })
-    }
-
-    pub fn cancel(&mut self) {
-        self.job = None;
     }
 
     /// Samples produced since the last call.
