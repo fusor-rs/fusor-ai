@@ -1,0 +1,23 @@
+[package]
+name = "fusor-ai-harness"
+description = "The native host of a fusor-ai model's CLI: the bundle loader, the thread pool, the compile command, parity comparisons and stage timings."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["fusor", "inference", "cli", "parity", "benchmark"]
+categories = ["command-line-utilities"]
+
+[lib]
+name = "harness"
+
+[dependencies]
+bundle.workspace = true
+compile.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

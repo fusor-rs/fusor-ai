@@ -20,8 +20,8 @@ pub enum Stage {
     Decoder,
 }
 
-impl Stage {
-    pub const ALL: [Stage; 5] = [
+impl bundle::Stages for Stage {
+    const ALL: &'static [Stage] = &[
         Stage::Features,
         Stage::Subsampling,
         Stage::Speech,
@@ -29,7 +29,7 @@ impl Stage {
         Stage::Decoder,
     ];
 
-    pub fn name(self) -> &'static str {
+    fn name(self) -> &'static str {
         match self {
             Stage::Features => "features",
             Stage::Subsampling => "subsampling",

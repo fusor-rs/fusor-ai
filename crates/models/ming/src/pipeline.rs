@@ -21,8 +21,8 @@ pub enum Stage {
     Decode,
 }
 
-impl Stage {
-    pub const ALL: [Stage; 5] = [
+impl bundle::Stages for Stage {
+    const ALL: &'static [Stage] = &[
         Stage::Prefill,
         Stage::Flow,
         Stage::Vocode,
@@ -30,7 +30,7 @@ impl Stage {
         Stage::Decode,
     ];
 
-    pub fn name(self) -> &'static str {
+    fn name(self) -> &'static str {
         match self {
             Stage::Prefill => "prefill",
             Stage::Flow => "flow",

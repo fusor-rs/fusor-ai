@@ -10,6 +10,7 @@
 mod engine;
 mod load;
 mod manifest;
+mod stages;
 mod store;
 #[cfg(feature = "tokenizer")]
 mod tokenizer;
@@ -17,6 +18,7 @@ mod tokenizer;
 pub use engine::Engine;
 pub use load::{Load, Scope, load_each};
 pub use manifest::{FORMAT, Manifest, Part, Source, TensorEntry};
+pub use stages::Stages;
 pub use store::Store;
 #[cfg(feature = "tokenizer")]
 pub use tokenizer::{TOKENIZER_PART, Tokenizer};

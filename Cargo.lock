@@ -311,6 +311,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fusor-ai-harness"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "rayon",
+ "thiserror",
+]
+
+[[package]]
 name = "fusor-ai-kernels"
 version = "0.1.2"
 dependencies = [

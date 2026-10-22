@@ -4,7 +4,7 @@
 //! The stages also run one by one, on given inputs, for checks against the reference.
 
 use blocks::vit::Grid;
-use bundle::{Store, Tokenizer};
+use bundle::{Stages as _, Store, Tokenizer};
 use kernels::image::Pixels;
 use serde::{Deserialize, Serialize};
 use team::Team;

@@ -18,10 +18,10 @@ pub enum Stage {
     Decode,
 }
 
-impl Stage {
-    pub const ALL: [Stage; 4] = [Stage::Voice, Stage::Text, Stage::Flow, Stage::Decode];
+impl bundle::Stages for Stage {
+    const ALL: &'static [Stage] = &[Stage::Voice, Stage::Text, Stage::Flow, Stage::Decode];
 
-    pub fn name(self) -> &'static str {
+    fn name(self) -> &'static str {
         match self {
             Stage::Voice => "voice",
             Stage::Text => "text",

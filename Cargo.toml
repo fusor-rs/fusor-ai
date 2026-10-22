@@ -6,6 +6,7 @@ members = [
     "crates/bundle",
     "crates/compile",
     "crates/runtime",
+    "crates/harness",
     "crates/models/ming",
     "crates/models/ming-compile",
     "crates/models/phonon",
@@ -60,6 +61,7 @@ blocks = { package = "fusor-ai-blocks", path = "crates/blocks", version = "=0.1.
 bundle = { package = "fusor-ai-bundle", path = "crates/bundle", version = "=0.1.2" }
 compile = { package = "fusor-ai-compile", path = "crates/compile", version = "=0.1.2" }
 runtime = { package = "fusor-ai-runtime", path = "crates/runtime", version = "=0.1.2" }
+harness = { package = "fusor-ai-harness", path = "crates/harness", version = "=0.1.2" }
 ming = { package = "fusor-ai-ming", path = "crates/models/ming", version = "=0.1.2" }
 ming-compile = { package = "fusor-ai-ming-compile", path = "crates/models/ming-compile", version = "=0.1.2" }
 phonon = { package = "fusor-ai-phonon", path = "crates/models/phonon", version = "=0.1.2" }
