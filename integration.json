@@ -1,6 +1,13 @@
 {
   "ming": {
     "product": "ming-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/ref_f32_A.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/a744c69eb07d7e0f660b480451890dadc8ba8a11/ming/ref_f32_A.safetensors",
+        "sha256": "sha256:d1a79072268c1b954eb5775df664f89cdec0ccf6a536187eedcc229ce85628a8"
+      }
+    ],
     "build": [
       "just model",
       "rm -rf dist/model-f32",
@@ -28,6 +35,13 @@
   },
   "phonon": {
     "product": "phonon-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/golden_f32_A.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/a744c69eb07d7e0f660b480451890dadc8ba8a11/phonon/golden_f32_A.safetensors",
+        "sha256": "sha256:0ce3bc081191e9e8659db918ddbd2824a269f201e75b95c8f7e65aa0679563d0"
+      }
+    ],
     "build": [
       "just model",
       "rm -rf dist/model-f32",
@@ -55,6 +69,13 @@
   },
   "parakeet": {
     "product": "parakeet-redux-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/golden_f32_A.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/a744c69eb07d7e0f660b480451890dadc8ba8a11/parakeet/golden_f32_A.safetensors",
+        "sha256": "sha256:75e91c3cebb131524359a79a440079de7353ba8dfb03fb01eb814674ba4598de"
+      }
+    ],
     "build": [
       "just model",
       "just recordings",
@@ -83,6 +104,13 @@
   },
   "realistic-vision": {
     "product": "realistic-vision",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/golden_f32.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/a744c69eb07d7e0f660b480451890dadc8ba8a11/realistic-vision/golden_f32.safetensors",
+        "sha256": "sha256:c59b9e7b278cccb3c5d903992879deee6d9f19bb187e689e7268e471b022311b"
+      }
+    ],
     "build": [
       "just model",
       "rm -rf dist/model-f32",
@@ -110,6 +138,13 @@
   },
   "paddle-ocr": {
     "product": "paddle-ocr-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/golden_f32_textline.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/a744c69eb07d7e0f660b480451890dadc8ba8a11/paddle-ocr/golden_f32_textline.safetensors",
+        "sha256": "sha256:507d3292b919a17d42336dca9c36ca226ea7c488584a5d23dab5192c513cab05"
+      }
+    ],
     "build": [
       "just model",
       "just images",
@@ -138,6 +173,13 @@
   },
   "oxr": {
     "product": "oxr-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/golden_f32_textline.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/a744c69eb07d7e0f660b480451890dadc8ba8a11/oxr/golden_f32_textline.safetensors",
+        "sha256": "sha256:c181838d04d67ff952f2f1847cc221d26175135418d3a39e76b586a3137aa750"
+      }
+    ],
     "build": [
       "just model",
       "just images",

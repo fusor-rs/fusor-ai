@@ -80,6 +80,7 @@ function integrate(model, spec) {
   rmSync(run, { recursive: true, force: true });
   mkdirSync(run, { recursive: true });
   const log = join(run, "log.txt");
+  fetchGoldens(model, product, spec.goldens, log);
   git(vendor, "fetch", "--quiet", ROOT, commit);
   git(vendor, "checkout", "--quiet", commit);
   try {
@@ -96,6 +97,16 @@ function integrate(model, spec) {
     };
   } finally {
     git(vendor, "checkout", "--quiet", pinned);
+  }
+}
+
+/** Downloads each golden file that is missing or differs from its pinned hash. */
+function fetchGoldens(model, product, goldens, log) {
+  for (const { file, url, sha256: pinned } of goldens) {
+    if (existsSync(join(product, file)) && sha256(join(product, file)) === pinned) continue;
+    mkdirSync(dirname(join(product, file)), { recursive: true });
+    shell(model, product, `curl --fail --silent --show-error --location --output ${file} ${url}`, log);
+    if (sha256(join(product, file)) !== pinned) throw new Error(`${file}: not the goldens pinned in integration.json`);
   }
 }
 

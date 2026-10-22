@@ -16,15 +16,18 @@ live in its own repository ([ming-wasm](https://github.com/fusor-rs/ming-wasm),
 [realistic-vision](https://github.com/fusor-rs/realistic-vision),
 [paddle-ocr-wasm](https://github.com/fusor-rs/paddle-ocr-wasm),
 [oxr-wasm](https://github.com/fusor-rs/oxr-wasm)), checked out beside this one. `just integrate
-<model>…` (or `--all`) points each one's `vendor/fusor-ai` submodule at the current commit,
-builds its bundles, runtimes and page, runs its parity, Node smoke and headless-Chrome e2e
-checks, restores the pin, and compares every output with the model's baseline in
-`integration/<model>.json`; `integration.json` says how each product is built and checked. A
-change that moves no number leaves every output identical. A change meant to move them records
-the new outputs with `--bless`, so the baseline's diff shows what moved. A change to a kernel
-backend reaches every model whose weight formats it reads: Ming for `Q7b32` and `Q4b32`,
-Parakeet Redux for `T2b128`, Realistic Vision for `Q7b32` (its weights and its attention's keys
-and values). Attach the report, `target/integrate/report.md`, to the pull request.
+<model>…` (or `--all`) fetches the model's goldens from the
+[fusorlabs/fusor-ai-goldens](https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens)
+dataset, pinned by revision and sha256, points its product's `vendor/fusor-ai` submodule at the
+current commit, builds its bundles, runtimes and page, runs its parity, Node smoke and
+headless-Chrome e2e checks, restores the pin, and compares every output with the model's
+baseline in `integration/<model>.json`; `integration.json` says how each product is built and
+checked. A change that moves no number leaves every output identical. A change meant to move
+them records the new outputs with `--bless`, so the baseline's diff shows what moved. A change
+to a kernel backend reaches every model whose weight formats it reads: Ming for `Q7b32` and
+`Q4b32`, Parakeet Redux for `T2b128`, Realistic Vision for `Q7b32` (its weights and its
+attention's keys and values). Attach the report, `target/integrate/report.md`, to the pull
+request.
 
 Each model's repository runs its `just check` and `just runtimes` on GitHub through this
 repository's reusable [Product workflow](.github/workflows/product.yml).
