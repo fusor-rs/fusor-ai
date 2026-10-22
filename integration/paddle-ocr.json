@@ -1,0 +1,73 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model": "sha256:771ed650f40b29ebf0b3e8178f61161230bc7e354a17c1dcc06b904adb6d0072",
+    "dist/model-f32": "sha256:74d33bbffd7aa07dbd885749153577a0e0ae8786a4dcb79debb1f45ae284f1da"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "514×64 image, 10×70 patches",
+      "preprocess: 411600 values, rel 0.00e0, max abs 0.00e0",
+      "embed: 806400 values, rel 3.88e-7, max abs 6.01e-5",
+      "encode: 806400 values, rel 1.07e-2, max abs 1.21e1",
+      "project: 179200 values, rel 1.91e-6, max abs 2.15e-5",
+      "prompt: 188 ids and positions identical",
+      "prefill hidden: 1024 values, rel 6.09e-6, max abs 1.58e-4",
+      "prefill logits: 103424 values, rel 2.54e-6, max abs 7.34e-5",
+      "decode: 7 tokens identical: \"绿洲仕格维花园公寓\""
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-single-relaxed/formula.txt": "sha256:f1a2d83c564b25212f82352969ff241843e4c19ea4db99a48944253b38016f47",
+      "web-single-relaxed/seal.txt": "sha256:b19bd513d8c43d2f574c5c244493e4d22fafc4353a4b02e71ff42729f462721b",
+      "web-single-relaxed/textline.txt": "sha256:39512e6bbe73a9e67941627c9ba16b5fa69b2072a93037477086510a3649fb46",
+      "web-single/formula.txt": "sha256:f1a2d83c564b25212f82352969ff241843e4c19ea4db99a48944253b38016f47",
+      "web-single/seal.txt": "sha256:b19bd513d8c43d2f574c5c244493e4d22fafc4353a4b02e71ff42729f462721b",
+      "web-single/textline.txt": "sha256:39512e6bbe73a9e67941627c9ba16b5fa69b2072a93037477086510a3649fb46"
+    },
+    "metrics": [
+      "CER 0.0000 (0/9)",
+      "CER 0.0000 (0/175)",
+      "CER 0.0000 (0/35)",
+      "CER 0.0000 (0/9)",
+      "CER 0.0000 (0/175)",
+      "CER 0.0000 (0/35)"
+    ],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      1,
+      1
+    ],
+    "outputs": {
+      "web-threaded-relaxed/book.txt": "sha256:88a2a5639a30da933641400cc4757f343bae17255a2a62f5b7ca1a43ea258295",
+      "web-threaded-relaxed/formula.txt": "sha256:f1a2d83c564b25212f82352969ff241843e4c19ea4db99a48944253b38016f47",
+      "web-threaded-relaxed/table.txt": "sha256:a7365f7ec6f984870e65b29921bd619b68c85b811291d692870d550103843c84",
+      "web-threaded/book.txt": "sha256:39cf13f3826c112d96ffbe5e1419f11603917f409905f3e508daa10ffe93ff9d",
+      "web-threaded/formula.txt": "sha256:f1a2d83c564b25212f82352969ff241843e4c19ea4db99a48944253b38016f47",
+      "web-threaded/table.txt": "sha256:a7365f7ec6f984870e65b29921bd619b68c85b811291d692870d550103843c84"
+    },
+    "metrics": [
+      "table CER 0.0000",
+      "formula CER 0.0000",
+      "book CER 0.4549",
+      "table CER 0.0000",
+      "formula CER 0.0000",
+      "book CER 0.6122"
+    ],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  }
+}

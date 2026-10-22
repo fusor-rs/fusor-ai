@@ -1,0 +1,64 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model": "sha256:389932c7616576cf09e106753b0ce6c8215fac05d7d5025673e3c586cb428d62",
+    "dist/model-f32": "sha256:b01073e7653d8e88c699bdf92075fc81a62407fd11c0ea7623f04fd87d52ab23"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "12.48s of audio, 1248 mel frames",
+      "features: 159744 values, rel 3.77e-6, max abs 2.32e-4",
+      "subsampling: 160768 values, rel 8.39e-7, max abs 7.81e-3",
+      "speech: 156 values, rel 3.28e-8, max abs 2.09e-7",
+      "encoder: 99840 values, rel 1.29e-6, max abs 1.14e-5",
+      "decoder: 87 decisions (61 tokens) identical"
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-single-relaxed/file.txt": "sha256:48c05858afab04076bbc6312b86e2f34a14177d9db3f8babe14b525b600ec0db",
+      "web-single-relaxed/live.txt": "sha256:b0bdf5a5b4f3b70e9541fdbd0aab51c3695dfabc1a4d42ee78d572ff253527c6",
+      "web-single/file.txt": "sha256:abc275b9a90497a01a8a2ce7a8526bc98e540676f2a978a53237c4815a7fab87",
+      "web-single/live.txt": "sha256:2b998d1d1ddfc959bb2be26a990dc57536d429a1e235331058ed07ba2a6bd8a9"
+    },
+    "metrics": [
+      "WER 0.0512 (13/254)",
+      "WER 0.0512 (13/254)",
+      "WER 0.0551 (14/254)",
+      "WER 0.0512 (13/254)"
+    ],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-threaded-relaxed/file.txt": "sha256:23f2a6a263a7eb03eb1e0840428a904fa5d8ab1dbf02bbc5d8bdbf45a328241e",
+      "web-threaded/file.txt": "sha256:abc275b9a90497a01a8a2ce7a8526bc98e540676f2a978a53237c4815a7fab87"
+    },
+    "metrics": [
+      "file WER 0.0512",
+      "file WER 0.0472"
+    ],
+    "unstable": {
+      "outputs": {
+        "web-threaded-relaxed/live.txt": "sha256:a820a541c56df00414d0c4df2e17886c9fb8ee6caf0b3a37185000f3fc4f1a76",
+        "web-threaded/live.txt": "sha256:a820a541c56df00414d0c4df2e17886c9fb8ee6caf0b3a37185000f3fc4f1a76"
+      },
+      "metrics": [
+        "live WER 0.0512",
+        "live WER 0.0512"
+      ]
+    }
+  }
+}

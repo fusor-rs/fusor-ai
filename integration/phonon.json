@@ -1,0 +1,51 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model": "sha256:964651a6d318598fa15990a2a0e6a1b2f2aed6b981431b590fb07274bcb5678c",
+    "dist/model-f32": "sha256:3f2516d9d1d223b63c602c4fe6f2edb74e3231813f0fe66efa6d8cd6b0903bc8"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "tokens: 27 identical; frame budget 138, 1 frame(s) after the end of speech",
+      "voice embedding: rel 3.85e-7",
+      "text embeddings: rel 0.00e0",
+      "conditions: rel 0.00e0",
+      "flow latent: worst rel 2.78e-6 over 71 frames; end-of-speech logit max abs 5.72e-6, decisions agree on 71/71 frames",
+      "decoder: 136320 samples, rel 9.79e-7, max abs 2.01e-6"
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-single-relaxed.wav": "sha256:c7efb4955598b89859aee387cba63ab7d67ebc830581fb49a7c1abe7cef3260b",
+      "web-single.wav": "sha256:43ee6f558b6dbdf8ace27c07763c4d8d17e35e22a2b4ac6f08a9df010602a9ca"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-threaded-relaxed/.wav": "sha256:043bedcd5691ef0d55df5f5844ad97b3bd6bccbfe041b943499cd78d2ae67a4e",
+      "web-threaded/.wav": "sha256:601c32e913c34cd1ac010281768faf5bdc6bf3827c4c08bdec6f956082550d42"
+    },
+    "metrics": [
+      "WER=0.000",
+      "WER=0.000"
+    ],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  }
+}

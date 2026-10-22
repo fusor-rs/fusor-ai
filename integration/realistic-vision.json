@@ -1,0 +1,48 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model": "sha256:83cd944bd92de0b92a142eee9886ac0ff47019a585ed3e0384c054f69ce159d3",
+    "dist/model-f32": "sha256:5259c0578d821552fabe57c5dfe191a8f255baa86318d7e3ad9be0274b1faff2"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "64×64 latents, 12 steps, guidance 5",
+      "prompt: both prompts' tokens identical",
+      "text: 118272 values, rel 2.46e-6, max abs 2.67e-5",
+      "unet: 32768 values, rel 7.23e-4, max abs 7.32e-3",
+      "sampler: timesteps identical; levels: 13 values, rel 0.00e0, max abs 0.00e0; latents: 16384 values, rel 3.94e-1, max abs 4.05e0",
+      "decode: 786432 values, rel 2.75e-4, max abs 4.91e-3"
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-single-relaxed.rgba": "sha256:2d35d0d60d3066783258d9a204ba65792372e278826abe6b4bb11be7c8fbcbf4",
+      "web-single.rgba": "sha256:52b81edb0e03956468688bb07f8b7eead05ed8d7ad68270363e54a4233b9c577"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-threaded-relaxed/image.rgba": "sha256:e7d605a3ffc104dc796d5ad995e034da6786bae7af3387ea1d928926bd224200",
+      "web-threaded/image.rgba": "sha256:c2993f6c5b9015bd875f4240550f0cb05254d2e6c6c4531510cdbc813596fa20"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  }
+}

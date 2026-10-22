@@ -1,0 +1,51 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model": "sha256:3a6859d6a97990d8a33988a004f156a49f25dca93a1baffe4c600e1b738fa54b",
+    "dist/model-f32": "sha256:53ef51721bcac133839125247b8b048e20496df876e1bd3d1f4a40b9f142fcfa"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "prompt ids: 158 tokens, identical",
+      "z after prefill: rel 3.43e-5",
+      "flow head latent: worst rel 2.25e-4; stop decisions agree on 69/69 frames",
+      "vocoder: 243432 samples, rel 2.80e-6, max abs 2.03e-6",
+      "aggregator: worst rel 2.92e-5",
+      "z per frame (LLM decode, teacher-forced): worst rel 1.24e-5 over 68 frames"
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-single-relaxed.wav": "sha256:de69aaf3e232a9eaa4efa7628dbbfb0ad618e1eaa1a245930f681d770f37e378",
+      "web-single.wav": "sha256:921ad0f0f77c6c91097f74d374c5480a1d5716f5418956f33d96a76e313ceaf1"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-threaded-relaxed/.wav": "sha256:02e2c5860f4944106e1ce3608f720f6d839ec11c4f5e08527a3d1ec0b94dfab5",
+      "web-threaded/.wav": "sha256:a305035ff56a33bb1aace2f15a22f3f6d5a3892da377763364207ed0e7218db4"
+    },
+    "metrics": [
+      "WER=0.000",
+      "WER=0.000"
+    ],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  }
+}
