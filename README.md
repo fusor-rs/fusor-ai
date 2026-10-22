@@ -130,7 +130,7 @@ ming-wasm is a complete worked example, and [AGENTS.md](AGENTS.md#repository) sa
 | | `realistic-vision`, `realistic-vision-compile` | Realistic Vision V6.0 B1 (Stable Diffusion 1.5) with the SD VAE ft-MSE, and the compiler that writes its bundles |
 | | `paddle-ocr`, `paddle-ocr-compile` | PaddleOCR-VL-1.6 and the compiler that writes its bundles |
 | | `oxr`, `oxr-compile` | SoMark's OXR-1.0 and the compiler that writes its bundles |
-| Browser | `packages/host` | `loader.js` (build choice, part streaming, OPFS cache), `compute.js` (the compute-worker pool), `thread-host.js` and the `protocol.js` they share |
+| Browser | `packages/host` | `loader.js` (build choice, part streaming, OPFS cache), `worker.js` (the shared half of a model's engine worker: loading with stale-part eviction, the clamp-free yield, error routing, the request count), `compute.js` (the compute-worker pool), `thread-host.js` and the `protocol.js` they share |
 | Tools | `scripts/` | `build-runtime.sh`, `check-wasm-imports.mjs`, `check-layers.mjs`, `serve.mjs`, `install-tools.sh`, `integrate.mjs` (every model's outputs against its baseline) |
 
 On crates.io each crate is `fusor-ai-<name>`, such as `fusor-ai-kernels`, and its library keeps the short name (`use kernels::…`).

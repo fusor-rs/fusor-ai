@@ -21,7 +21,7 @@ The crates are layers. A crate depends only on its own layer or the ones below i
 | Models | `crates/models/<model>`, `crates/models/<model>-compile` | one model: its dimensions, tensor names, wiring, sampler settings, prompts and text frontend; its compiler |
 
 Beside the crates: `packages/host`, the browser side every model shares (`loader.js`,
-`compute.js`, `thread-host.js`, `protocol.js`), and `scripts/`: the runtime build, the import
+`worker.js`, `compute.js`, `thread-host.js`, `protocol.js`), and `scripts/`: the runtime build, the import
 and layer checks, the dev server and the pinned tool installer.
 
 A model's products live in its own repository, which consumes fusor-ai as the git submodule
