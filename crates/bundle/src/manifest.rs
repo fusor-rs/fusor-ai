@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Error;
 
-pub const FORMAT: u32 = 1;
+pub const FORMAT: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {

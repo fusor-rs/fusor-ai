@@ -1,16 +1,18 @@
 //! Weight tensors, and the views of them a model reads once their type is checked.
 //!
-//! A quantized matrix `[rows, cols]` is stored as one byte buffer: the quants of every row
-//! (row-major, `cols` bytes per row for `Q7b32`, `cols / 2` for `Q4b32`, `cols / 4` for `T2b128`)
-//! followed by one f32 scale per group along a row (32 values for `Q7b32` and `Q4b32`, 128 for
-//! `T2b128`; row-major). `cols` is a multiple of the group, so the scales start on a 4-byte
-//! boundary and are read as f32 in place. The formats are `quant`'s.
+//! A quantized matrix `[rows, cols]` is stored as one byte buffer: the quants of its rows, four
+//! at a time in `quant`'s quad layout (the rows padded to whole quads with zero codes; per quad
+//! and block of 32 inputs 128 bytes for `Q7b32`, 64 for `Q4b32`, 32 for `T2b128`), followed by
+//! one f32 scale per row and group along a row (32 values for `Q7b32` and `Q4b32`, 128 for
+//! `T2b128`): quad-major, then group, then the quad's four rows. `cols` is a multiple of the
+//! group, so the scales start on a 4-byte boundary and are read as f32 in place. The formats
+//! are `quant`'s.
 
 use serde::{Deserialize, Serialize};
 
 use crate::Error;
 use crate::blob::Blob;
-use crate::quant::{BLOCK, QuantFormat};
+use crate::quant::{BLOCK, QUAD, QuantFormat, pack_lane, unpack_lane};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -38,9 +40,20 @@ impl DType {
         let count: usize = shape.iter().product();
         match self.quant_format() {
             None => count * size_of::<f32>(),
-            Some(format) => format.quant_bytes(count) + count / format.group() * size_of::<f32>(),
+            Some(format) => {
+                let padded = match shape {
+                    [rows, cols] => padded_values(*rows, *cols),
+                    _ => count,
+                };
+                format.quant_bytes(padded) + padded / format.group() * size_of::<f32>()
+            }
         }
     }
+}
+
+/// Values of a `[rows, cols]` quantized matrix once its rows are padded to whole quads.
+fn padded_values(rows: usize, cols: usize) -> usize {
+    rows.div_ceil(QUAD) * QUAD * cols
 }
 
 pub struct Tensor {
@@ -94,22 +107,39 @@ impl Tensor {
             check_quantized(format, &shape)?;
         }
         let mut tensor = Self::zeroed(dtype, shape);
-        let Some(format) = format else {
-            let words = tensor.blob.bytes_mut().as_chunks_mut::<4>().0;
-            for (word, value) in words.iter_mut().zip(values) {
-                word.copy_from_slice(&value.to_le_bytes());
+        match format {
+            None => {
+                let words = tensor.blob.bytes_mut().as_chunks_mut::<4>().0;
+                for (word, value) in words.iter_mut().zip(values) {
+                    word.copy_from_slice(&value.to_le_bytes());
+                }
             }
-            return Ok(tensor);
-        };
-        let quant_len = format.quant_bytes(count);
-        let (quants, scales) = tensor.blob.bytes_mut().split_at_mut(quant_len);
-        let group = format.group();
-        let outputs = quants.chunks_exact_mut(format.quant_bytes(group));
-        let slots = scales.as_chunks_mut::<4>().0;
-        for ((values, output), slot) in values.chunks_exact(group).zip(outputs).zip(slots) {
-            slot.copy_from_slice(&format.quantize(values, output).to_le_bytes());
+            Some(format) => tensor.encode_quantized(format, values),
         }
         Ok(tensor)
+    }
+
+    /// Row by row into the quad layout: each row's codes into its lane of its quad's blocks,
+    /// its scales into its slots.
+    fn encode_quantized(&mut self, format: QuantFormat, values: &[f32]) {
+        let (rows, cols) = (self.shape[0], self.shape[1]);
+        let quant_len = format.quant_bytes(padded_values(rows, cols));
+        let (quants, scales) = self.blob.bytes_mut().split_at_mut(quant_len);
+        let (group, blocks) = (format.group(), cols / BLOCK);
+        let quad_bytes = format.quant_bytes(QUAD * BLOCK);
+        let mut codes = vec![0; cols];
+        for (row, row_values) in values.chunks_exact(cols).enumerate() {
+            let (quad, lane) = (row / QUAD, row % QUAD);
+            for (index, group_values) in row_values.chunks_exact(group).enumerate() {
+                let scale = format.quantize(group_values, &mut codes[index * group..][..group]);
+                let slot = ((quad * (cols / group) + index) * QUAD + lane) * size_of::<f32>();
+                scales[slot..slot + size_of::<f32>()].copy_from_slice(&scale.to_le_bytes());
+            }
+            for (block, block_codes) in codes.as_chunks::<BLOCK>().0.iter().enumerate() {
+                let at = (quad * blocks + block) * quad_bytes;
+                pack_lane(format, lane, block_codes, &mut quants[at..at + quad_bytes]);
+            }
+        }
     }
 
     pub fn dtype(&self) -> DType {
@@ -186,7 +216,7 @@ impl Table {
         let storage = match dtype.quant_format() {
             None => MatrixStorage::F32(blob.f32s(0)),
             Some(format) => {
-                let quant_len = format.quant_bytes(rows * cols);
+                let quant_len = format.quant_bytes(padded_values(rows, cols));
                 MatrixStorage::Quant {
                     format,
                     quants: &blob.bytes()[..quant_len],
@@ -225,14 +255,16 @@ impl Matrix<'_> {
                 quants,
                 scales,
             } => {
-                let block_bytes = format.quant_bytes(BLOCK);
-                let first = row * cols / BLOCK;
-                let row_quants = quants[first * block_bytes..].chunks_exact(block_bytes);
+                let (quad, lane) = (row / QUAD, row % QUAD);
+                let (blocks, groups) = (cols / BLOCK, cols / format.group());
+                let quad_bytes = format.quant_bytes(QUAD * BLOCK);
+                let blocks_per_group = format.group() / BLOCK;
                 let outputs = out.as_chunks_mut::<BLOCK>().0;
-                let blocks_per_scale = format.group() / BLOCK;
-                for (block, (stored, output)) in row_quants.zip(outputs).enumerate() {
-                    let scale = scales[(first + block) / blocks_per_scale];
-                    format.dequantize_block(stored, scale, output);
+                for (block, output) in outputs.iter_mut().enumerate() {
+                    let at = (quad * blocks + block) * quad_bytes;
+                    let codes = unpack_lane(format, &quants[at..at + quad_bytes], lane);
+                    let scale = scales[(quad * groups + block / blocks_per_group) * QUAD + lane];
+                    format.dequantize_block(&codes, scale, output);
                 }
             }
         }
