@@ -9,13 +9,14 @@
 //! gives.
 
 use blocks::istft::{FftScratch, Istft, OverlapAdd};
+use blocks::lm::Decoder;
 use blocks::transformer::{Buffers, KvCache, Mask, Span};
 use bundle::{Load, Scope, Store};
 use kernels::{Linear, QuantizedRows, Vector};
 use team::{Ctx, PerThread, SharedBuf, Team};
 
 use crate::flow_head::LATENT;
-use crate::model::{HIDDEN, QWEN2_SHAPE, Qwen2};
+use crate::model::{HIDDEN, QWEN2_SHAPE};
 
 const HOP: usize = 882;
 const UPSAMPLE: usize = 4;
@@ -37,7 +38,7 @@ const LATE_THEN_EARLY: [(f32, f32); 4] = [LATE[0], LATE[1], EARLY[0], EARLY[1]];
 
 pub(crate) struct Vocoder {
     fc1: Linear,
-    qwen2: Qwen2,
+    qwen2: Decoder,
     head: Linear,
     istft: Istft,
 }
@@ -184,7 +185,7 @@ impl Load for Vocoder {
         Ok(Self {
             fc1: scope.load("fc1", [HIDDEN, LATENT])?,
             head: scope.load("head", [2 * istft.bins(), HIDDEN])?,
-            qwen2: Qwen2::load(store, prefix, ())?,
+            qwen2: Decoder::load(store, prefix, QWEN2_SHAPE)?,
             istft,
         })
     }

@@ -6,6 +6,7 @@
 
 mod checkpoint;
 mod profile;
+mod table;
 mod tensors;
 mod writer;
 
@@ -15,6 +16,7 @@ use serde::de::DeserializeOwned;
 
 pub use checkpoint::Checkpoint;
 pub use profile::{Profile, profile};
+pub use table::{Layout, Table};
 pub use tensors::Tensors;
 pub use writer::BundleWriter;
 

@@ -17,5 +17,5 @@ mod text;
 pub mod vocoder;
 
 pub use bundle::Error;
-pub use kernels::wav;
+pub use media::wav;
 pub use model::SAMPLE_RATE;

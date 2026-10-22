@@ -6,17 +6,17 @@ use anyhow::Result;
 use bundle::Engine as _;
 use bundle::Stages as _;
 use harness::bench::{row, time};
+use paddle_ocr::Pixels;
 use paddle_ocr::pipeline::Stage;
 use paddle_ocr::prompt::Task;
 use paddle_ocr::session::{Engine, Request};
-use paddle_ocr::{Patches, Pixels};
 
 const CALLS: usize = 3;
 /// Answer tokens the decode stage is timed over.
 const DECODE_TOKENS: usize = 32;
 
 pub fn run(engine: &mut Engine, image: &Pixels, task: Task) -> Result<()> {
-    let patches = Patches::of(image)?;
+    let patches = paddle_ocr::patches(image)?;
     let grid = patches.grid;
     let prompt = engine.prompt(task, grid)?;
     println!(
@@ -30,13 +30,13 @@ pub fn run(engine: &mut Engine, image: &Pixels, task: Task) -> Result<()> {
     );
     let embedded = engine.embed(&patches);
     let seen = engine.encode(&embedded, grid);
-    let tokens = engine.project(&seen, grid);
+    let tokens = engine.tokens(&seen, grid);
     for &stage in Stage::ALL {
         let ms = match stage {
-            Stage::Preprocess => time(CALLS, || Patches::of(image))?,
+            Stage::Preprocess => time(CALLS, || paddle_ocr::patches(image))?,
             Stage::Embed => time(CALLS, || anyhow::Ok(engine.embed(&patches)))?,
             Stage::Encode => time(CALLS, || anyhow::Ok(engine.encode(&embedded, grid)))?,
-            Stage::Project => time(CALLS, || anyhow::Ok(engine.project(&seen, grid)))?,
+            Stage::Project => time(CALLS, || anyhow::Ok(engine.tokens(&seen, grid)))?,
             Stage::Prefill => time(CALLS, || anyhow::Ok(engine.prefill(&prompt, &tokens)))?,
             Stage::Decode => {
                 let answer = |engine: &mut Engine| engine.answer(&prompt, &tokens, DECODE_TOKENS);

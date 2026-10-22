@@ -32,7 +32,7 @@ enum Command {
     Compile {
         checkpoint: PathBuf,
         out: PathBuf,
-        #[arg(long, default_value = "q7")]
+        #[arg(long, default_value = "q7", value_parser = compile::profile::<realistic_vision_compile::Profile>)]
         profile: realistic_vision_compile::Profile,
     },
     /// Generate an image into a PNG file.

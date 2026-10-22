@@ -101,7 +101,7 @@ pub fn run(engine: &mut Engine, goldens: &Path) -> Result<()> {
             )?,
             Stage::Project => compare(
                 "project",
-                &engine.project(&goldens.vision, goldens.grid),
+                &engine.tokens(&goldens.vision, goldens.grid),
                 &goldens.projected,
             )?,
             Stage::Prefill => prefill(engine, &prompt, &goldens)?,
@@ -113,7 +113,7 @@ pub fn run(engine: &mut Engine, goldens: &Path) -> Result<()> {
 }
 
 fn preprocess(goldens: &Goldens) -> Result<String> {
-    let patches = Patches::of(&goldens.image)?;
+    let patches = paddle_ocr::patches(&goldens.image)?;
     ensure!(
         patches.grid == goldens.grid,
         "preprocess: grid {:?}, reference {:?}",
@@ -126,8 +126,8 @@ fn preprocess(goldens: &Goldens) -> Result<String> {
 /// The prompt's ids and positions, then its last row's hidden state and logits.
 fn prefill(engine: &mut Engine, prompt: &Prompt, goldens: &Goldens) -> Result<String> {
     let len = prompt.ids.len();
-    let positions = prompt.positions();
-    let agree = positions.iter().enumerate().all(|(index, position)| {
+    let agree = (0..len).all(|index| {
+        let position = prompt.position(index);
         let axes = [position.temporal, position.height, position.width];
         let golden = |axis: usize| goldens.positions[axis * len + index];
         axes.iter()

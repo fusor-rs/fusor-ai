@@ -14,7 +14,7 @@
       "target/release/ming compile .cache/Ming-3.0-tts-0.5B dist/model-f32 --profile f32",
       "just runtimes",
       "just page",
-      "cd e2e && npm install --no-audit --no-fund --silent && npx playwright install chromium"
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
       "dist/model",
@@ -48,7 +48,7 @@
       "target/release/phonon compile .cache/phonon-31m-en dist/model-f32 --profile f32",
       "just runtimes",
       "just page",
-      "cd e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
       "dist/model",
@@ -83,7 +83,7 @@
       "target/release/parakeet compile .cache/parakeet-redux dist/model-f32 --profile f32",
       "just runtimes",
       "just page",
-      "cd e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
       "dist/model",
@@ -118,7 +118,7 @@
       "target/release/realistic-vision compile .cache/realistic-vision dist/model-f32 --profile f32",
       "just runtimes",
       "just page",
-      "cd e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
       "dist/model",
@@ -153,7 +153,7 @@
       "target/release/paddle-ocr compile .cache/checkpoint dist/model-f32 --profile f32",
       "just runtimes",
       "just page",
-      "cd e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
       "dist/model",
@@ -188,7 +188,7 @@
       "target/release/oxr compile .cache/checkpoint dist/model-f32 --profile f32",
       "just runtimes",
       "just page",
-      "cd e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
       "dist/model",

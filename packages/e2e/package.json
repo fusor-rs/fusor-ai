@@ -1,0 +1,7 @@
+{
+  "name": "fusor-ai-e2e",
+  "private": true,
+  "type": "module",
+  "description": "The shared half of every product's headless Chrome run: its flags, the local server, a fresh profile with every request recorded, the revisit check and the results file",
+  "dependencies": { "playwright": "1.64.1" }
+}

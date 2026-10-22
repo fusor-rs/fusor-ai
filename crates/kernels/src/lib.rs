@@ -11,14 +11,12 @@
 mod arch;
 mod blob;
 pub mod conv;
-pub mod image;
 mod linear;
 mod matmul;
 pub mod ops;
 mod quant;
 pub mod rng;
 mod tensor;
-pub mod wav;
 
 pub use arch::{DOTS, dot_f32, dot_f32_many};
 pub use linear::{

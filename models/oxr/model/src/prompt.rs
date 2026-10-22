@@ -4,6 +4,8 @@
 
 use std::ops::Range;
 
+use blocks::reading;
+use blocks::rotary::Position;
 use blocks::vit::Grid;
 use bundle::Tokenizer;
 use serde::{Deserialize, Serialize};
@@ -95,5 +97,20 @@ impl Prompt {
             ids,
             image: start..start + tokens,
         })
+    }
+}
+
+impl reading::Prompt for Prompt {
+    fn ids(&self) -> &[u32] {
+        &self.ids
+    }
+
+    fn image(&self) -> Range<usize> {
+        self.image.clone()
+    }
+
+    /// Qwen3's rows turn by their sequence positions.
+    fn rotary(&self, _rows: Range<usize>) -> Option<Vec<Position>> {
+        None
     }
 }

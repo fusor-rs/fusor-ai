@@ -17,6 +17,7 @@ use clap::{Parser, Subcommand};
 use paddle_ocr::prompt::Task;
 use paddle_ocr::session::{Engine, Request};
 use paddle_ocr::{Pixels, Size};
+use paddle_ocr_compile::Profile;
 
 #[derive(Parser)]
 #[command(name = "paddle-ocr", version)]
@@ -35,8 +36,8 @@ enum Command {
     Compile {
         checkpoint: PathBuf,
         out: PathBuf,
-        #[arg(long, default_value = "mix")]
-        profile: paddle_ocr_compile::Profile,
+        #[arg(long, default_value = "mix", value_parser = compile::profile::<Profile>)]
+        profile: Profile,
     },
     /// Read PNG or JPEG images, each under a `# <file>` line.
     Read {

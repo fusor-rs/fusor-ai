@@ -1,0 +1,20 @@
+[package]
+name = "fusor-ai-media"
+description = "WAV encoding and decoding, and image resampling as vision models' reference preprocessing does it (Pillow's bilinear and bicubic resizes, PyTorch's grid interpolation)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["fusor", "wav", "image", "resize", "inference"]
+categories = ["multimedia", "wasm"]
+
+[lib]
+name = "media"
+
+[dependencies]
+kernels.workspace = true
+
+[lints]
+workspace = true

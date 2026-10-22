@@ -74,5 +74,5 @@ smoke: model runtimes fixtures
     node scripts/node-smoke.mjs {{model}} --build web-single-relaxed
 
 e2e: model runtimes page fixtures
-    cd e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium
+    cd {{fusor_ai}}/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium
     PORT={{port}} node e2e/run.mjs

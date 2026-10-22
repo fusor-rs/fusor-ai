@@ -1,0 +1,25 @@
+[package]
+name = "__name__-cli"
+description = "The native __name__ host: compile the checkpoint."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "__name__"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+__name__ = { workspace = true, features = ["threads"] }
+__name__-compile.workspace = true
+harness.workspace = true
+compile.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true

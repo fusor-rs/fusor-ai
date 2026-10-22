@@ -2,11 +2,11 @@
 //! its prefix — `llm`, `flow`, `agg`, `stop`, `vae` — so this is the table of contents; the
 //! compiler (`ming-compile`) writes exactly these names.
 
+use blocks::lm::Decoder;
 use blocks::rotary::Rotation;
-use blocks::transformer::{Architecture, Buffers, Shape, Transformer};
-use bundle::{Load, Scope, Store};
-use kernels::ops::rms_norm;
-use kernels::{Linear, Matrix, Table, Vector};
+use blocks::transformer::{Architecture, Shape};
+use bundle::{Load, Store};
+use kernels::{Linear, Matrix, Table};
 
 use crate::Error;
 use crate::flow_head::{Aggregator, FlowHead};
@@ -34,36 +34,9 @@ const VOCABULARY: usize = 151_936;
 /// The stop head's logits: continue, stop.
 pub(crate) const STOP_LOGITS: usize = 2;
 
-/// A Qwen2 stack and the RMSNorm after its last layer.
-pub(crate) struct Qwen2 {
-    pub(crate) body: Transformer,
-    norm: Vector,
-}
-
-impl Qwen2 {
-    /// The final norm of hidden row `row` (after `forward`, outside or inside a team run).
-    pub(crate) fn final_norm(&self, buffers: &Buffers, row: usize, out: &mut [f32]) {
-        let x = &buffers.hidden.read()[row * HIDDEN..(row + 1) * HIDDEN];
-        rms_norm(x, self.norm.values(), QWEN2_SHAPE.norm_eps, out);
-    }
-}
-
-/// The stack under `p` and its final norm `p.norm`.
-impl Load for Qwen2 {
-    type Shape = ();
-
-    fn load(store: &mut Store, prefix: &str, (): ()) -> Result<Self, Error> {
-        let body = Transformer::load(store, prefix, QWEN2_SHAPE)?;
-        Ok(Self {
-            body,
-            norm: Scope::new(store, prefix).load("norm", HIDDEN)?,
-        })
-    }
-}
-
 pub(crate) struct Llm {
     embed: Table,
-    pub(crate) qwen2: Qwen2,
+    pub(crate) qwen2: Decoder,
 }
 
 impl Llm {
@@ -85,7 +58,7 @@ impl Model {
         Ok(Self {
             llm: Llm {
                 embed: Table::load(store, "llm.embed", [VOCABULARY, HIDDEN])?,
-                qwen2: Qwen2::load(store, "llm", ())?,
+                qwen2: Decoder::load(store, "llm", QWEN2_SHAPE)?,
             },
             flow: FlowHead::load(store, "flow", ())?,
             aggregator: Aggregator::load(store, "agg", ())?,

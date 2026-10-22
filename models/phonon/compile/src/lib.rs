@@ -12,7 +12,6 @@
 mod tables;
 
 use std::path::Path;
-use std::str::FromStr;
 
 use bundle::{Manifest, Source, TOKENIZER_PART};
 use compile::{BundleWriter, Checkpoint, Error, Profile as _, Tensors};
@@ -57,14 +56,6 @@ impl compile::Profile for Profile {
             Self::Q7 if !last_residual(name) => DType::Q7b32,
             Self::F32 | Self::Q7 => DType::F32,
         }
-    }
-}
-
-impl FromStr for Profile {
-    type Err = Error;
-
-    fn from_str(name: &str) -> Result<Self, Error> {
-        compile::profile(name)
     }
 }
 

@@ -6,17 +6,17 @@ use anyhow::Result;
 use bundle::Engine as _;
 use bundle::Stages as _;
 use harness::bench::{row, time};
+use oxr::Pixels;
 use oxr::pipeline::Stage;
 use oxr::prompt::Task;
 use oxr::session::{Engine, Request};
-use oxr::{Patches, Pixels};
 
 const CALLS: usize = 3;
 /// Answer tokens the decode stage is timed over.
 const DECODE_TOKENS: usize = 32;
 
 pub fn run(engine: &mut Engine, image: &Pixels, task: Task) -> Result<()> {
-    let patches = Patches::of(image)?;
+    let patches = oxr::patches(image)?;
     let grid = patches.grid;
     let prompt = engine.prompt(task, grid)?;
     println!(
@@ -30,13 +30,13 @@ pub fn run(engine: &mut Engine, image: &Pixels, task: Task) -> Result<()> {
     );
     let embedded = engine.embed(&patches);
     let encoded = engine.encode(&embedded, grid);
-    let tokens = engine.tokenize(&encoded, grid);
+    let tokens = engine.tokens(&encoded, grid);
     for &stage in Stage::ALL {
         let ms = match stage {
-            Stage::Preprocess => time(CALLS, || Patches::of(image))?,
+            Stage::Preprocess => time(CALLS, || oxr::patches(image))?,
             Stage::Embed => time(CALLS, || anyhow::Ok(engine.embed(&patches)))?,
             Stage::Encode => time(CALLS, || anyhow::Ok(engine.encode(&embedded, grid)))?,
-            Stage::Tokenize => time(CALLS, || anyhow::Ok(engine.tokenize(&encoded, grid)))?,
+            Stage::Tokenize => time(CALLS, || anyhow::Ok(engine.tokens(&encoded, grid)))?,
             Stage::Prefill => time(CALLS, || anyhow::Ok(engine.prefill(&prompt, &tokens)))?,
             Stage::Decode => {
                 let answer = |engine: &mut Engine| engine.answer(&prompt, &tokens, DECODE_TOKENS);

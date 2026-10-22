@@ -12,9 +12,7 @@ use kernels::{Linear, NARROW_COLUMN_ALIGN};
 use team::{Ctx, SharedBuf};
 
 pub use crate::layer::Buffers;
-use crate::layer::{
-    Activation, Attention, FeedForward, Heads, Layer, Norm, Pass, Rope, Stack, Widths,
-};
+use crate::layer::{Attention, Heads, Layer, LayerSpec, Norm, Pass, Stack, Widths};
 use crate::rotary::{Rotary, Rotation};
 
 /// The dimensions of one DiT stack.
@@ -38,14 +36,17 @@ impl Shape {
         }
     }
 
-    /// Activations for passes of up to `rows` rows.
-    pub fn buffers(&self, rows: usize, threads: usize) -> Buffers {
-        let widths = Widths {
+    fn widths(&self) -> Widths {
+        Widths {
             hidden: self.hidden,
             heads: self.heads(),
             feed_forward: self.feed_forward,
-        };
-        Buffers::new(&widths, rows, threads)
+        }
+    }
+
+    /// Activations for passes of up to `rows` rows.
+    pub fn buffers(&self, rows: usize, threads: usize) -> Buffers {
+        Buffers::new(&self.widths(), rows, threads)
     }
 }
 
@@ -170,35 +171,20 @@ impl Load for Dit {
             store,
             &format!("{prefix}.blocks"),
             shape.depth,
-            |store, name| block(store, name, shape),
+            |store, name| {
+                Layer::load(
+                    store,
+                    name,
+                    &LayerSpec::DIT,
+                    &shape.widths(),
+                    shape.norm_eps,
+                )
+            },
         )?;
         Ok(Self {
-            stack: Stack::new(shape.heads(), Some(Rope::Interleaved), rotary, blocks),
+            stack: Stack::new(shape.heads(), LayerSpec::DIT.rope, rotary, blocks),
         })
     }
-}
-
-fn block(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, bundle::Error> {
-    let Shape {
-        hidden,
-        feed_forward,
-        norm_eps: eps,
-        ..
-    } = shape;
-    let mut scope = Scope::new(store, prefix);
-    let rms = |weight| Norm::Rms { weight, eps };
-    Ok(Layer {
-        norm1: rms(scope.load("norm1", hidden)?),
-        qkv: scope.load("qkv", [shape.heads().qkv(), hidden])?,
-        head_norms: None,
-        out: scope.load("out", [hidden, hidden])?,
-        norm2: rms(scope.load("norm2", hidden)?),
-        feed_forward: FeedForward::Plain {
-            up: scope.load("ff1", [feed_forward, hidden])?,
-            down: scope.load("ff2", [hidden, feed_forward])?,
-            activation: Activation::GeluTanh,
-        },
-    })
 }
 
 impl Load for FinalLayer {

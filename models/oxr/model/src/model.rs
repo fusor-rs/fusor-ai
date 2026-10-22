@@ -2,12 +2,15 @@
 //! its prefix — `vision`, `visual`, `llm` — so this is the table of contents; the compiler
 //! (`oxr-compile`) writes exactly these names.
 
+use blocks::lm::{self, Embedding, Lm};
 use blocks::norm::LayerNorm;
 use blocks::rotary::Rotation;
-use blocks::transformer::{self, Architecture, Transformer};
-use blocks::vit::{self, Vit};
-use bundle::{Load, Scope, Store};
-use kernels::{Linear, Table, Vector};
+use blocks::transformer::{self, Architecture};
+use blocks::vit;
+use blocks::vit::tower::{self, Ending, Tower};
+use bundle::{Load, Scope, Store, Tokenizer};
+use kernels::{Linear, Table};
+use media::image::Filter;
 
 use crate::Error;
 
@@ -20,6 +23,17 @@ pub const PATCH_VALUES: usize = CHANNELS * PATCH * PATCH;
 pub const MERGE: usize = 2;
 /// Side of the learned position grid: a 512-pixel image of 16-pixel patches.
 pub const POSITION_GRID: usize = 32;
+
+/// The vision tower: the patch embedding (a 16 × 16 convolution as one matrix), the learned
+/// position grid and the encoder. The encoder's final norm is not part of it: the model reads
+/// the last layer's output as it is.
+pub(crate) const TOWER: tower::Shape = tower::Shape {
+    encoder: VISION_SHAPE,
+    patch_values: PATCH_VALUES,
+    position_grid: POSITION_GRID,
+    resample: Filter::Bicubic,
+    ending: Ending::Encoder,
+};
 
 pub const VISION_SHAPE: vit::Shape = vit::Shape {
     hidden: 1152,
@@ -63,15 +77,12 @@ pub const LANGUAGE_SHAPE: transformer::Shape = transformer::Shape {
 };
 pub const HIDDEN: usize = LANGUAGE_SHAPE.hidden;
 pub const VOCABULARY: usize = 151_936;
-
-/// The vision tower: the patch embedding (a 16 × 16 convolution as one matrix), the learned
-/// position grid and the encoder. The encoder's final norm is not part of it: the model reads
-/// the last layer's output as it is.
-pub(crate) struct Vision {
-    pub(crate) patch: Linear,
-    pub(crate) positions: Vec<f32>,
-    pub(crate) encoder: Vit,
-}
+/// Qwen3 0.6B ties its input embeddings to its head's rows.
+pub(crate) const LANGUAGE: lm::Shape = lm::Shape {
+    stack: LANGUAGE_SHAPE,
+    vocabulary: VOCABULARY,
+    embedding: Embedding::Tied,
+};
 
 /// Merged tokens into the language model: each one's logits over the visual words (`head`,
 /// padded with zero rows to `VISUAL_VOCABULARY`), their LayerNorm and softmax, then the mixture
@@ -84,32 +95,16 @@ pub(crate) struct Visual {
     pub(crate) indicators: Table,
 }
 
-/// The language model. Its input embeddings are its head's rows (Qwen3 0.6B ties them).
-pub(crate) struct Language {
-    pub(crate) body: Transformer,
-    pub(crate) norm: Vector,
-    pub(crate) head: Linear,
-}
-
-pub(crate) struct Model {
-    pub(crate) vision: Vision,
+pub struct Model {
+    pub(crate) vision: Tower,
     pub(crate) visual: Visual,
-    pub(crate) language: Language,
+    pub(crate) language: Lm,
+    pub(crate) tokenizer: Tokenizer,
 }
 
 impl Model {
     pub(crate) fn load(store: &mut Store) -> Result<Self, Error> {
-        let width = VISION_SHAPE.hidden;
-        let positions: Table = Table::load(
-            store,
-            "vision.positions",
-            [POSITION_GRID * POSITION_GRID, width],
-        )?;
-        let vision = Vision {
-            patch: Linear::load(store, "vision.patch", [width, PATCH_VALUES])?,
-            positions: positions.dequantize(),
-            encoder: Vit::load(store, "vision", VISION_SHAPE)?,
-        };
+        let vision = Tower::load(store, "vision", TOWER)?;
         let mut scope = Scope::new(store, "visual");
         let visual = Visual {
             head: scope.load("head", [VISUAL_VOCABULARY, MERGED])?,
@@ -117,16 +112,13 @@ impl Model {
             mix: scope.load("mix", [HIDDEN, VISUAL_VOCABULARY])?,
             indicators: scope.load("indicators", [IMAGE_INDICATORS, HIDDEN])?,
         };
-        let mut scope = Scope::new(store, "llm");
-        let language = Language {
-            norm: scope.load("norm", HIDDEN)?,
-            head: scope.load("head", [VOCABULARY, HIDDEN])?,
-            body: Transformer::load(store, "llm", LANGUAGE_SHAPE)?,
-        };
+        let language = Lm::load(store, "llm", LANGUAGE)?;
+        let tokenizer = Tokenizer::take(store)?;
         Ok(Self {
             vision,
             visual,
             language,
+            tokenizer,
         })
     }
 }

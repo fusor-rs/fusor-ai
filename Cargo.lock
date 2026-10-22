@@ -437,8 +437,10 @@ version = "0.1.2"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-kernels",
+ "fusor-ai-media",
  "fusor-ai-team",
  "realfft",
+ "serde",
 ]
 
 [[package]]
@@ -485,12 +487,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fusor-ai-media"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-kernels",
+]
+
+[[package]]
 name = "fusor-ai-ming"
 version = "0.1.2"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
  "fusor-ai-kernels",
+ "fusor-ai-media",
  "fusor-ai-team",
  "regex",
  "serde",
@@ -514,6 +524,7 @@ dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
  "fusor-ai-kernels",
+ "fusor-ai-media",
  "fusor-ai-team",
  "serde",
 ]
@@ -535,6 +546,7 @@ dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
  "fusor-ai-kernels",
+ "fusor-ai-media",
  "fusor-ai-team",
  "serde",
 ]
@@ -556,6 +568,7 @@ dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
  "fusor-ai-kernels",
+ "fusor-ai-media",
  "fusor-ai-team",
  "realfft",
  "serde",
@@ -581,6 +594,7 @@ dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
  "fusor-ai-kernels",
+ "fusor-ai-media",
  "fusor-ai-team",
  "serde",
 ]

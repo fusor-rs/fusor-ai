@@ -1,27 +1,22 @@
-//! The vision tower and the visual vocabulary over one image's patches: each patch's embedding
-//! plus the learned position grid resampled to the image's grid, and the encoder; then every
-//! 2 × 2 block of encoded patches, side by side, as a distribution over the visual words (their
-//! logits, LayerNorm and softmax), and its language-model token, the mixture of the words'
-//! embeddings that distribution weighs.
+//! The visual vocabulary over the vision tower's output (`blocks::vit::tower`): every 2 × 2 block
+//! of encoded patches, side by side, as a distribution over the visual words (their logits,
+//! LayerNorm and softmax), and its language-model token, the mixture of the words' embeddings
+//! that distribution weighs; and the visual vocabulary's activations.
 
 use std::ops::Range;
 
-use blocks::vit::{self, Grid};
-use kernels::image::{Size, resize_bicubic};
+use blocks::vit::{Grid, tower};
 use kernels::ops::softmax;
-use kernels::{
-    BLOCK, COLUMN_ALIGN, Input, MatrixStorage, QUAD, Quantized, QuantizedRows, quantize_rows,
-};
-use team::{Ctx, PerThread, SharedBuf};
+use kernels::{BLOCK, COLUMN_ALIGN, Input, MatrixStorage, QUAD, Quantized, quantize_rows};
+use team::{Ctx, SharedBuf};
 
-use crate::image::MAX_PIXELS;
+use crate::image::PREPROCESSING;
 use crate::model::{
-    HIDDEN, MERGE, MERGED, PATCH, POSITION_GRID, VISION_SHAPE, VISUAL_NORM_EPS, VISUAL_VOCABULARY,
-    VISUAL_WORDS, Vision, Visual,
+    HIDDEN, MERGE, MERGED, VISION_SHAPE, VISUAL_NORM_EPS, VISUAL_VOCABULARY, VISUAL_WORDS, Visual,
 };
 
 /// The most patches an image has.
-pub const MAX_PATCHES: usize = MAX_PIXELS / (PATCH * PATCH);
+pub const MAX_PATCHES: usize = PREPROCESSING.max_patches();
 /// The most tokens an image has.
 pub const MAX_IMAGE_TOKENS: usize = MAX_PATCHES / MERGED_PATCHES;
 const WIDTH: usize = VISION_SHAPE.hidden;
@@ -29,8 +24,7 @@ const MERGED_PATCHES: usize = MERGE * MERGE;
 /// Tokens whose visual-word distributions are held at once (`VISUAL_VOCABULARY` values each).
 const CHUNK: usize = 64;
 
-pub(crate) struct Buffers {
-    pub(crate) encoder: vit::Buffers,
+pub struct Buffers {
     /// Merged patches side by side, `tokens × MERGED`.
     merged: SharedBuf,
     /// A chunk's logits over the visual vocabulary, `CHUNK × VISUAL_VOCABULARY`.
@@ -44,14 +38,12 @@ pub(crate) struct Buffers {
     corrections: SharedBuf<i32>,
     /// The image's tokens, `tokens × HIDDEN`.
     pub(crate) tokens: SharedBuf,
-    quant: PerThread<QuantizedRows>,
 }
 
 impl Buffers {
-    pub(crate) fn new(threads: usize) -> Self {
+    pub(crate) fn new() -> Self {
         let chunk = CHUNK * VISUAL_VOCABULARY;
         Self {
-            encoder: VISION_SHAPE.buffers(MAX_PATCHES, threads),
             merged: SharedBuf::new(MAX_IMAGE_TOKENS * MERGED),
             logits: SharedBuf::new(chunk),
             distributions: SharedBuf::new(chunk),
@@ -59,47 +51,15 @@ impl Buffers {
             scales: SharedBuf::new(chunk / BLOCK),
             corrections: SharedBuf::new(chunk / BLOCK),
             tokens: SharedBuf::new(MAX_IMAGE_TOKENS * HIDDEN),
-            quant: PerThread::new(threads, QuantizedRows::default),
         }
-    }
-}
-
-impl Vision {
-    /// The position grid resampled to `grid`, `grid.patches() × WIDTH`.
-    pub(crate) fn positions(&self, grid: Grid) -> Vec<f32> {
-        let side = Size {
-            width: POSITION_GRID,
-            height: POSITION_GRID,
-        };
-        let to = Size {
-            width: grid.columns,
-            height: grid.rows,
-        };
-        resize_bicubic(&self.positions, side, to, WIDTH)
-    }
-
-    /// `encoder.hidden` = each patch's embedding plus its position, for this thread's columns.
-    pub(crate) fn embed(&self, ctx: &Ctx, buffers: &Buffers, patches: &[f32], positions: &[f32]) {
-        let input = buffers.quant.get(ctx).input(&self.patch.matrix(), patches);
-        let cols = ctx.split(WIDTH, COLUMN_ALIGN);
-        let hidden = &buffers.encoder.hidden;
-        self.patch.project(&input, cols, |row, col, value| {
-            let at = row * WIDTH + col;
-            hidden.set(at, value + positions[at]);
-        });
-    }
-
-    /// The encoder over `encoder.hidden`, in place.
-    pub(crate) fn encode(&self, ctx: &Ctx, buffers: &Buffers, grid: Grid) {
-        self.encoder.forward(ctx, &buffers.encoder, grid);
     }
 }
 
 impl Visual {
     /// `encoder.hidden` (`grid.patches()` rows) into `tokens`, one per 2 × 2 patches, row-major.
-    pub(crate) fn forward(&self, ctx: &Ctx, buffers: &Buffers, grid: Grid) {
+    pub(crate) fn forward(&self, ctx: &Ctx, tower: &tower::Buffers, buffers: &Buffers, grid: Grid) {
         let tokens = grid.patches() / MERGED_PATCHES;
-        let hidden = buffers.encoder.hidden.read();
+        let hidden = tower.encoder.hidden.read();
         for token in ctx.split(tokens, 1) {
             let merged = buffers.merged.part(token * MERGED..(token + 1) * MERGED);
             let slots = merged.as_chunks_mut::<WIDTH>().0;
@@ -109,14 +69,14 @@ impl Visual {
         }
         ctx.barrier();
         for first in (0..tokens).step_by(CHUNK) {
-            self.chunk(ctx, buffers, first..tokens.min(first + CHUNK));
+            self.chunk(ctx, tower, buffers, first..tokens.min(first + CHUNK));
         }
     }
 
     /// The tokens of `chunk`: the head's logits, the distributions, then their mixtures.
-    fn chunk(&self, ctx: &Ctx, buffers: &Buffers, chunk: Range<usize>) {
+    fn chunk(&self, ctx: &Ctx, tower: &tower::Buffers, buffers: &Buffers, chunk: Range<usize>) {
         let merged = &buffers.merged.read()[chunk.start * MERGED..chunk.end * MERGED];
-        let input = buffers.quant.get(ctx).input(&self.head.matrix(), merged);
+        let input = tower.quant.get(ctx).input(&self.head.matrix(), merged);
         let cols = ctx.split(VISUAL_VOCABULARY, COLUMN_ALIGN);
         self.head.project_quads(&input, cols, |row, first, values| {
             let at = row * VISUAL_VOCABULARY + first;

@@ -4,6 +4,7 @@
 
 use std::ops::Range;
 
+use blocks::reading;
 use blocks::rotary::Position;
 use blocks::vit::Grid;
 use bundle::Tokenizer;
@@ -112,10 +113,18 @@ impl Prompt {
         let resumed = start + self.merged.rows.max(self.merged.columns) + index - end;
         Position::uniform(resumed)
     }
+}
 
-    pub fn positions(&self) -> Vec<Position> {
-        (0..self.ids.len())
-            .map(|index| self.position(index))
-            .collect()
+impl reading::Prompt for Prompt {
+    fn ids(&self) -> &[u32] {
+        &self.ids
+    }
+
+    fn image(&self) -> Range<usize> {
+        self.image.clone()
+    }
+
+    fn rotary(&self, rows: Range<usize>) -> Option<Vec<Position>> {
+        Some(rows.map(|index| self.position(index)).collect())
     }
 }

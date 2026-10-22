@@ -35,7 +35,7 @@ enum Command {
     Compile {
         checkpoint: PathBuf,
         out: PathBuf,
-        #[arg(long, default_value = "mix")]
+        #[arg(long, default_value = "mix", value_parser = compile::profile::<oxr_compile::Profile>)]
         profile: oxr_compile::Profile,
     },
     /// Read PNG or JPEG images, each under a `# <file>` line.

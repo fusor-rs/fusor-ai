@@ -10,7 +10,6 @@
 //! greedily. `pipeline` lists the stages in order; `session` runs them.
 
 mod image;
-mod language;
 pub mod model;
 pub mod pipeline;
 pub mod prompt;
@@ -18,6 +17,7 @@ pub mod session;
 mod vision;
 
 pub use blocks::vit::Grid;
+pub use blocks::vit::preprocessing::{Layout, Patches};
 pub use bundle::Error;
-pub use image::{Layout, MAX_PIXELS, MIN_PIXELS, Patches};
-pub use kernels::image::{Pixels, Size};
+pub use image::{MAX_PIXELS, MIN_PIXELS, patches};
+pub use media::image::{Pixels, Size};

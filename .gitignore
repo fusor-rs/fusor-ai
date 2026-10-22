@@ -3,5 +3,7 @@
 /.tools/
 /.cache/
 /models/*/reference/target/
+/tools/kernel-harness/target/
 __pycache__/
+node_modules/
 .idea/

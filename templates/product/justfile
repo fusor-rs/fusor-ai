@@ -1,0 +1,20 @@
+# __name__ in the browser. `just build` then `just serve` to build everything, the model included,
+# from source.
+
+import 'vendor/fusor-ai/just/product.just'
+
+name := "__name__"
+checkpoint := env_var_or_default("CHECKPOINT", ".cache/checkpoint")
+
+host:
+    node --check app/web/app.js
+    node --check app/engine/worker.js
+    node --check scripts/node-smoke.mjs
+    node --check e2e/run.mjs
+
+# Compiles the checkpoint in `checkpoint` into the bundle.
+model: native
+    target/release/__name__ compile {{checkpoint}} {{model}}
+
+# The fixed inputs the checks read.
+fixtures:

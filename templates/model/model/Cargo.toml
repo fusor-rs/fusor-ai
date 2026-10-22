@@ -1,0 +1,23 @@
+[package]
+name = "fusor-ai-__name__"
+description = "__name__: the model. No I/O; builds for native and wasm32."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "__crate__"
+
+[dependencies]
+team.workspace = true
+bundle.workspace = true
+
+[features]
+# Run the thread team on Rayon's pool (native, and the threaded browser runtimes).
+threads = ["team/threads"]
+
+[lints]
+workspace = true

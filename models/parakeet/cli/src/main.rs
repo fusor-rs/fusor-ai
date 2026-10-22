@@ -33,7 +33,7 @@ enum Command {
     Compile {
         checkpoint: PathBuf,
         out: PathBuf,
-        #[arg(long, default_value = "ternary")]
+        #[arg(long, default_value = "ternary", value_parser = compile::profile::<parakeet_compile::Profile>)]
         profile: parakeet_compile::Profile,
     },
     /// Transcribe WAV files (16 kHz; channels are averaged), each under a `# <file>` line.

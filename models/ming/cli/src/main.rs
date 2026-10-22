@@ -34,7 +34,7 @@ enum Command {
     Compile {
         checkpoint: PathBuf,
         out: PathBuf,
-        #[arg(long, default_value = "mix")]
+        #[arg(long, default_value = "mix", value_parser = compile::profile::<ming_compile::Profile>)]
         profile: ming_compile::Profile,
     },
     /// Synthesize `text` into a WAV file.

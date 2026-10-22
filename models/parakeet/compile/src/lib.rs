@@ -16,7 +16,6 @@ mod ternary;
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::str::FromStr;
 
 use bundle::{Manifest, Source};
 use compile::{BundleWriter, Checkpoint, Error, Profile as _, Tensors, read_json};
@@ -58,14 +57,6 @@ impl compile::Profile for Profile {
             Self::Ternary if name.starts_with(TERNARY_PREFIX) => DType::T2b128,
             Self::Ternary => DType::Q7b32,
         }
-    }
-}
-
-impl FromStr for Profile {
-    type Err = Error;
-
-    fn from_str(name: &str) -> Result<Self, Error> {
-        compile::profile(name)
     }
 }
 

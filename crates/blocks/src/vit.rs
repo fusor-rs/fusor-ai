@@ -9,16 +9,17 @@
 //! `forward` runs inside a team run over the rows of `Buffers::hidden`, one per patch, row-major
 //! over the image's patch grid.
 
-use bundle::{Load, Scope, Store, load_each};
+pub mod preprocessing;
+pub mod tower;
+
+use bundle::{Load, Store, load_each};
 use team::Ctx;
 
 use crate::attention::{self, Call, Operand};
 pub use crate::layer::Buffers;
-use crate::layer::{
-    Activation, Attention, FeedForward, Heads, Layer, Norm, Pass, Rope, Stack, Widths,
-};
-use crate::norm::LayerNorm;
+use crate::layer::{Attention, Heads, Layer, LayerSpec, Pass, Stack, Widths};
 use crate::rotary::{Position, Rotary, Rotation};
+pub use preprocessing::Preprocessing;
 
 /// The dimensions of one encoder.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -40,14 +41,17 @@ impl Shape {
         }
     }
 
-    /// Activations for images of up to `patches` patches.
-    pub fn buffers(&self, patches: usize, threads: usize) -> Buffers {
-        let widths = Widths {
+    fn widths(&self) -> Widths {
+        Widths {
             hidden: self.hidden,
             heads: self.heads(),
             feed_forward: self.feed_forward,
-        };
-        Buffers::new(&widths, patches, threads)
+        }
+    }
+
+    /// Activations for images of up to `patches` patches.
+    pub fn buffers(&self, patches: usize, threads: usize) -> Buffers {
+        Buffers::new(&self.widths(), patches, threads)
     }
 }
 
@@ -148,35 +152,20 @@ impl Load for Vit {
             store,
             &format!("{prefix}.layers"),
             shape.layers,
-            |store, name| layer(store, name, shape),
+            |store, name| {
+                Layer::load(
+                    store,
+                    name,
+                    &LayerSpec::VIT,
+                    &shape.widths(),
+                    shape.norm_eps,
+                )
+            },
         )?;
         let head_dim = shape.heads().head_dim;
         let rotary = Rotary::new(Rotation::Grid, shape.rope_base, head_dim);
         Ok(Self {
-            stack: Stack::new(shape.heads(), Some(Rope::Half), rotary, layers),
+            stack: Stack::new(shape.heads(), LayerSpec::VIT.rope, rotary, layers),
         })
     }
-}
-
-fn layer(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, bundle::Error> {
-    let Shape {
-        hidden,
-        feed_forward,
-        norm_eps: eps,
-        ..
-    } = shape;
-    let mut scope = Scope::new(store, prefix);
-    let layer_norm = |norm: LayerNorm| Norm::Layer { norm, eps };
-    Ok(Layer {
-        norm1: layer_norm(scope.load("norm1", hidden)?),
-        qkv: scope.load("qkv", [shape.heads().qkv(), hidden])?,
-        head_norms: None,
-        out: scope.load("out", [hidden, hidden])?,
-        norm2: layer_norm(scope.load("norm2", hidden)?),
-        feed_forward: FeedForward::Plain {
-            up: scope.load("ff1", [feed_forward, hidden])?,
-            down: scope.load("ff2", [hidden, feed_forward])?,
-            activation: Activation::GeluTanh,
-        },
-    })
 }

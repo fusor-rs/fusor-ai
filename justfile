@@ -16,7 +16,7 @@ wasm:
       --config 'target.wasm32-unknown-unknown.rustflags=["-C", "target-feature=+simd128,+relaxed-simd"]' -- -D warnings
 
 host:
-    for file in packages/host/*.js scripts/*.mjs; do node --check "$file" || exit 1; done
+    for file in packages/host/*.js packages/e2e/*.mjs scripts/*.mjs; do node --check "$file" || exit 1; done
     for file in scripts/*.sh; do bash -n "$file" || exit 1; done
     for file in models/*/reference/*.py; do python3 -m py_compile "$file" || exit 1; done
     node scripts/check-wasm-imports.mjs --selftest
@@ -24,6 +24,14 @@ host:
 # Models → blocks → primitives (AGENTS.md, "Repository").
 layers:
     node scripts/check-layers.mjs
+
+# A new model on the shared shells, in models/<name>: `just new-model whisper-tiny`.
+new-model name:
+    node scripts/new-model.mjs {{name}}
+
+# A new product repository for a model, in <directory>, with fusor-ai as its submodule.
+new-product name directory:
+    node scripts/new-product.mjs {{name}} {{directory}}
 
 # Builds the models in their product checkouts and compares every output with its baseline
 # (scripts/integrate.mjs): `just integrate ming oxr`, `just integrate --all`.

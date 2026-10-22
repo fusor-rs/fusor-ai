@@ -90,7 +90,7 @@ Type some text and press Generate: the page speaks it, 1.5–2× faster than rea
 
 ### Build a model
 
-A model is a library here and an app in its own repository. The library lives in [the models layer](#the-toolkit):
+A model's crates live here and its app in its own repository. `just new-model <name>` scaffolds the crates in `models/<name>` on the shared shells, and `just new-product <name> <directory>` the app's repository with fusor-ai as its submodule. The crates are [the models layer](#the-toolkit):
 
 1. **The model** (`models/<model>/model`): its dimensions, its wiring of blocks and its sampling loop, with each component loading itself from a `bundle::Store`.
 2. **The compiler** (`models/<model>/compile`): reads the checkpoint with `compile::Checkpoint`, keeps, renames and fuses the tensors the model needs, picks a format per tensor and writes the bundle with `BundleWriter`.
@@ -118,12 +118,13 @@ ming-wasm is a complete worked example, and [AGENTS.md](AGENTS.md#repository) sa
 | Layer | Crate or package | Holds |
 | --- | --- | --- |
 | Primitives | `team` | `Team`, `Ctx` (`split`, `barrier`), `SharedBuf`, `PerThread` |
-| | `kernels` | `Tensor` and its formats, the checked views `Vector` and `Table`, `matmul` over per-target backends, `ops` (RMSNorm, LayerNorm, RoPE, GELU, SiLU, ELU, `exp`, `erf`, softmax, attention), `Linear`, `conv` (products over the pixels of images split by rows, 2-D convolutions as such products, nearest upsampling folded in), `QuantizedMatrix` (weights quantized at run time), `rng`, `wav` (16-bit PCM WAV encoding, and decoding to mono), `image` (Pillow's bilinear and bicubic resizes of 8-bit images, bit-exact; PyTorch's bilinear and bicubic resampling of a grid of vectors) |
+| | `kernels` | `Tensor` and its formats, the checked views `Vector` and `Table`, `matmul` over per-target backends, `ops` (RMSNorm, LayerNorm, RoPE, GELU, SiLU, ELU, `exp`, `erf`, softmax, attention), `Linear`, `conv` (products over the pixels of images split by rows, 2-D convolutions as such products, nearest upsampling folded in), `QuantizedMatrix` (weights quantized at run time), `rng` |
+| | `media` | `wav` (16-bit PCM WAV encoding, and decoding to mono), `image` (Pillow's bilinear and bicubic resizes of 8-bit images, bit-exact; PyTorch's bilinear and bicubic resampling of a grid of vectors) |
 | | `bundle` | `Manifest`, `Store` (streamed, hashed parts; tensors and blobs), the `Load` trait that checks every tensor's shape, the `Engine` and `Stages` traits every model's session and pipeline implement, `Tokenizer` (with the `tokenizer` feature) |
 | | `compile` | `Checkpoint` (safetensors), `BundleWriter`, `Profile` and `Tensors` (each tensor in its profile's format) |
 | | `runtime` | The browser runtime shell: `Shell` and the `runtime!` macro (a model's engine behind wasm-bindgen: the part protocol, the panic message, JSON errors, the thread-pool export) and the deterministic getrandom backend that keeps entropy out of a runtime's imports |
 | | `harness` | The native host of a model's CLI: the thread pool, the bundle loader (`load`), the `compile` command, `parity` comparisons (`relative_l2`, `max_abs`, `compare`) and `bench` timings |
-| Blocks | `blocks` | `transformer` (decoder stacks with a causal or sliding-window KV cache, in the Qwen2, Qwen3, Kyutai and CLIP architectures), `rotary` (rotary embeddings by sequence position, Qwen2-VL's multimodal sections, or a patch's row and column), `vit` (NaViT vision encoders over one image of any size, with the int8 attention), `dit` (diffusion-transformer blocks), `norm` (LayerNorm, GroupNorm), `adaln_mlp` (the adaLN residual MLP of MAR-style flow heads), `flow` (flow-matching Euler steps with classifier-free guidance), `istft` (streaming inverse STFT), `seanet` (SEANet's streaming decoder, every conv one matrix), `conformer` (NVIDIA's FastConformer encoder: the convolutional subsampler, Transformer-XL relative-position attention, the convolution module), `unet` (latent diffusion's UNet: residual blocks, spatial transformers with int8 self- and cross-attention), `vae` (the KL autoencoder's decoder), `dpm` (DPM-Solver++(2M) at Karras noise levels) |
+| Blocks | `blocks` | `transformer` (decoder stacks with a causal or sliding-window KV cache, in the Qwen2, Qwen3, Kyutai and CLIP architectures), `rotary` (rotary embeddings by sequence position, Qwen2-VL's multimodal sections, or a patch's row and column), `lm` (a causal language model: its stack and final norm, the head, prefill in chunks and greedy decoding), `vit` (NaViT vision encoders over one image of any size, with the int8 attention; the vision tower; the image preprocessing of vision-language models), `reading` (the engine of a vision-language model reading an image to text, step by step), `dit` (diffusion-transformer blocks), `norm` (LayerNorm, GroupNorm), `adaln_mlp` (the adaLN residual MLP of MAR-style flow heads), `flow` (flow-matching Euler steps with classifier-free guidance), `istft` (streaming inverse STFT), `seanet` (SEANet's streaming decoder, every conv one matrix), `conformer` (NVIDIA's FastConformer encoder: the convolutional subsampler, Transformer-XL relative-position attention, the convolution module), `unet` (latent diffusion's UNet: residual blocks, spatial transformers with int8 self- and cross-attention), `vae` (the KL autoencoder's decoder), `dpm` (DPM-Solver++(2M) at Karras noise levels) |
 | Models | `ming`, `ming-compile` | Ming-3.0-tts-0.5B and the compiler that writes its bundles |
 | | `phonon`, `phonon-compile` | Phonon-31m-en and the compiler that writes its bundles |
 | | `parakeet`, `parakeet-compile` | Moondream's Parakeet Redux and the compiler that writes its bundles |
@@ -131,7 +132,10 @@ ming-wasm is a complete worked example, and [AGENTS.md](AGENTS.md#repository) sa
 | | `paddle-ocr`, `paddle-ocr-compile` | PaddleOCR-VL-1.6 and the compiler that writes its bundles |
 | | `oxr`, `oxr-compile` | SoMark's OXR-1.0 and the compiler that writes its bundles |
 | Browser | `packages/host` | `loader.js` (build choice, part streaming, OPFS cache), `worker.js` (the shared half of a model's engine worker: loading with stale-part eviction, the clamp-free yield, error routing, the request count), `compute.js` (the compute-worker pool), `thread-host.js` and the `protocol.js` they share |
+| | `packages/e2e` | `kit.mjs`: the shared half of a product's headless Chrome run (its flags, the local server, a fresh profile with every request recorded, the revisit check, the results file and exit status) |
+| | `packages/ui` | `base.css`: the palette, layout, masthead, cards, controls and footer every product's page shares, linked before its own `app.css` |
 | Tools | `scripts/` | `build-runtime.sh`, `check-wasm-imports.mjs`, `check-layers.mjs`, `serve.mjs`, `install-tools.sh`, `integrate.mjs` (every model's outputs against its baseline) |
+| | `tools/kernel-harness` | A page that replays the kernels with a page's run-time sizes (`node bench.mjs <module.wasm>`), for explaining kernel speed (`knowledge.md`) |
 
 On crates.io each toolkit crate is `fusor-ai-<name>`, such as `fusor-ai-kernels`, and its library keeps the short name (`use kernels::…`). The model crates are not published.
 
@@ -200,7 +204,7 @@ fusor-ai is v0.1 and experimental. Until 1.0, each minor release may change the 
 
 ## Contributing
 
-fusor-ai is an open source project in early development. The [contributing guide](CONTRIBUTING.md) covers the setup, checks and workflow. The toolkit lives in `crates/`, `packages/host` and `scripts/`, and the models in `models/`.
+fusor-ai is an open source project in early development. The [contributing guide](CONTRIBUTING.md) covers the setup, checks and workflow. The toolkit lives in `crates/`, `packages/` and `scripts/`, and the models in `models/`.
 
 fusor-ai is built with the help of AI tools, mainly Claude Code, under the same rules the project asks of contributors: see [Using AI tools](CONTRIBUTING.md#using-ai-tools).
 

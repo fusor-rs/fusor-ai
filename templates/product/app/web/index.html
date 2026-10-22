@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>__name__ in your browser</title>
+  <meta name="description" content="__name__ running on this device's CPU, compiled to WebAssembly with fusor-ai.">
+  <link rel="icon" href="/brand/fusor-ai.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/base.css">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <App state="{{ App::new() }}">
+    <script type="module" src="./app.js"></script>
+    <main on:engine="state.receive(event)" data-phase="{{ state.phase.get().name() }}" data-loaded="{{ state.loaded.get().is_some() }}">
+      <header class="masthead">
+        <div class="lockup">
+          <img src="/brand/fusor-ai.svg" alt="fusor-ai" width="40" height="40">
+        </div>
+        <h1>__name__, on your own CPU</h1>
+      </header>
+
+      <If condition="{{ state.loading() }}">
+        <section class="card loading" aria-live="polite">
+          <div class="row"><strong>Loading the model</strong><span id="detail" class="muted">{{ state.detail.get() }}</span></div>
+          <progress max="1" value="{{ state.fraction.get() }}"></progress>
+        </section>
+      </If>
+
+      <If condition="{{ state.phase.get() == Phase::Broken }}">
+        <section class="card broken" role="alert">
+          <strong>{{ if state.failed_to_load() { "The model could not load" } else { "The engine stopped" } }}</strong>
+          <p id="detail">{{ state.detail.get() }}</p>
+          <If condition="{{ state.failed_to_load() }}">
+            <p class="muted">A bundle loads only into the runtime built with it. If you built this page yourself, rebuild both with <code>just build</code>.</p>
+          </If>
+          <div class="row"><a id="reload" class="control primary" href="">Reload</a></div>
+        </section>
+      </If>
+
+      <span id="status" class="muted" aria-live="polite">{{ state.status.get() }}</span>
+
+      <footer class="muted">
+        <span id="runtime">{{ state.summary() }}</span>
+        <span>Built with <a href="https://github.com/fusor-rs/fusor-ai">fusor-ai</a> and <a href="https://fusor.build">fusor</a></span>
+      </footer>
+    </main>
+  </App>
+</body>
+</html>

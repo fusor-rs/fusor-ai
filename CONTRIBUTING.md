@@ -43,11 +43,11 @@ advancing.
 
 ## Releasing
 
-Every crate shares one version: `version` under `[workspace.package]` in the root
-`Cargo.toml`. A release publishes the toolkit's crates to crates.io under their `fusor-ai-*`
-package names; the library names stay `team`, `kernels`, `blocks`, `bundle`, `compile`,
-`runtime` and `harness`. The crates under `models/` are `publish = false`: a model's CLI, page
-and installer are released from its own repository, built from its `vendor/fusor-ai`.
+Every crate shares one version: `version` under `[workspace.package]` in the root `Cargo.toml`.
+A release publishes the toolkit's crates to crates.io under their `fusor-ai-*` package names;
+the library names stay `team`, `kernels`, `media`, `blocks`, `bundle`, `compile`, `runtime` and
+`harness`. The crates under `models/` are `publish = false`: a model's CLI, page and installer
+are released from its own repository, built from its `vendor/fusor-ai`.
 
 1. Run `just integrate --all` on `main`: every model gives its baseline's outputs.
 2. Bump `version` and the `=x.y.z` pins under `[workspace.dependencies]`, run `just check`

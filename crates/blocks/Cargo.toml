@@ -17,6 +17,8 @@ name = "blocks"
 kernels.workspace = true
 team.workspace = true
 bundle.workspace = true
+media.workspace = true
+serde.workspace = true
 realfft.workspace = true
 
 [lints]

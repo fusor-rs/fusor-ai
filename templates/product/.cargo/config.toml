@@ -1,0 +1,8 @@
+# The kernels select their SIMD path at compile time: SIMD128 (and relaxed SIMD when enabled) in
+# wasm32, NEON `sdot` with the host CPU's features on aarch64. getrandom is routed to the
+# deterministic backend of fusor-ai's `runtime` crate, so runtimes import no entropy source.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128", "--cfg", 'getrandom_backend="custom"']
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-cpu=native"]

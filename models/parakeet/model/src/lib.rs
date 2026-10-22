@@ -20,5 +20,5 @@ pub mod vocabulary;
 
 pub use bundle::Error;
 pub use decoder::Step;
-pub use kernels::wav;
+pub use media::wav;
 pub use model::SAMPLE_RATE;

@@ -15,7 +15,6 @@ mod tables;
 mod tokenizer;
 
 use std::path::Path;
-use std::str::FromStr;
 
 use bundle::{Manifest, Source, TOKENIZER_PART};
 use compile::{BundleWriter, Checkpoint, Error, Profile as _, Tensors};
@@ -60,14 +59,6 @@ impl compile::Profile for Profile {
             Self::F32 => DType::F32,
             Self::Q7 => DType::Q7b32,
         }
-    }
-}
-
-impl FromStr for Profile {
-    type Err = Error;
-
-    fn from_str(name: &str) -> Result<Self, Error> {
-        compile::profile(name)
     }
 }
 

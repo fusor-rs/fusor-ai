@@ -20,70 +20,21 @@
 //! (`[channels]`); the linears `p.pointwise{i}` and `p.out` (its inputs frequency-major,
 //! `f · channels + c`).
 
+mod buffers;
+mod kernel;
+mod shape;
+
 use std::ops::Range;
 
 use bundle::{Load, Scope, Store};
-use kernels::{Linear, QuantizedRows, SharedRows, Vector, project};
-use team::{Ctx, PerThread, SharedBuf};
+use kernels::{Linear, QuantizedRows, SharedRows, project};
+use team::Ctx;
 
-/// The dimensions of one subsampler.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Shape {
-    /// Mel bins of the input features.
-    pub mels: usize,
-    /// Channels of the convolutions.
-    pub channels: usize,
-    /// The side of the square windows, their stride, and how many stages there are.
-    pub kernel: usize,
-    pub stride: usize,
-    pub stages: usize,
-    /// The width of an encoder frame.
-    pub hidden: usize,
-}
-
-impl Shape {
-    /// Mel frames per encoder frame.
-    pub const fn factor(&self) -> usize {
-        self.stride.pow(self.stages as u32)
-    }
-
-    /// Outputs of a stage over `inputs` rows (or frequencies).
-    fn stage_outputs(&self, inputs: usize) -> usize {
-        let padding = self.kernel / 2;
-        (inputs + 2 * padding - self.kernel) / self.stride + 1
-    }
-
-    /// The input rows a stage reads for its output rows `rows`, within `available` input rows.
-    fn reads(&self, rows: &Range<usize>, available: usize) -> Range<usize> {
-        let padding = self.kernel / 2;
-        let first = (self.stride * rows.start).saturating_sub(padding);
-        let last = self.stride * (rows.end - 1) + self.kernel - padding;
-        first..last.min(available)
-    }
-
-    /// The frequencies after every stage, the first the mel bins.
-    fn widths(&self) -> Vec<usize> {
-        let mut width = self.mels;
-        let mut widths = vec![width];
-        for _ in 0..self.stages {
-            width = self.stage_outputs(width);
-            widths.push(width);
-        }
-        widths
-    }
-
-    /// Values of one subsampled frame before the last linear: the last stage's frequencies of
-    /// every channel.
-    fn stacked_width(&self) -> usize {
-        self.widths().last().expect("the mel bins") * self.channels
-    }
-}
-
-/// A stage's convolution: taps and bias.
-struct Kernel {
-    taps: Vector,
-    bias: Vector,
-}
+pub use buffers::Buffers;
+use buffers::Scratch;
+use kernel::{Kernel, Plane};
+use shape::lengths;
+pub use shape::{Frames, Shape};
 
 /// A depthwise convolution and the pointwise linear after it.
 struct Stage {
@@ -98,100 +49,6 @@ pub struct Subsampling {
     conv: Kernel,
     stages: Vec<Stage>,
     out: Linear,
-}
-
-/// Rows of a stage's output: all of them, and the leading ones that are valid. For the last
-/// stage, the encoder frames of `mel_frames` mel frames: the subsampler's output rows, of which
-/// the first `valid` are the encoder's frames.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Frames {
-    pub all: usize,
-    pub valid: usize,
-}
-
-impl Frames {
-    pub fn of(shape: &Shape, mel_frames: usize) -> Self {
-        *lengths(shape, mel_frames)
-            .last()
-            .expect("a subsampler has stages")
-    }
-}
-
-/// Activations of one `forward` over up to `mel_frames` mel frames, each thread computing
-/// `block_frames` output frames at a time (its working set).
-pub struct Buffers {
-    mel_frames: usize,
-    block_frames: usize,
-    /// The last stage's rows, `frames × frequencies · channels`.
-    stacked: SharedBuf,
-    /// The subsampled frames, `frames × hidden`.
-    pub hidden: SharedBuf,
-    scratch: PerThread<Scratch>,
-}
-
-#[derive(Default)]
-struct Scratch {
-    /// The rows of each stage a block reads, and computes.
-    reads: Vec<Range<usize>>,
-    stages: Vec<Vec<f32>>,
-    pointwise: Vec<f32>,
-    quant: QuantizedRows,
-}
-
-impl Buffers {
-    pub fn new(shape: Shape, mel_frames: usize, block_frames: usize, threads: usize) -> Self {
-        let frames = Frames::of(&shape, mel_frames).all;
-        Self {
-            mel_frames,
-            block_frames,
-            stacked: SharedBuf::new(frames * shape.stacked_width()),
-            hidden: SharedBuf::new(frames * shape.hidden),
-            scratch: PerThread::new(threads, Scratch::default),
-        }
-    }
-
-    pub fn mel_frames(&self) -> usize {
-        self.mel_frames
-    }
-}
-
-/// Every stage's output rows for `mel_frames` mel frames.
-fn lengths(shape: &Shape, mel_frames: usize) -> Vec<Frames> {
-    let mut length = Frames {
-        all: mel_frames + 1,
-        valid: mel_frames,
-    };
-    let stages = (0..shape.stages).map(|_| {
-        length = Frames {
-            all: shape.stage_outputs(length.all),
-            valid: shape.stage_outputs(length.valid),
-        };
-        length
-    });
-    stages.collect()
-}
-
-/// Rows of a stage's input: `values` holds rows `first..` of `width × depth` values each; rows
-/// outside it are zeros. Depth 1 is the features (every channel reads the one value).
-struct Plane<'values> {
-    values: &'values [f32],
-    first: usize,
-    width: usize,
-    depth: usize,
-}
-
-impl Plane<'_> {
-    /// The values at `(row, column)`, or `None` for the zeros around the plane (`None`
-    /// coordinates are the padding before it).
-    fn at(&self, row: Option<usize>, column: Option<usize>) -> Option<&[f32]> {
-        let (row, column) = (row?, column?);
-        let rows = self.values.len() / (self.width * self.depth);
-        if !(self.first..self.first + rows).contains(&row) || column >= self.width {
-            return None;
-        }
-        let start = ((row - self.first) * self.width + column) * self.depth;
-        Some(&self.values[start..start + self.depth])
-    }
 }
 
 impl Subsampling {
@@ -293,76 +150,6 @@ fn mix(linear: &Linear, values: &mut [f32], out: &mut Vec<f32>, quant: &mut Quan
 fn relu(values: &mut [f32]) {
     for value in values {
         *value = value.max(0.0);
-    }
-}
-
-impl Kernel {
-    /// Output rows `rows` of this convolution of `input` into `out`, `rows × outputs(width) ×
-    /// channels`; rows from `valid` on are zeros.
-    fn apply(
-        &self,
-        shape: &Shape,
-        input: &Plane,
-        (rows, valid): (Range<usize>, usize),
-        out: &mut Vec<f32>,
-    ) {
-        let channels = self.bias.values().len();
-        let width = shape.stage_outputs(input.width);
-        out.clear();
-        out.resize(rows.len() * width * channels, 0.0);
-        let outputs = out.chunks_exact_mut(width * channels);
-        for (row, values) in rows.take_while(|&row| row < valid).zip(outputs) {
-            for (column, sums) in values.chunks_exact_mut(channels).enumerate() {
-                self.sum_at(shape, input, (row, column), sums);
-            }
-        }
-    }
-
-    /// The bias plus every tap's product at output `(row, column)`.
-    fn sum_at(
-        &self,
-        shape: &Shape,
-        input: &Plane,
-        (row, column): (usize, usize),
-        sums: &mut [f32],
-    ) {
-        let taps = self.taps.values();
-        let (side, stride, padding) = (shape.kernel, shape.stride, shape.kernel / 2);
-        let channels = sums.len();
-        sums.copy_from_slice(self.bias.values());
-        for tap in 0..side * side {
-            let source = (stride * row + tap / side).checked_sub(padding);
-            let at = (stride * column + tap % side).checked_sub(padding);
-            if let Some(x) = input.at(source, at) {
-                accumulate(sums, &taps[tap * channels..(tap + 1) * channels], x);
-            }
-        }
-    }
-}
-
-/// `sums += weights · x`, `x` one value for every channel or one per channel.
-fn accumulate(sums: &mut [f32], weights: &[f32], x: &[f32]) {
-    if let [value] = x {
-        for (sum, weight) in sums.iter_mut().zip(weights) {
-            *sum += weight * value;
-        }
-        return;
-    }
-    for ((sum, weight), value) in sums.iter_mut().zip(weights).zip(x) {
-        *sum += weight * value;
-    }
-}
-
-impl Load for Kernel {
-    type Shape = Shape;
-
-    fn load(store: &mut Store, prefix: &str, shape: Shape) -> Result<Self, bundle::Error> {
-        let taps = shape.kernel * shape.kernel;
-        let mut scope = Scope::new(store, prefix);
-        Ok(Self {
-            taps: scope.load("weight", taps * shape.channels)?,
-            bias: scope.load("bias", shape.channels)?,
-        })
     }
 }
 

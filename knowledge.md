@@ -129,7 +129,6 @@ paddle-ocr-wasm's optimization ledger.
 
 - A page that replays `kernels::matmul` and `ops::attend` with the page's exact store
   closures and run-time sizes answered every "why is the page slower" question of the
-  session in minutes. The one used here lives in paddle-ocr-wasm's
-  `dump/optimizations/harness` (outside the repository proper); the next session should
-  bring it into `scripts/` (or a `bench` crate) with its `real_*` exports, the all-core
-  `bench-many` runner, and both the plain and the shared-memory builds.
+  session in minutes. It lives in `tools/kernel-harness` (from paddle-ocr-wasm's
+  `dump/optimizations/harness`), with its `real_*` exports and the all-core `bench-many`
+  runner.

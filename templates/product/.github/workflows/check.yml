@@ -1,0 +1,9 @@
+name: Check
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    uses: fusor-rs/fusor-ai/.github/workflows/product.yml@main

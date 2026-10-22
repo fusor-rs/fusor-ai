@@ -2,12 +2,15 @@
 //! its prefix — `vision`, `projector`, `llm` — so this is the table of contents; the compiler
 //! (`paddle-ocr-compile`) writes exactly these names.
 
+use blocks::lm::{self, Embedding, Lm};
 use blocks::norm::LayerNorm;
 use blocks::rotary::Rotation;
-use blocks::transformer::{self, Architecture, Transformer};
-use blocks::vit::{self, Vit};
-use bundle::{Load, Scope, Store};
-use kernels::{Linear, Table, Vector};
+use blocks::transformer::{self, Architecture};
+use blocks::vit;
+use blocks::vit::tower::{self, Ending, Tower};
+use bundle::{Load, Scope, Store, Tokenizer};
+use kernels::Linear;
+use media::image::Filter;
 
 use crate::Error;
 
@@ -20,6 +23,16 @@ pub const PATCH_VALUES: usize = CHANNELS * PATCH * PATCH;
 pub const MERGE: usize = 2;
 /// Side of the learned position grid: a 384-pixel image of 14-pixel patches.
 pub const POSITION_GRID: usize = 27;
+
+/// The vision tower: the patch embedding (a 14 × 14 convolution as one matrix), the learned
+/// position grid, the encoder and its final norm.
+pub(crate) const TOWER: tower::Shape = tower::Shape {
+    encoder: VISION_SHAPE,
+    patch_values: PATCH_VALUES,
+    position_grid: POSITION_GRID,
+    resample: Filter::Bilinear,
+    ending: Ending::Norm,
+};
 
 pub const VISION_SHAPE: vit::Shape = vit::Shape {
     hidden: 1152,
@@ -52,15 +65,11 @@ pub const LANGUAGE_SHAPE: transformer::Shape = transformer::Shape {
 };
 pub const HIDDEN: usize = LANGUAGE_SHAPE.hidden;
 pub const VOCABULARY: usize = 103_424;
-
-/// The vision tower: the patch embedding (a 14 × 14 convolution as one matrix), the learned
-/// position grid, the encoder and its final norm.
-pub(crate) struct Vision {
-    pub(crate) patch: Linear,
-    pub(crate) positions: Vec<f32>,
-    pub(crate) encoder: Vit,
-    pub(crate) norm: LayerNorm,
-}
+pub(crate) const LANGUAGE: lm::Shape = lm::Shape {
+    stack: LANGUAGE_SHAPE,
+    vocabulary: VOCABULARY,
+    embedding: Embedding::Own,
+};
 
 /// Four neighbouring patches into one token: LayerNorm, then `down(gelu(up(·)))` of the four
 /// side by side.
@@ -70,50 +79,29 @@ pub(crate) struct Projector {
     pub(crate) down: Linear,
 }
 
-pub(crate) struct Language {
-    pub(crate) embed: Table,
-    pub(crate) body: Transformer,
-    pub(crate) norm: Vector,
-    pub(crate) head: Linear,
-}
-
-pub(crate) struct Model {
-    pub(crate) vision: Vision,
+pub struct Model {
+    pub(crate) vision: Tower,
     pub(crate) projector: Projector,
-    pub(crate) language: Language,
+    pub(crate) language: Lm,
+    pub(crate) tokenizer: Tokenizer,
 }
 
 impl Model {
     pub(crate) fn load(store: &mut Store) -> Result<Self, Error> {
-        let width = VISION_SHAPE.hidden;
-        let positions: Table = Table::load(
-            store,
-            "vision.positions",
-            [POSITION_GRID * POSITION_GRID, width],
-        )?;
-        let vision = Vision {
-            patch: Linear::load(store, "vision.patch", [width, PATCH_VALUES])?,
-            positions: positions.dequantize(),
-            encoder: Vit::load(store, "vision", VISION_SHAPE)?,
-            norm: LayerNorm::load(store, "vision.norm", width)?,
-        };
+        let vision = Tower::load(store, "vision", TOWER)?;
         let mut scope = Scope::new(store, "projector");
         let projector = Projector {
-            norm: scope.load("norm", width)?,
+            norm: scope.load("norm", VISION_SHAPE.hidden)?,
             up: scope.load("up", [MERGED, MERGED])?,
             down: scope.load("down", [HIDDEN, MERGED])?,
         };
-        let mut scope = Scope::new(store, "llm");
-        let language = Language {
-            embed: scope.load("embed", [VOCABULARY, HIDDEN])?,
-            norm: scope.load("norm", HIDDEN)?,
-            head: scope.load("head", [VOCABULARY, HIDDEN])?,
-            body: Transformer::load(store, "llm", LANGUAGE_SHAPE)?,
-        };
+        let language = Lm::load(store, "llm", LANGUAGE)?;
+        let tokenizer = Tokenizer::take(store)?;
         Ok(Self {
             vision,
             projector,
             language,
+            tokenizer,
         })
     }
 }

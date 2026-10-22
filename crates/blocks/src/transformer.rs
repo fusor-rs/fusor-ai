@@ -18,15 +18,12 @@
 //!
 //! A final norm after the last layer, where a model has one, is the model's.
 
-use bundle::{Load, Scope, Store, load_each};
+use bundle::{Load, Store, load_each};
 use kernels::ops::attend;
 use team::{Ctx, SharedBuf};
 
 pub use crate::layer::Buffers;
-use crate::layer::{
-    Activation, Attention, FeedForward, HeadNorms, Heads, Layer, Norm, Pass, Rope, Stack, Widths,
-};
-use crate::norm::LayerNorm;
+use crate::layer::{Attention, Heads, Layer, LayerSpec, Pass, Stack, Widths};
 use crate::rotary::{Position, Rotary, Rotation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +32,17 @@ pub enum Architecture {
     Qwen3,
     Kyutai,
     Clip,
+}
+
+impl Architecture {
+    fn spec(self) -> &'static LayerSpec {
+        match self {
+            Architecture::Qwen2 => &LayerSpec::QWEN2,
+            Architecture::Qwen3 => &LayerSpec::QWEN3,
+            Architecture::Kyutai => &LayerSpec::KYUTAI,
+            Architecture::Clip => &LayerSpec::CLIP,
+        }
+    }
 }
 
 /// The dimensions of one stack.
@@ -61,14 +69,17 @@ impl Shape {
         }
     }
 
-    /// Activations for calls of up to `rows` positions.
-    pub fn buffers(&self, rows: usize, threads: usize) -> Buffers {
-        let widths = Widths {
+    fn widths(&self) -> Widths {
+        Widths {
             hidden: self.hidden,
             heads: self.heads(),
             feed_forward: self.feed_forward,
-        };
-        Buffers::new(&widths, rows, threads)
+        }
+    }
+
+    /// Activations for calls of up to `rows` positions.
+    pub fn buffers(&self, rows: usize, threads: usize) -> Buffers {
+        Buffers::new(&self.widths(), rows, threads)
     }
 }
 
@@ -260,92 +271,16 @@ impl Load for Transformer {
                 "{prefix}: {heads} heads over {kv_heads} KV heads"
             )));
         }
+        let spec = shape.architecture.spec();
         let layers = load_each(
             store,
             &format!("{prefix}.layers"),
             shape.layers,
-            |store, name| layer(store, name, shape),
+            |store, name| Layer::load(store, name, spec, &shape.widths(), shape.norm_eps),
         )?;
-        let rope = match shape.architecture {
-            Architecture::Qwen2 | Architecture::Qwen3 => Some(Rope::Half),
-            Architecture::Kyutai => Some(Rope::Interleaved),
-            Architecture::Clip => None,
-        };
         let rotary = Rotary::new(shape.rotation, shape.rope_base, shape.head_dim);
         Ok(Self {
-            stack: Stack::new(shape.heads(), rope, rotary, layers),
+            stack: Stack::new(shape.heads(), spec.rope, rotary, layers),
         })
     }
-}
-
-fn layer(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, bundle::Error> {
-    match shape.architecture {
-        Architecture::Qwen2 => qwen2_layer(store, prefix, shape),
-        Architecture::Qwen3 => qwen3_layer(store, prefix, shape),
-        Architecture::Kyutai => layer_norm_layer(store, prefix, shape, Activation::GeluErf),
-        Architecture::Clip => layer_norm_layer(store, prefix, shape, Activation::QuickGelu),
-    }
-}
-
-fn qwen2_layer(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, bundle::Error> {
-    let Shape {
-        hidden,
-        feed_forward,
-        norm_eps: eps,
-        ..
-    } = shape;
-    let mut scope = Scope::new(store, prefix);
-    let rms = |weight| Norm::Rms { weight, eps };
-    Ok(Layer {
-        norm1: rms(scope.load("input_norm", hidden)?),
-        qkv: scope.load("qkv", [shape.heads().qkv(), hidden])?,
-        head_norms: None,
-        out: scope.load("o", [hidden, shape.heads().width()])?,
-        norm2: rms(scope.load("post_norm", hidden)?),
-        feed_forward: FeedForward::Gated {
-            gate: scope.load("gate", [feed_forward, hidden])?,
-            up: scope.load("up", [feed_forward, hidden])?,
-            down: scope.load("down", [hidden, feed_forward])?,
-        },
-    })
-}
-
-fn qwen3_layer(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, bundle::Error> {
-    let mut layer = qwen2_layer(store, prefix, shape)?;
-    let mut scope = Scope::new(store, prefix);
-    layer.head_norms = Some(HeadNorms {
-        query: scope.load("q_norm", shape.head_dim)?,
-        key: scope.load("k_norm", shape.head_dim)?,
-        eps: shape.norm_eps,
-    });
-    Ok(layer)
-}
-
-/// A Kyutai or CLIP layer: LayerNorms, and an MLP with `activation`.
-fn layer_norm_layer(
-    store: &mut Store,
-    prefix: &str,
-    shape: Shape,
-    activation: Activation,
-) -> Result<Layer, bundle::Error> {
-    let Shape {
-        hidden,
-        feed_forward,
-        norm_eps: eps,
-        ..
-    } = shape;
-    let mut scope = Scope::new(store, prefix);
-    let layer_norm = |norm: LayerNorm| Norm::Layer { norm, eps };
-    Ok(Layer {
-        norm1: layer_norm(scope.load("norm1", hidden)?),
-        qkv: scope.load("qkv", [shape.heads().qkv(), hidden])?,
-        head_norms: None,
-        out: scope.load("out", [hidden, shape.heads().width()])?,
-        norm2: layer_norm(scope.load("norm2", hidden)?),
-        feed_forward: FeedForward::Plain {
-            up: scope.load("ff1", [feed_forward, hidden])?,
-            down: scope.load("ff2", [hidden, feed_forward])?,
-            activation,
-        },
-    })
 }

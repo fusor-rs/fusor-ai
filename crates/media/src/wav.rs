@@ -1,6 +1,6 @@
 //! WAV files: 16-bit PCM encoding, and decoding of 16-bit PCM or 32-bit float to mono.
 
-use crate::Error;
+use kernels::Error;
 
 const PCM: u16 = 1;
 const FLOAT: u16 = 3;

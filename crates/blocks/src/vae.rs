@@ -17,15 +17,21 @@
 //! `p.norm_out` and `p.conv_out`; the attention's `norm` (a GroupNorm), `qkv` (the fused
 //! projection) and `out` (linears); `resnet` lists a residual block's tensors.
 
+mod attention;
+mod buffers;
+mod walk;
+
 use bundle::{Load, Scope, Store};
 use kernels::Linear;
-use kernels::conv::{self, Conv2d, Grid, Patches, project_rows};
+use kernels::conv::{self, Conv2d, Grid, project_rows};
 use kernels::ops::silu;
-use team::{Ctx, PerThread, SharedBuf};
+use team::Ctx;
 
-use crate::attention::{self, Call, Operand, attend};
 use crate::norm::{GroupNorm, Groups};
-use crate::resnet::{self, Planes, Resnet, Shared};
+use crate::resnet::{self, Resnet, Shared};
+use attention::Attention;
+pub use buffers::Buffers;
+use walk::Walk;
 
 /// The dimensions of one decoder.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -75,74 +81,6 @@ impl Shape {
     pub fn scale(&self) -> u32 {
         self.levels() as u32 - 1
     }
-
-    /// The channels and the doublings of the latents' resolution of each step's output, in the
-    /// order `decode` runs them: `conv_in`, the middle block's residual blocks, then each
-    /// level's residual blocks and its resample. The steps alternate between the two planes.
-    fn steps(&self) -> Vec<(usize, u32)> {
-        let bottom = (self.bottom(), 0);
-        let mut steps = Vec::from([bottom, bottom, bottom]);
-        for (scale, level) in (0..self.levels()).rev().enumerate() {
-            let scale = scale as u32;
-            let channels = self.channels[level];
-            steps.extend(std::iter::repeat_n((channels, scale), self.blocks + 1));
-            if level > 0 {
-                steps.push((channels, scale + 1));
-            }
-        }
-        steps
-    }
-
-    /// Activations for decoding one image of up to `pixels` latent pixels.
-    pub fn buffers(&self, pixels: usize, threads: usize) -> Buffers {
-        let size = |(channels, scale): (usize, u32)| channels * (pixels << (2 * scale));
-        let mut planes = [0; 2];
-        for (step, output) in self.steps().into_iter().enumerate() {
-            planes[step % 2] = planes[step % 2].max(size(output));
-        }
-        let resnets = (0..self.levels()).map(|level| {
-            let scale = self.scale() - level as u32;
-            size((self.channels[level], scale))
-        });
-        let new = SharedBuf::new;
-        Buffers {
-            pixels,
-            latents: new(pixels * self.latent),
-            quantized: new(pixels * self.latent),
-            planes: planes.map(new),
-            inner: new(resnets.fold(0, usize::max)),
-            qkv: new(3 * pixels * self.bottom()),
-            attention: new(pixels * self.bottom()),
-            statistics: new(2 * self.groups),
-            image: new(self.outputs * (pixels << (2 * self.scale()))),
-            patches: PerThread::new(threads, Patches::default),
-            scratch: PerThread::new(threads, attention::Scratch::default),
-        }
-    }
-}
-
-/// Activations of one `decode`.
-pub struct Buffers {
-    pixels: usize,
-    /// The latents in, `pixels × latent`, pixel-major.
-    pub latents: SharedBuf,
-    /// The latents through `post_quant`.
-    quantized: SharedBuf,
-    planes: [SharedBuf; 2],
-    inner: SharedBuf,
-    qkv: SharedBuf,
-    attention: SharedBuf,
-    statistics: SharedBuf,
-    /// The image out, pixel-major, `outputs` channels of every pixel.
-    pub image: SharedBuf,
-    patches: PerThread<Patches>,
-    scratch: PerThread<attention::Scratch>,
-}
-
-struct Attention {
-    norm: GroupNorm,
-    qkv: Linear,
-    out: Linear,
 }
 
 struct Level {
@@ -161,15 +99,6 @@ pub struct Decoder {
     up: Vec<Level>,
     norm_out: GroupNorm,
     conv_out: Conv2d,
-}
-
-/// The planes of one `decode`: which holds the current activations.
-struct Walk<'call> {
-    ctx: &'call Ctx<'call>,
-    buffers: &'call Buffers,
-    shared: Shared<'call>,
-    current: usize,
-    grid: Grid,
 }
 
 impl Decoder {
@@ -226,63 +155,6 @@ impl Decoder {
         self.out(&walk);
     }
 
-    /// The middle block's attention, added to the current plane.
-    fn attend(&self, walk: &Walk) {
-        let Walk {
-            ctx, buffers, grid, ..
-        } = walk;
-        let (x, channels) = (walk.plane(), self.shape.bottom());
-        let normed = &buffers.inner;
-        let identity = std::convert::identity;
-        self.attention
-            .norm
-            .apply(ctx, (x, *grid), (normed, &buffers.statistics), identity);
-        ctx.barrier();
-        let width = 3 * channels;
-        let rows = (normed.read(), grid.pixels());
-        let patches = buffers.patches.get(ctx);
-        project_rows(
-            ctx,
-            &self.attention.qkv,
-            rows,
-            patches,
-            |pixel, col, value| {
-                buffers.qkv.set(pixel * width + col, value);
-            },
-        );
-        ctx.barrier();
-        let part = |offset| Operand {
-            values: buffers.qkv.read(),
-            stride: width,
-            offset,
-        };
-        let call = Call {
-            heads: 1,
-            head_dim: channels,
-            images: grid.images,
-            queries: grid.area(),
-            keys: grid.area(),
-            query: part(0),
-            key: part(channels),
-            value: part(2 * channels),
-        };
-        attend(ctx, &call, &buffers.attention, buffers.scratch.get(ctx));
-        ctx.barrier();
-        let rows = (buffers.attention.read(), grid.pixels());
-        let patches = buffers.patches.get(ctx);
-        project_rows(
-            ctx,
-            &self.attention.out,
-            rows,
-            patches,
-            |pixel, col, value| {
-                let at = pixel * channels + col;
-                x.set(at, x.get(at) + value);
-            },
-        );
-        ctx.barrier();
-    }
-
     /// `image = conv_out(silu(norm_out(current)))`.
     fn out(&self, walk: &Walk) {
         let Walk {
@@ -299,76 +171,6 @@ impl Decoder {
                 buffers.image.set(pixel * outputs + channel, value);
             });
         ctx.barrier();
-    }
-}
-
-impl Walk<'_> {
-    fn plane(&self) -> &SharedBuf {
-        &self.buffers.planes[self.current]
-    }
-
-    /// The plane the next step writes.
-    fn other(&self) -> &SharedBuf {
-        &self.buffers.planes[1 - self.current]
-    }
-
-    /// `other = conv(input)`, then a barrier; `other` becomes the current plane.
-    fn convolve(&mut self, conv: &Conv2d, input: &SharedBuf) {
-        let (ctx, grid, outputs) = (self.ctx, self.grid, conv.outputs());
-        let patches = self.buffers.patches.get(ctx);
-        let output = self.other();
-        conv.forward(
-            ctx,
-            (input.read(), grid),
-            patches,
-            |pixel, channel, value| {
-                output.set(pixel * outputs + channel, value);
-            },
-        );
-        ctx.barrier();
-        self.current = 1 - self.current;
-    }
-
-    /// `other = resnet(current)`, normalizing `current` in place; `other` becomes current.
-    fn resnet(&mut self, resnet: &Resnet) {
-        let input = self.plane();
-        let planes = Planes {
-            input,
-            output: self.other(),
-            normed: input,
-            inner: &self.buffers.inner,
-        };
-        resnet.forward(self.ctx, &planes, self.grid, &self.shared);
-        self.current = 1 - self.current;
-    }
-
-    /// `other = conv(current)` at twice the resolution, then a barrier; `other` becomes
-    /// current.
-    fn upsample(&mut self, conv: &Conv2d) {
-        let (ctx, grid, outputs) = (self.ctx, self.grid, conv.outputs());
-        let input = self.plane().read();
-        let patches = self.buffers.patches.get(ctx);
-        let output = self.other();
-        conv.forward_upsampled(ctx, (input, grid), patches, |pixel, channel, value| {
-            output.set(pixel * outputs + channel, value);
-        });
-        ctx.barrier();
-        self.current = 1 - self.current;
-        self.grid = grid.doubled();
-    }
-}
-
-impl Load for Attention {
-    type Shape = Shape;
-
-    fn load(store: &mut Store, prefix: &str, shape: Shape) -> Result<Self, bundle::Error> {
-        let channels = shape.bottom();
-        let mut scope = Scope::new(store, prefix);
-        Ok(Self {
-            norm: scope.load("norm", shape.norm(channels))?,
-            qkv: scope.load("qkv", [3 * channels, channels])?,
-            out: scope.load("out", [channels; 2])?,
-        })
     }
 }
 

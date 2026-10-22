@@ -14,5 +14,5 @@ pub mod session;
 mod text;
 
 pub use bundle::Error;
-pub use kernels::wav;
+pub use media::wav;
 pub use model::{FRAME_SAMPLES, SAMPLE_RATE};

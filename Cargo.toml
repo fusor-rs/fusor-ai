@@ -2,6 +2,7 @@
 members = [
     "crates/team",
     "crates/kernels",
+    "crates/media",
     "crates/blocks",
     "crates/bundle",
     "crates/compile",
@@ -69,6 +70,7 @@ undocumented_unsafe_blocks = "deny"
 [workspace.dependencies]
 team = { package = "fusor-ai-team", path = "crates/team", version = "=0.1.2" }
 kernels = { package = "fusor-ai-kernels", path = "crates/kernels", version = "=0.1.2" }
+media = { package = "fusor-ai-media", path = "crates/media", version = "=0.1.2" }
 blocks = { package = "fusor-ai-blocks", path = "crates/blocks", version = "=0.1.2" }
 bundle = { package = "fusor-ai-bundle", path = "crates/bundle", version = "=0.1.2" }
 compile = { package = "fusor-ai-compile", path = "crates/compile", version = "=0.1.2" }

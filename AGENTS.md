@@ -16,19 +16,22 @@ The crates are layers. A crate depends only on its own layer or the ones below i
 
 | Layer | Path | Holds |
 | --- | --- | --- |
-| Primitives | `crates/team`, `crates/kernels`, `crates/bundle`, `crates/compile`, `crates/runtime`, `crates/harness` | the SPMD thread team; tensors and their block-quantized formats, the int8 matmul over per-target `arch` backends, f32 operations, `Linear`, `conv` (products over many rows, 2-D convolutions), `rng`, `wav`, `image`; the bundle manifest, the streaming `Store`, the `Load`, `Engine` and `Stages` traits and the bundled `Tokenizer`; the safetensors reader, `BundleWriter` and the profile-driven `Tensors`; the browser runtime shell every model's runtime is built on; the native harness every model's CLI is built on |
-| Blocks | `crates/blocks` | architecture pieces parameterized by a shape: `transformer` (Qwen2, Qwen3, Kyutai and CLIP), `rotary`, `vit`, `dit`, `norm` (LayerNorm, GroupNorm), `adaln_mlp`, `flow` (flow-matching integration), `istft`, `seanet`, `conformer`, `unet` (latent diffusion's UNet), `vae` (its autoencoder's decoder), `dpm` (DPM-Solver++ sampling) |
+| Primitives | `crates/team`, `crates/kernels`, `crates/media`, `crates/bundle`, `crates/compile`, `crates/runtime`, `crates/harness` | the SPMD thread team; tensors and their block-quantized formats, the int8 matmul over per-target `arch` backends, f32 operations, `Linear`, `conv` (products over many rows, 2-D convolutions), `rng`; WAV files and the image resampling of vision models' reference preprocessing (`wav`, `image`); the bundle manifest, the streaming `Store`, the `Load`, `Engine` and `Stages` traits and the bundled `Tokenizer`; the safetensors reader, `BundleWriter` and the profile-driven `Tensors`; the browser runtime shell every model's runtime is built on; the native harness every model's CLI is built on |
+| Blocks | `crates/blocks` | architecture pieces parameterized by a shape: `transformer` (Qwen2, Qwen3, Kyutai and CLIP), `lm` (a causal language model's reader), `rotary`, `vit` (with the vision tower and the image preprocessing of vision-language models), `reading` (reading an image to text, a vision-language model's engine), `dit`, `norm` (LayerNorm, GroupNorm), `adaln_mlp`, `flow` (flow-matching integration), `istft`, `seanet`, `conformer`, `unet` (latent diffusion's UNet), `vae` (its autoencoder's decoder), `dpm` (DPM-Solver++ sampling) |
 | Models | `models/<model>/model`, `compile`, `runtime`, `cli` | one model: its dimensions, tensor names, wiring, sampler settings, prompts and text frontend; its compiler; its browser runtime on the runtime shell; its CLI on the harness. Beside them, `model.toml` (its product repository and the weight formats it uses), `baseline.json` (its outputs at the last accepted commit, `just integrate`) and `reference/` (the script that dumps its goldens from the reference implementation) |
 
-Beside the crates: `packages/host`, the browser side every model shares (`loader.js`,
-`worker.js`, `compute.js`, `thread-host.js`, `protocol.js`), and `scripts/`: the runtime build, the import
-and layer checks, the dev server and the pinned tool installer.
+Beside the crates: `packages/host`, the browser side every model shares (`loader.js`, `worker.js`,
+`compute.js`, `thread-host.js`, `protocol.js`); `packages/e2e`, the shared half of every product's
+headless Chrome run; `packages/ui/base.css`, the stylesheet every page shares; `just/product.just`,
+the recipes every product imports; `templates/`, what `just new-model` and `just new-product`
+scaffold; `tools/kernel-harness`, the page that replays the kernels; and `scripts/`: the runtime
+build, the import and layer checks, the scaffolds, the dev server and the pinned tool installer.
 
 A model's products live in its own repository, which consumes fusor-ai as the git submodule
 `vendor/fusor-ai` and builds its runtime and CLI from it: its page, its end-to-end checks, its
-documentation and its releases. Ming's is
-[ming-wasm](https://github.com/fusor-rs/ming-wasm), Phonon's
-[phonon-wasm](https://github.com/fusor-rs/phonon-wasm), Parakeet Redux's
+documentation and its releases. Its `CLAUDE.md` imports this file as its standard, beside its
+own `AGENTS.md` of product rules. Ming's is [ming-wasm](https://github.com/fusor-rs/ming-wasm),
+Phonon's [phonon-wasm](https://github.com/fusor-rs/phonon-wasm), Parakeet Redux's
 [parakeet-redux-wasm](https://github.com/fusor-rs/parakeet-redux-wasm), Realistic Vision's
 [realistic-vision](https://github.com/fusor-rs/realistic-vision), PaddleOCR-VL's
 [paddle-ocr-wasm](https://github.com/fusor-rs/paddle-ocr-wasm) and OXR's

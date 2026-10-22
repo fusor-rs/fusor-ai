@@ -35,7 +35,7 @@ enum Command {
     Compile {
         checkpoint: PathBuf,
         out: PathBuf,
-        #[arg(long, default_value = "q7")]
+        #[arg(long, default_value = "q7", value_parser = compile::profile::<phonon_compile::Profile>)]
         profile: phonon_compile::Profile,
     },
     /// Synthesize `text` into a WAV file.
