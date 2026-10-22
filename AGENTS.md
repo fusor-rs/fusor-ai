@@ -18,7 +18,7 @@ The crates are layers. A crate depends only on its own layer or the ones below i
 | --- | --- | --- |
 | Primitives | `crates/team`, `crates/kernels`, `crates/bundle`, `crates/compile`, `crates/runtime`, `crates/harness` | the SPMD thread team; tensors and their block-quantized formats, the int8 matmul over per-target `arch` backends, f32 operations, `Linear`, `conv` (products over many rows, 2-D convolutions), `rng`, `wav`, `image`; the bundle manifest, the streaming `Store`, the `Load`, `Engine` and `Stages` traits and the bundled `Tokenizer`; the safetensors reader, `BundleWriter` and the profile-driven `Tensors`; the browser runtime shell every model's runtime is built on; the native harness every model's CLI is built on |
 | Blocks | `crates/blocks` | architecture pieces parameterized by a shape: `transformer` (Qwen2, Qwen3, Kyutai and CLIP), `rotary`, `vit`, `dit`, `norm` (LayerNorm, GroupNorm), `adaln_mlp`, `flow` (flow-matching integration), `istft`, `seanet`, `conformer`, `unet` (latent diffusion's UNet), `vae` (its autoencoder's decoder), `dpm` (DPM-Solver++ sampling) |
-| Models | `models/<model>/model`, `compile`, `runtime`, `cli` | one model: its dimensions, tensor names, wiring, sampler settings, prompts and text frontend; its compiler; its browser runtime on the runtime shell; its CLI on the harness. Beside them, `reference/`, the script that dumps its goldens from the reference implementation |
+| Models | `models/<model>/model`, `compile`, `runtime`, `cli` | one model: its dimensions, tensor names, wiring, sampler settings, prompts and text frontend; its compiler; its browser runtime on the runtime shell; its CLI on the harness. Beside them, `model.toml` (its product repository and the weight formats it uses), `baseline.json` (its outputs at the last accepted commit, `just integrate`) and `reference/` (the script that dumps its goldens from the reference implementation) |
 
 Beside the crates: `packages/host`, the browser side every model shares (`loader.js`,
 `worker.js`, `compute.js`, `thread-host.js`, `protocol.js`), and `scripts/`: the runtime build, the import
@@ -74,9 +74,8 @@ Constraints that hold everywhere:
 - Kernels must agree across targets: a change to an `arch` backend is not done
   until the f64 reference test passes for every backend natively and the
   runtimes (both SIMD128 and relaxed SIMD) of every model whose weight formats
-  it touches produce the same result they did before (`just integrate`): Ming
-  for `Q7b32` and `Q4b32`, Parakeet Redux for `T2b128`, Realistic Vision for
-  `Q7b32`.
+  it touches (the `formats` of its `models/<model>/model.toml`) produce the same
+  result they did before (`just integrate`).
 - Every crate shares the version in `[workspace.package]`.
 
 ## The standard
@@ -324,7 +323,7 @@ import-check self-test, and the layer check. A change to a primitive, a block or
 a model also needs `just integrate` on every model it reaches: its bundles,
 runtimes, parity, smoke and e2e checks, built in the model's repository with its
 `vendor/fusor-ai` submodule at the change, give exactly the outputs of its
-baseline (`integration/<model>.json`) unless the change is meant to move them
+baseline (`models/<model>/baseline.json`) unless the change is meant to move them
 (`--bless`).
 
 ## Final review

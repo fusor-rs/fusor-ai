@@ -1,0 +1,2 @@
+product = "https://github.com/fusor-rs/oxr-wasm"
+formats = ["Q7b32", "Q4b32"]

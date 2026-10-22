@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Integration: builds each model in its product checkout against this fusor-ai commit, and
-// compares everything it produces with the model's baseline, `integration/<model>.json`: the
+// compares everything it produces with the model's baseline, `models/<model>/baseline.json`: the
 // bundles' manifests, the parity lines, and the smoke and e2e outputs and metrics. A refactor
 // must match it exactly; `--bless` records a change meant to move it.
 //
@@ -20,7 +20,6 @@ import { parseArgs } from "node:util";
 
 const ROOT = git(process.cwd(), "rev-parse", "--show-toplevel");
 const CONFIG = JSON.parse(readFileSync(join(ROOT, "integration.json"), "utf8"));
-const BASELINES = join(ROOT, "integration");
 const RUNS = join(ROOT, "target/integrate");
 const PLATFORM = `${process.platform}-${process.arch}`;
 // `CER 0.0123 (3/244)`, `live WER 0.0512`, `WER=0.05`: the metrics the products' checks print,
@@ -54,9 +53,8 @@ for (const model of models) {
     sections.push(section(model, [error.message], null));
     continue;
   }
-  const baselinePath = join(BASELINES, `${model}.json`);
+  const baselinePath = join(ROOT, "models", model, "baseline.json");
   if (values.bless) {
-    mkdirSync(BASELINES, { recursive: true });
     writeFileSync(baselinePath, `${JSON.stringify(record, null, 2)}\n`);
   }
   const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, "utf8")) : null;
