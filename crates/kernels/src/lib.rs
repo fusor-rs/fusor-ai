@@ -22,10 +22,11 @@ pub mod wav;
 
 pub use arch::{DOTS, dot_f32, dot_f32_many};
 pub use linear::{
-    COLUMN_ALIGN, Linear, NARROW_COLUMN_ALIGN, SharedRows, project, project_residual,
+    COLUMN_ALIGN, Linear, NARROW_COLUMN_ALIGN, SharedRows, project, project_input,
+    project_residual, project_residual_input,
 };
-pub use matmul::{Input, QuantizedMatrix, QuantizedRows, matmul};
-pub use quant::{BLOCK, QuantFormat, TERNARY_GROUP};
+pub use matmul::{Input, Quantized, QuantizedMatrix, QuantizedRows, matmul, quantize_rows};
+pub use quant::{BLOCK, QUAD, QuantFormat, TERNARY_GROUP};
 pub use tensor::{DType, Matrix, MatrixStorage, Table, Tensor, Vector};
 
 #[derive(Debug, thiserror::Error)]

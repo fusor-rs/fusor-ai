@@ -3,48 +3,56 @@
     reason = "block loads through raw pointers, as on the SIMD targets"
 )]
 
-use super::ACTIVATION_MAX;
-use crate::quant::{BLOCK, QuantFormat, absmax, unpack_block};
-
-pub(crate) struct Weights([i32; 32]);
-pub(crate) struct Activations([i32; 32]);
+use super::{ACTIVATION_MAX, CHUNKS, EXP_RUN, LANES};
+use crate::ops::{exp, gelu_tanh};
+use crate::quant::{BLOCK, CHUNK_INPUTS, QuantFormat, absmax, unpack_lane};
 
 pub(crate) struct Scalar;
 
 impl super::Backend for Scalar {
-    type Weights = Weights;
-    type Activations = Activations;
-    type Dots = i32;
-    type Sums = f32;
+    type Chunk = [i32; 16];
+    type Dots = [i32; LANES];
+    type Sums = [f32; LANES];
     const TILE: usize = 4;
 
-    unsafe fn load_q7(at: *const u8) -> Self::Weights {
-        // SAFETY: the caller guarantees a block's bytes.
-        unsafe { load_block(QuantFormat::Q7b32, at) }
+    unsafe fn load_q7(at: *const u8) -> [Self::Chunk; CHUNKS] {
+        // SAFETY: the caller guarantees a quad block's bytes.
+        unsafe { load_quad(QuantFormat::Q7b32, at) }
     }
 
-    unsafe fn load_q4(at: *const u8) -> Self::Weights {
-        // SAFETY: the caller guarantees a block's bytes.
-        unsafe { load_block(QuantFormat::Q4b32, at) }
+    unsafe fn load_q4(at: *const u8) -> [Self::Chunk; CHUNKS] {
+        // SAFETY: the caller guarantees a quad block's bytes.
+        unsafe { load_quad(QuantFormat::Q4b32, at) }
     }
 
-    unsafe fn load_t2(at: *const u8) -> Self::Weights {
-        // SAFETY: the caller guarantees a block's bytes.
-        unsafe { load_block(QuantFormat::T2b128, at) }
+    unsafe fn load_t2(at: *const u8) -> [Self::Chunk; CHUNKS] {
+        // SAFETY: the caller guarantees a quad block's bytes.
+        unsafe { load_quad(QuantFormat::T2b128, at) }
     }
 
-    unsafe fn load_activations(at: *const i8) -> Self::Activations {
-        // SAFETY: the caller guarantees 32 readable bytes.
-        let bytes = unsafe { std::slice::from_raw_parts(at, BLOCK) };
-        Activations(std::array::from_fn(|j| i32::from(bytes[j])))
+    unsafe fn broadcast(at: *const i8) -> Self::Chunk {
+        // SAFETY: the caller guarantees 4 readable bytes.
+        let bytes = unsafe { std::slice::from_raw_parts(at, CHUNK_INPUTS) };
+        std::array::from_fn(|i| i32::from(bytes[i % CHUNK_INPUTS]))
     }
 
-    fn zero() -> f32 {
-        0.0
+    unsafe fn load_scales(at: *const f32) -> Self::Sums {
+        // SAFETY: the caller guarantees 4 readable f32s.
+        let scales = unsafe { std::slice::from_raw_parts(at, LANES) };
+        std::array::from_fn(|lane| scales[lane])
+    }
+
+    fn zero() -> Self::Sums {
+        [0.0; LANES]
     }
 
     fn absmax(x: &[f32]) -> f32 {
         absmax(&x[..BLOCK])
+    }
+
+    fn maximum(x: &[f32]) -> f32 {
+        x.iter()
+            .fold(f32::NEG_INFINITY, |max, &value| max.max(value))
     }
 
     fn quantize_block(x: &[f32], scale: f32, out: &mut [i8]) -> i32 {
@@ -58,23 +66,47 @@ impl super::Backend for Scalar {
         sum
     }
 
-    fn seed(correction: i32) -> i32 {
-        correction
+    fn seed(correction: i32) -> Self::Dots {
+        [correction; LANES]
     }
 
-    fn dot(dots: i32, activations: &Self::Activations, weights: &Self::Weights) -> i32 {
-        let products = activations.0.iter().zip(&weights.0);
-        dots + products
-            .map(|(activation, weight)| activation * weight)
-            .sum::<i32>()
+    fn dot(dots: Self::Dots, activations: Self::Chunk, weights: Self::Chunk) -> Self::Dots {
+        std::array::from_fn(|lane| {
+            let products = (0..CHUNK_INPUTS).map(|input| {
+                activations[lane * CHUNK_INPUTS + input] * weights[lane * CHUNK_INPUTS + input]
+            });
+            dots[lane] + products.sum::<i32>()
+        })
     }
 
-    fn scale(sums: f32, dots: i32, scale: f32) -> f32 {
-        sums + dots as f32 * scale
+    fn scale(
+        sums: Self::Sums,
+        dots: Self::Dots,
+        column_scales: Self::Sums,
+        row_scale: f32,
+    ) -> Self::Sums {
+        std::array::from_fn(|lane| {
+            sums[lane] + dots[lane] as f32 * (column_scales[lane] * row_scale)
+        })
     }
 
-    fn sum(sums: f32) -> f32 {
+    fn lanes(sums: Self::Sums) -> [f32; LANES] {
         sums
+    }
+
+    fn exp_sweep(x: &mut [f32], shift: f32) -> [f32; EXP_RUN] {
+        let mut sums = [0.0; EXP_RUN];
+        for run in x.as_chunks_mut::<EXP_RUN>().0 {
+            for (value, sum) in run.iter_mut().zip(&mut sums) {
+                *value = exp(*value - shift);
+                *sum += *value;
+            }
+        }
+        sums
+    }
+
+    fn gelu_tanh(x: [f32; LANES]) -> [f32; LANES] {
+        x.map(gelu_tanh)
     }
 
     fn dot_f32(left: &[f32], right: &[f32]) -> f32 {
@@ -82,12 +114,18 @@ impl super::Backend for Scalar {
     }
 }
 
-/// The codes of one stored block of `format`, widened.
+/// The chunks of one stored quad block of `format`, widened: chunk `c` holds inputs
+/// `4c..4c + 4` of each of the quad's four rows in turn.
 ///
 /// # Safety
-/// `format.quant_bytes(BLOCK)` readable bytes at `at`.
-unsafe fn load_block(format: QuantFormat, at: *const u8) -> Weights {
+/// `format.quant_bytes(LANES · BLOCK)` readable bytes at `at`.
+unsafe fn load_quad(format: QuantFormat, at: *const u8) -> [[i32; 16]; CHUNKS] {
     // SAFETY: forwarded from the caller.
-    let stored = unsafe { std::slice::from_raw_parts(at, format.quant_bytes(BLOCK)) };
-    Weights(unpack_block(format, stored).map(i32::from))
+    let stored = unsafe { std::slice::from_raw_parts(at, format.quant_bytes(LANES * BLOCK)) };
+    let rows: [[u8; BLOCK]; LANES] = std::array::from_fn(|lane| unpack_lane(format, stored, lane));
+    std::array::from_fn(|chunk| {
+        std::array::from_fn(|i| {
+            i32::from(rows[i / CHUNK_INPUTS][chunk * CHUNK_INPUTS + i % CHUNK_INPUTS])
+        })
+    })
 }

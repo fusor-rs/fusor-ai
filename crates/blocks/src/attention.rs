@@ -13,14 +13,12 @@
 
 use std::ops::Range;
 
-use kernels::ops::exp;
-use kernels::{BLOCK, QuantizedMatrix, QuantizedRows, matmul};
+use kernels::ops::exponentials;
+use kernels::{BLOCK, QUAD, QuantizedMatrix, QuantizedRows, matmul};
 use team::{Ctx, SharedBuf};
 
 /// Queries per unit.
 const QUERY_BLOCK: usize = BLOCK;
-/// Independent partial maxima and sums over a row of scores, so that their loops vectorize.
-const LANES: usize = BLOCK / 4;
 
 /// The rows of a query, key or value operand: head `h` of row `r` is the `head_dim` values at
 /// `r · stride + offset + h · head_dim`.
@@ -92,7 +90,8 @@ pub(crate) fn attend(ctx: &Ctx, call: &Call, out: &SharedBuf, scratch: &mut Scra
 }
 
 impl Scratch {
-    /// The keys and the transposed values of `(image, head)`, padded.
+    /// The keys and the transposed values of `(image, head)`, padded. Never inlined, as `unit`.
+    #[inline(never)]
     fn quantize(&mut self, call: &Call, (image, head): (usize, usize)) {
         let (head_dim, keys) = (call.head_dim, call.keys);
         let first = image * keys;
@@ -130,6 +129,12 @@ impl Scratch {
     }
 
     /// The attention of `queries` of `(image, head)` into `out`.
+    ///
+    /// Never inlined: V8 optimizes a wasm function only on a later call, once its tiering
+    /// budget is spent, never a loop already running (no on-stack replacement); inlined into
+    /// the stack's forward, which is entered once per image, this would run in baseline code
+    /// for the whole image.
+    #[inline(never)]
     fn unit(
         &mut self,
         call: &Call,
@@ -154,12 +159,17 @@ impl Scratch {
             padded_query[..head_dim].copy_from_slice(call.query.head(first + row, head, head_dim));
         }
         let (keys_matrix, columns) = (keys.matrix(), padded(call.keys));
-        scores.clear();
+        let keys = call.keys.next_multiple_of(QUAD);
         scores.resize(queries.len() * columns, 0.0);
+        // The product writes `keys` columns of every row; the padding past them must be zero.
+        for row in scores.chunks_exact_mut(columns) {
+            row[keys..].fill(0.0);
+        }
         let scale = 1.0 / (head_dim as f32).sqrt();
         let input = quant.input(&keys_matrix, padded_queries);
-        matmul(&keys_matrix, &input, 0..call.keys, |row, key, value| {
-            scores[row * columns + key] = value * scale;
+        matmul(&keys_matrix, &input, 0..keys, |row, key, values| {
+            let scaled = values.map(|value| value * scale);
+            scores[row * columns + key..][..QUAD].copy_from_slice(&scaled);
         });
         sums.clear();
         let rows = scores.chunks_exact_mut(columns);
@@ -171,39 +181,12 @@ impl Scratch {
             &values_matrix,
             &input,
             0..head_dim,
-            |row, channel, value| {
-                out.set(
-                    (first + row) * stride + head * head_dim + channel,
-                    value / sums[row],
-                );
+            |row, channel, values| {
+                let at = (first + row) * stride + head * head_dim + channel;
+                for (output, value) in out.part(at..at + QUAD).iter_mut().zip(values) {
+                    *output = value / sums[row];
+                }
             },
         );
     }
-}
-
-/// `scores` replaced by `exp(score − max)`; returns their sum.
-fn exponentials(scores: &mut [f32]) -> f32 {
-    let mut maxima = [f32::NEG_INFINITY; LANES];
-    let (lanes, rest) = scores.as_chunks::<LANES>();
-    for chunk in lanes {
-        for (max, score) in maxima.iter_mut().zip(chunk) {
-            *max = max.max(*score);
-        }
-    }
-    let max = rest
-        .iter()
-        .chain(&maxima)
-        .fold(f32::NEG_INFINITY, |max, &score| max.max(score));
-    let mut sums = [0.0; LANES];
-    let (lanes, rest) = scores.as_chunks_mut::<LANES>();
-    for chunk in lanes {
-        for (sum, score) in sums.iter_mut().zip(chunk) {
-            *score = exp(*score - max);
-            *sum += *score;
-        }
-    }
-    for score in rest.iter_mut() {
-        *score = exp(*score - max);
-    }
-    rest.iter().chain(&sums).sum()
 }

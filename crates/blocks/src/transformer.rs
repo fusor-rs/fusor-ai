@@ -17,11 +17,13 @@
 //! A final norm after the last layer, where a model has one, is the model's.
 
 use bundle::{Load, Scope, Store, load_each};
-use kernels::ops::{attend, gelu_erf, quick_gelu};
+use kernels::ops::attend;
 use team::{Ctx, SharedBuf};
 
 pub use crate::layer::Buffers;
-use crate::layer::{Attention, FeedForward, Heads, Layer, Norm, Pass, Rope, Stack, Widths};
+use crate::layer::{
+    Activation, Attention, FeedForward, Heads, Layer, Norm, Pass, Rope, Stack, Widths,
+};
 use crate::norm::LayerNorm;
 use crate::rotary::{Position, Rotary, Rotation};
 
@@ -276,8 +278,8 @@ impl Load for Transformer {
 fn layer(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, bundle::Error> {
     match shape.architecture {
         Architecture::Qwen2 => qwen2_layer(store, prefix, shape),
-        Architecture::Kyutai => layer_norm_layer(store, prefix, shape, gelu_erf),
-        Architecture::Clip => layer_norm_layer(store, prefix, shape, quick_gelu),
+        Architecture::Kyutai => layer_norm_layer(store, prefix, shape, Activation::GeluErf),
+        Architecture::Clip => layer_norm_layer(store, prefix, shape, Activation::QuickGelu),
     }
 }
 
@@ -308,7 +310,7 @@ fn layer_norm_layer(
     store: &mut Store,
     prefix: &str,
     shape: Shape,
-    activation: fn(f32) -> f32,
+    activation: Activation,
 ) -> Result<Layer, bundle::Error> {
     let Shape {
         hidden,

@@ -36,8 +36,13 @@ read -r threads relaxed < <(node --input-type=module -e '
 flags=()
 cargo=(cargo)
 args=(build -p "$PACKAGE" --target wasm32-unknown-unknown --profile "$PROFILE" --target-dir "target/$VARIANT")
-opt=(-O3 --enable-simd --enable-bulk-memory --enable-sign-ext --enable-nontrapping-float-to-int
-  --enable-mutable-globals --enable-reference-types --enable-multivalue)
+# LLVM has already inlined with the crates' attributes in view. wasm-opt's one-caller inlining is
+# unbounded by default and would fold kernels marked #[inline(never)] back into the function a
+# forward enters once per call, which V8 then never tiers up from its baseline compiler; bound it
+# by the flexible inlining limit instead.
+opt=(-O3 -ocimfs=20 --enable-simd --enable-bulk-memory --enable-sign-ext
+  --enable-nontrapping-float-to-int --enable-mutable-globals --enable-reference-types
+  --enable-multivalue)
 if [[ "$threads" == true ]]; then
   cargo=(cargo "+$THREADS_TOOLCHAIN")
   # The crates' rust-version (1.99) is what their aarch64 `sdot` kernels need; the wasm path

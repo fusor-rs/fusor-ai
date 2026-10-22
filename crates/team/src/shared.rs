@@ -8,38 +8,39 @@ use std::ops::Range;
 
 use crate::Ctx;
 
-/// An f32 buffer the team threads share under the barrier discipline (see the crate docs).
-/// Every element is its own `UnsafeCell`, so no access ever borrows the whole buffer mutably.
-pub struct SharedBuf {
-    cells: Box<[UnsafeCell<f32>]>,
+/// A buffer of plain values (f32 unless said otherwise) the team threads share under the
+/// barrier discipline (see the crate docs). Every element is its own `UnsafeCell`, so no access
+/// ever borrows the whole buffer mutably.
+pub struct SharedBuf<T = f32> {
+    cells: Box<[UnsafeCell<T>]>,
 }
 
 // SAFETY: concurrent access follows the crate's discipline (disjoint writers, no reader of an
 // element while it is written between two barriers); the barrier orders the phases.
-unsafe impl Sync for SharedBuf {}
+unsafe impl<T: Send> Sync for SharedBuf<T> {}
 
-impl SharedBuf {
+impl<T: Copy + Default> SharedBuf<T> {
     pub fn new(len: usize) -> Self {
         Self {
-            cells: (0..len).map(|_| UnsafeCell::new(0.0)).collect(),
+            cells: (0..len).map(|_| UnsafeCell::new(T::default())).collect(),
         }
     }
 
     /// All values. Only in phases where no thread writes this buffer.
-    pub fn read(&self) -> &[f32] {
-        // SAFETY: UnsafeCell<f32> has the layout of f32; by the discipline no element is
-        // written while this phase reads it.
+    pub fn read(&self) -> &[T] {
+        // SAFETY: UnsafeCell<T> has the layout of T; by the discipline no element is written
+        // while this phase reads it.
         unsafe { std::slice::from_raw_parts(self.cells.as_ptr().cast(), self.cells.len()) }
     }
 
     /// Reads one value. Only for elements no other thread writes in this phase.
-    pub fn get(&self, index: usize) -> f32 {
+    pub fn get(&self, index: usize) -> T {
         // SAFETY: by the discipline no thread writes this element in this phase.
         unsafe { *self.cells[index].get() }
     }
 
     /// Writes one value. Only for elements no other thread reads or writes in this phase.
-    pub fn set(&self, index: usize, value: f32) {
+    pub fn set(&self, index: usize, value: T) {
         // SAFETY: by the discipline this thread is the element's only accessor in this phase.
         unsafe { *self.cells[index].get() = value }
     }
@@ -49,17 +50,17 @@ impl SharedBuf {
         clippy::mut_from_ref,
         reason = "disjoint ranges per thread, see the crate docs"
     )]
-    pub fn part(&self, range: Range<usize>) -> &mut [f32] {
+    pub fn part(&self, range: Range<usize>) -> &mut [T] {
         let cells = &self.cells[range];
-        // SAFETY: UnsafeCell<f32> has the layout of f32 and grants interior mutability; by the
+        // SAFETY: UnsafeCell<T> has the layout of T and grants interior mutability; by the
         // discipline the range is this thread's alone in this phase.
         unsafe { std::slice::from_raw_parts_mut(UnsafeCell::raw_get(cells.as_ptr()), cells.len()) }
     }
 
     /// Exclusive access outside team runs.
-    pub fn get_mut(&mut self) -> &mut [f32] {
+    pub fn get_mut(&mut self) -> &mut [T] {
         let len = self.cells.len();
-        // SAFETY: `&mut self` excludes every other access; the layout is that of f32.
+        // SAFETY: `&mut self` excludes every other access; the layout is that of T.
         unsafe { std::slice::from_raw_parts_mut(UnsafeCell::raw_get(self.cells.as_ptr()), len) }
     }
 }
@@ -101,8 +102,8 @@ mod tests {
     fn barrier_orders_phases() {
         let team = Team::global();
         let total = team.threads() * 16;
-        let values = SharedBuf::new(total);
-        let sums = SharedBuf::new(team.threads());
+        let values: SharedBuf = SharedBuf::new(total);
+        let sums: SharedBuf = SharedBuf::new(team.threads());
         team.run(|ctx| {
             for index in ctx.split(total, 16) {
                 values.set(index, 1.0);

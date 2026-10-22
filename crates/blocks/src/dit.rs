@@ -7,12 +7,14 @@
 //! `forward` runs inside a team run over `Sequences`: consecutive sequences of equal length.
 
 use bundle::{Load, Scope, Store, load_each};
-use kernels::ops::{attend, gelu_tanh};
+use kernels::ops::attend;
 use kernels::{Linear, NARROW_COLUMN_ALIGN};
 use team::{Ctx, SharedBuf};
 
 pub use crate::layer::Buffers;
-use crate::layer::{Attention, FeedForward, Heads, Layer, Norm, Pass, Rope, Stack, Widths};
+use crate::layer::{
+    Activation, Attention, FeedForward, Heads, Layer, Norm, Pass, Rope, Stack, Widths,
+};
 use crate::rotary::{Rotary, Rotation};
 
 /// The dimensions of one DiT stack.
@@ -193,7 +195,7 @@ fn block(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, bundle:
         feed_forward: FeedForward::Plain {
             up: scope.load("ff1", [feed_forward, hidden])?,
             down: scope.load("ff2", [hidden, feed_forward])?,
-            activation: gelu_tanh,
+            activation: Activation::GeluTanh,
         },
     })
 }

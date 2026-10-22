@@ -1,14 +1,21 @@
 //! The pre-norm layer every transformer block here is made of: `x += out(attention(norm1(x)))`,
 //! then `x += feed_forward(norm2(x))`.
 //!
-//! `Stack::forward` runs inside a team run, per layer five phases separated by barriers: QKV by
-//! heads, with the rotary embeddings of the query and key heads and what the block's attention
-//! keeps of each head; attention; the output projection plus residual by columns; the
-//! feed-forward's first projections by their columns; its last projection plus residual by
-//! columns.
+//! `Stack::forward` runs inside a team run, per layer nine phases separated by barriers: before
+//! each of the four projections, every thread prepares its share of the rows as that
+//! projection's input (normed where the layer norms them, quantized where the weights are
+//! quantized) into buffers the team shares; then QKV by heads, with the rotary embeddings of
+//! the query and key heads and what the block's attention keeps of each head; attention; the
+//! output projection plus residual by columns; the feed-forward's first projections by their
+//! columns; its last projection plus residual by columns.
 
-use kernels::ops::{rms_norm, rope_half, rope_interleaved, silu};
-use kernels::{COLUMN_ALIGN, Linear, QuantizedRows, SharedRows, Vector, project_residual};
+use kernels::ops::{
+    gelu_erf, gelu_tanh_lanes, quick_gelu, rms_norm, rope_half, rope_interleaved, silu,
+};
+use kernels::{
+    BLOCK, COLUMN_ALIGN, Input, Linear, MatrixStorage, QUAD, Quantized, QuantizedRows, Vector,
+    project_residual_input, quantize_rows,
+};
 use team::{Ctx, PerThread, SharedBuf};
 
 use crate::attention;
@@ -40,11 +47,40 @@ pub(crate) enum FeedForward {
     Plain {
         up: Linear,
         down: Linear,
-        activation: fn(f32) -> f32,
+        activation: Activation,
     },
 }
 
+/// A feed-forward's pointwise activation.
+#[derive(Clone, Copy)]
+pub(crate) enum Activation {
+    GeluTanh,
+    GeluErf,
+    QuickGelu,
+}
+
+impl Activation {
+    /// Of four values at a time. Always inlined: a call through a function pointer per quad
+    /// of outputs would cost the projection's store a tenth of the kernel's time.
+    #[inline(always)]
+    fn apply(self, values: [f32; QUAD]) -> [f32; QUAD] {
+        match self {
+            Activation::GeluTanh => gelu_tanh_lanes(values),
+            Activation::GeluErf => values.map(gelu_erf),
+            Activation::QuickGelu => values.map(quick_gelu),
+        }
+    }
+}
+
 impl FeedForward {
+    /// The projection that reads `norm2(hidden)` (the gate's input is the up's too).
+    fn first(&self) -> &Linear {
+        match self {
+            FeedForward::Gated { gate, .. } => gate,
+            FeedForward::Plain { up, .. } => up,
+        }
+    }
+
     fn down(&self) -> &Linear {
         match self {
             FeedForward::Gated { down, .. } | FeedForward::Plain { down, .. } => down,
@@ -108,11 +144,18 @@ pub struct Buffers {
     pub(crate) attention: SharedBuf,
     /// The feed-forward's inner activations.
     inner: SharedBuf,
+    /// A projection's input as `prepare` leaves it: the normed rows for f32 weights (a buffer
+    /// read as it is needs no copy), else the rows quantized for the weights' format.
+    normed: SharedBuf,
+    quants: SharedBuf<i8>,
+    scales: SharedBuf,
+    corrections: SharedBuf<i32>,
     pub(crate) scratch: PerThread<Scratch>,
 }
 
 #[derive(Default)]
 pub(crate) struct Scratch {
+    /// This thread's share of the rows, normed.
     pub(crate) normed: Vec<f32>,
     pub(crate) quant: QuantizedRows,
     pub(crate) scores: Vec<f32>,
@@ -133,6 +176,10 @@ pub(crate) struct Widths {
 
 impl Buffers {
     pub(crate) fn new(widths: &Widths, rows: usize, threads: usize) -> Self {
+        let widest = widths
+            .hidden
+            .max(widths.heads.width())
+            .max(widths.feed_forward);
         Self {
             rows,
             hidden_width: widths.hidden,
@@ -140,6 +187,10 @@ impl Buffers {
             qkv: SharedBuf::new(rows * widths.heads.qkv()),
             attention: SharedBuf::new(rows * widths.heads.width()),
             inner: SharedBuf::new(rows * widths.feed_forward),
+            normed: SharedBuf::new(rows * widths.hidden),
+            quants: SharedBuf::new(rows * widest),
+            scales: SharedBuf::new(rows * widest / BLOCK),
+            corrections: SharedBuf::new(rows * widest / BLOCK),
             scratch: PerThread::new(threads, Scratch::default),
         }
     }
@@ -211,21 +262,31 @@ impl Stack {
             rows,
             heads: self.heads,
         };
-        let quant = || &mut buffers.scratch.get(ctx).quant;
-        let shared = |values| SharedRows { values, rows };
         for (index, layer) in self.layers.iter().enumerate() {
+            prepare(&pass, Source::Normed(&layer.norm1), &layer.qkv);
+            ctx.barrier();
             self.attention_input(&pass, index, layer, attention);
             ctx.barrier();
             attention.attend(&pass, index);
             ctx.barrier();
-            let attended = shared(&buffers.attention);
-            project_residual(ctx, &layer.out, attended, &buffers.hidden, quant());
+            let attended = Source::Buffer(&buffers.attention);
+            prepare(&pass, attended, &layer.out);
+            ctx.barrier();
+            let attended = input(&pass, attended, &layer.out);
+            project_residual_input(ctx, &layer.out, &attended, &buffers.hidden);
+            ctx.barrier();
+            prepare(
+                &pass,
+                Source::Normed(&layer.norm2),
+                layer.feed_forward.first(),
+            );
             ctx.barrier();
             feed_forward(&pass, layer);
             ctx.barrier();
-            let inner = shared(&buffers.inner);
-            let down = layer.feed_forward.down();
-            project_residual(ctx, down, inner, &buffers.hidden, quant());
+            let (inner, down) = (Source::Buffer(&buffers.inner), layer.feed_forward.down());
+            prepare(&pass, inner, down);
+            ctx.barrier();
+            project_residual_input(ctx, down, &input(&pass, inner, down), &buffers.hidden);
             ctx.barrier();
         }
     }
@@ -242,12 +303,14 @@ impl Stack {
         let head_dim = self.heads.head_dim;
         let (buffers, width) = (pass.buffers, self.heads.qkv());
         let scratch = buffers.scratch.get(pass.ctx);
-        normalize(pass, &layer.norm1, &mut scratch.normed);
-        let input = scratch.quant.input(&layer.qkv.matrix(), &scratch.normed);
+        let input = input(pass, Source::Normed(&layer.norm1), &layer.qkv);
         let units = pass.ctx.split(width, head_dim);
-        layer.qkv.project(&input, units.clone(), |row, col, value| {
-            buffers.qkv.set(row * width + col, value);
-        });
+        layer
+            .qkv
+            .project_quads(&input, units.clone(), |row, first, values| {
+                let at = row * width + first;
+                buffers.qkv.part(at..at + QUAD).copy_from_slice(&values);
+            });
         scratch.cos.resize(head_dim / 2, 0.0);
         scratch.sin.resize(head_dim / 2, 0.0);
         let rotated = self.heads.heads + self.heads.kv_heads;
@@ -279,44 +342,113 @@ impl Stack {
     }
 }
 
-/// `norm(hidden)` of the call's rows into this thread's scratch.
-fn normalize(pass: &Pass, norm: &Norm, out: &mut Vec<f32>) {
-    let len = pass.rows * pass.buffers.hidden_width;
-    out.resize(len, 0.0);
-    norm.apply(&pass.buffers.hidden.read()[..len], out);
+/// The rows a projection reads: the residual stream through a norm, or a buffer as it is.
+#[derive(Clone, Copy)]
+enum Source<'layer> {
+    Normed(&'layer Norm),
+    Buffer(&'layer SharedBuf),
+}
+
+/// This thread's share of `source` prepared as `linear`'s input, into the shared buffers:
+/// quantized for quantized weights, else normed (a buffer is its own f32 input). The share is
+/// of the quantization groups of all the rows (whole rows for f32 weights), so that one row is
+/// shared out as evenly as thousands; a row's norm is computed by every thread holding part of
+/// it.
+fn prepare(pass: &Pass, source: Source, linear: &Linear) {
+    let (buffers, matrix) = (pass.buffers, linear.matrix());
+    let width = matrix.cols;
+    let unit = match matrix.storage {
+        MatrixStorage::F32(_) => width,
+        MatrixStorage::Quant { format, .. } => format.group(),
+    };
+    let per_row = width / unit;
+    let share = pass.ctx.split(pass.rows * per_row, 1);
+    let scratch = buffers.scratch.get(pass.ctx);
+    scratch.normed.resize(width, 0.0);
+    for row in share.start / per_row..share.end.div_ceil(per_row) {
+        let units = share.start.max(row * per_row)..share.end.min((row + 1) * per_row);
+        let values = units.start * unit..units.end * unit;
+        let within = values.start - row * width..values.end - row * width;
+        let source_row: &[f32] = match source {
+            Source::Normed(norm) => {
+                let hidden = &buffers.hidden.read()[row * width..(row + 1) * width];
+                norm.apply(hidden, &mut scratch.normed);
+                &scratch.normed
+            }
+            Source::Buffer(buffer) => &buffer.read()[row * width..(row + 1) * width],
+        };
+        match (matrix.storage, source) {
+            (MatrixStorage::F32(_), Source::Normed(_)) => {
+                buffers
+                    .normed
+                    .part(values)
+                    .copy_from_slice(&source_row[within]);
+            }
+            (MatrixStorage::F32(_), Source::Buffer(_)) => {}
+            (MatrixStorage::Quant { format, .. }, _) => quantize_rows(
+                &source_row[within],
+                format,
+                buffers.quants.part(values),
+                buffers.scales.part(units.clone()),
+                buffers.corrections.part(units),
+            ),
+        }
+    }
+}
+
+/// The input `prepare` made for `linear` over the call's rows, once every thread's share is in
+/// (after a barrier).
+fn input<'pass>(pass: &Pass<'pass>, source: Source<'pass>, linear: &Linear) -> Input<'pass> {
+    let (buffers, matrix) = (pass.buffers, linear.matrix());
+    let len = pass.rows * matrix.cols;
+    match (matrix.storage, source) {
+        (MatrixStorage::F32(_), Source::Normed(_)) => Input::F32(&buffers.normed.read()[..len]),
+        (MatrixStorage::F32(_), Source::Buffer(buffer)) => Input::F32(&buffer.read()[..len]),
+        (MatrixStorage::Quant { format, .. }, _) => {
+            let groups = len / format.group();
+            Input::Quant(Quantized {
+                format,
+                quants: &buffers.quants.read()[..len],
+                scales: &buffers.scales.read()[..groups],
+                corrections: &buffers.corrections.read()[..groups],
+            })
+        }
+    }
 }
 
 /// `inner[:, cols]`, the feed-forward of `norm2(hidden)` before its last projection, for this
 /// thread's columns.
 fn feed_forward(pass: &Pass, layer: &Layer) {
-    let Scratch {
-        normed,
-        quant,
-        up_share,
-        ..
-    } = pass.buffers.scratch.get(pass.ctx);
-    normalize(pass, &layer.norm2, normed);
+    let up_share = &mut pass.buffers.scratch.get(pass.ctx).up_share;
+    let input = input(
+        pass,
+        Source::Normed(&layer.norm2),
+        layer.feed_forward.first(),
+    );
     let inner = &pass.buffers.inner;
     match &layer.feed_forward {
         FeedForward::Plain { up, activation, .. } => {
             let width = up.matrix().rows;
-            let input = quant.input(&up.matrix(), normed);
             let cols = pass.ctx.split(width, COLUMN_ALIGN);
-            up.project(&input, cols, |row, col, value| {
-                inner.set(row * width + col, activation(value));
+            up.project_quads(&input, cols, |row, first, values| {
+                let at = row * width + first;
+                inner
+                    .part(at..at + QUAD)
+                    .copy_from_slice(&activation.apply(values));
             });
         }
         FeedForward::Gated { gate, up, .. } => {
             let width = gate.matrix().rows;
-            let input = quant.input(&gate.matrix(), normed);
             let cols = pass.ctx.split(width, COLUMN_ALIGN);
             let share = cols.len();
-            gate.project(&input, cols.clone(), |row, col, value| {
-                inner.set(row * width + col, value);
+            gate.project_quads(&input, cols.clone(), |row, first, values| {
+                let at = row * width + first;
+                inner.part(at..at + QUAD).copy_from_slice(&values);
             });
             up_share.resize(pass.rows * share, 0.0);
-            up.project(&input, cols.clone(), |row, col, value| {
-                up_share[row * share + col - cols.start] = value;
+            up.project_quads(&input, cols.clone(), |row, first, values| {
+                let at = row * share + first - cols.start;
+                up_share[at..at + QUAD].copy_from_slice(&values);
             });
             for row in 0..pass.rows {
                 let gated = inner.part(row * width + cols.start..row * width + cols.end);

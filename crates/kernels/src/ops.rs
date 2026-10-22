@@ -1,7 +1,8 @@
 //! f32 operations of transformer inference: normalization, rotary embeddings, activations and
 //! attention.
 
-use crate::arch::dot_f32;
+use crate::arch::{Active, Backend, DOTS, EXP_RUN, dot_f32, dot_f32_each};
+use crate::quant::QUAD;
 
 /// `out = x · rsqrt(mean(x²) + eps) · weight` for every row of `x` (rows of `weight.len()`).
 pub fn rms_norm(x: &[f32], weight: &[f32], eps: f32, out: &mut [f32]) {
@@ -59,33 +60,77 @@ pub fn rope_interleaved(head: &mut [f32], cos: &[f32], sin: &[f32]) {
     }
 }
 
-/// `eˣ` within about 2 ulp for `x ∈ [−87, 88]` (clamped outside), branch-free so that loops
-/// over it vectorize: `2ⁿ · p(r)` with `n = round(x / ln 2)` and a degree-6 polynomial on
-/// `|r| ≤ ln 2 / 2` (Cephes `expf` coefficients).
+/// `exp`'s range: clamped outside `[EXP_MIN, EXP_MAX]`.
+pub(crate) const EXP_MIN: f32 = -87.0;
+pub(crate) const EXP_MAX: f32 = 88.0;
+/// `ln 2` in two parts, so that `x − n · ln 2` stays exact.
+pub(crate) const LN2_HIGH: f32 = 0.693_359_4;
+pub(crate) const LN2_LOW: f32 = -2.121_944_4e-4;
+/// Cephes `expf`'s polynomial on `|r| ≤ ln 2 / 2`, highest degree first; `r² · p(r) + r + 1`
+/// completes it.
+pub(crate) const EXP_POLYNOMIAL: [f32; 6] = [
+    1.987_569_1e-4,
+    1.398_199_9e-3,
+    8.333_452e-3,
+    4.166_579_6e-2,
+    0.166_666_66,
+    0.5,
+];
+/// f32's exponent bias.
+pub(crate) const EXP_BIAS: i32 = 127;
+
+/// `eˣ` within about 2 ulp for `x ∈ [EXP_MIN, EXP_MAX]` (clamped outside), branch-free so that
+/// loops over it vectorize: `2ⁿ · p(r)` with `n = round(x / ln 2)` and a degree-6 polynomial on
+/// `|r| ≤ ln 2 / 2` (Cephes `expf` coefficients). The backends' `exp_sweep` is the same
+/// arithmetic on four lanes.
 #[inline(always)]
 pub fn exp(x: f32) -> f32 {
-    const LN2_HIGH: f32 = 0.693_359_4;
-    const LN2_LOW: f32 = -2.121_944_4e-4;
-    let x = x.clamp(-87.0, 88.0);
+    let x = x.clamp(EXP_MIN, EXP_MAX);
     let exponent = (x * std::f32::consts::LOG2_E).round_ties_even();
     let remainder = x - exponent * LN2_HIGH - exponent * LN2_LOW;
-    let poly = 1.987_569_1e-4;
-    let poly = poly * remainder + 1.398_199_9e-3;
-    let poly = poly * remainder + 8.333_452e-3;
-    let poly = poly * remainder + 4.166_579_6e-2;
-    let poly = poly * remainder + 0.166_666_66;
-    let poly = poly * remainder + 0.5;
+    let mut poly = EXP_POLYNOMIAL[0];
+    for coefficient in &EXP_POLYNOMIAL[1..] {
+        poly = poly * remainder + coefficient;
+    }
     let poly = poly * remainder * remainder + remainder + 1.0;
-    poly * f32::from_bits(((exponent as i32 + 127) << 23) as u32)
+    poly * f32::from_bits(((exponent as i32 + EXP_BIAS) << 23) as u32)
 }
+
+/// `scores` replaced by `exp(score − max)`: the backend over the whole runs of `EXP_RUN`
+/// values, `exp` over the rest; returns the backend's sums of its results at each offset in
+/// a run.
+fn exponentiate(scores: &mut [f32], max: f32) -> [f32; EXP_RUN] {
+    let sums = Active::exp_sweep(scores, max);
+    let (_, rest) = scores.as_chunks_mut::<EXP_RUN>();
+    for score in rest.iter_mut() {
+        *score = exp(*score - max);
+    }
+    sums
+}
+
+/// `scores` replaced by `exp(score − max)`; returns their sum.
+pub fn exponentials(scores: &mut [f32]) -> f32 {
+    let max = Active::maximum(scores);
+    let sums = exponentiate(scores, max);
+    let (_, rest) = scores.as_chunks::<EXP_RUN>();
+    rest.iter().chain(&sums).sum()
+}
+
+/// `gelu_tanh`'s `u = √(2/π) · (x + 0.044715 · x³)`.
+pub(crate) const GELU_TANH_SCALE: f32 = 0.797_884_6;
+pub(crate) const GELU_TANH_CUBIC: f32 = 0.044_715;
 
 /// GELU, tanh approximation (`nn.GELU(approximate="tanh")`), as `x · σ(2u)`
 /// (`0.5 · (1 + tanh u) = σ(2u)`).
 #[inline(always)]
 pub fn gelu_tanh(x: f32) -> f32 {
-    const SQRT_2_OVER_PI: f32 = 0.797_884_6;
-    let inner = SQRT_2_OVER_PI * (x + 0.044_715 * x * x * x);
+    let inner = GELU_TANH_SCALE * (x + GELU_TANH_CUBIC * x * x * x);
     x / (1.0 + exp(-2.0 * inner))
+}
+
+/// `gelu_tanh` of four values at once, each bit for bit the scalar's.
+pub fn gelu_tanh_lanes(x: [f32; QUAD]) -> [f32; QUAD] {
+    Active::gelu_tanh(x)
 }
 
 /// `erf(x)` within about 2e-7 absolute, branch-free: the odd rational approximation on
@@ -147,16 +192,11 @@ pub fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + exp(-x))
 }
 
-/// `scores` replaced by their softmax.
+/// `scores` replaced by their softmax, the exponentials summed in their order.
 pub fn softmax(scores: &mut [f32]) {
-    let max = scores
-        .iter()
-        .fold(f32::NEG_INFINITY, |max, &score| max.max(score));
-    let mut total = 0.0;
-    for score in scores.iter_mut() {
-        *score = exp(*score - max);
-        total += *score;
-    }
+    let max = Active::maximum(scores);
+    exponentiate(scores, max);
+    let total: f32 = scores.iter().sum();
     scores.iter_mut().for_each(|score| *score /= total);
 }
 
@@ -170,11 +210,21 @@ pub fn attend<'cache>(
     out: &mut [f32],
 ) {
     let scale = 1.0 / (query.len() as f32).sqrt();
-    scores.clear();
-    scores.extend((0..keys).map(|j| dot_f32(query, key_value(j).0) * scale));
+    scores.resize(keys, 0.0);
+    dot_f32_each(
+        query,
+        keys,
+        |j| key_value(j).0,
+        |j, dot| scores[j] = dot * scale,
+    );
     softmax(scores);
     out.fill(0.0);
-    for (j, weight) in scores.iter().enumerate() {
+    let (blocks, rest) = scores.as_chunks::<DOTS>();
+    for (block, weights) in blocks.iter().enumerate() {
+        let values = std::array::from_fn(|offset| key_value(block * DOTS + offset).1);
+        Active::axpy_f32_many(out, *weights, values);
+    }
+    for (j, weight) in (blocks.len() * DOTS..).zip(rest) {
         for (output, component) in out.iter_mut().zip(key_value(j).1) {
             *output += weight * component;
         }
@@ -183,7 +233,8 @@ pub fn attend<'cache>(
 
 #[cfg(test)]
 mod tests {
-    use super::{elu, exp, gelu_erf, gelu_tanh, layer_norm};
+    use super::{elu, exp, exponentials, gelu_erf, gelu_tanh, gelu_tanh_lanes, layer_norm};
+    use crate::arch::{Active, Backend, DOTS};
 
     #[test]
     fn exp_and_activations_match_the_f64_reference() {
@@ -212,6 +263,67 @@ mod tests {
             let error = (f64::from(gelu_erf(x as f32)) - want).abs();
             assert!(error < 3e-7 * (1.0 + want.abs()), "gelu_erf({x})");
         }
+    }
+
+    #[test]
+    fn axpy_f32_many_adds_the_rows_one_at_a_time_bit_for_bit() {
+        let rows: [Vec<f32>; DOTS] = std::array::from_fn(|row| {
+            (0..37)
+                .map(|i| ((i * 7 + row * 3) % 11) as f32 / 3.0 - 1.5)
+                .collect()
+        });
+        let weights = [0.3, -1.25, 0.7, 2.0];
+        let mut want: Vec<f32> = (0..37).map(|i| i as f32 / 5.0).collect();
+        let mut got = want.clone();
+        for (weight, row) in weights.iter().zip(&rows) {
+            for (output, value) in want.iter_mut().zip(row) {
+                *output += weight * value;
+            }
+        }
+        Active::axpy_f32_many(&mut got, weights, rows.each_ref().map(Vec::as_slice));
+        let bits = |values: &[f32]| {
+            values
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(bits(&got), bits(&want));
+    }
+
+    #[test]
+    fn gelu_tanh_lanes_are_the_scalar_gelu_bit_for_bit() {
+        for i in (-2000..=2000).step_by(4) {
+            let x = [i, i + 1, i + 2, i + 3].map(|i| i as f32 / 100.0);
+            let want = x.map(gelu_tanh).map(f32::to_bits);
+            assert_eq!(
+                gelu_tanh_lanes(x).map(f32::to_bits),
+                want,
+                "gelu_tanh({x:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn exponentials_are_the_scalar_exp_of_every_score_less_their_maximum() {
+        let scores: Vec<f32> = (0..37).map(|i| (i * 7 % 11) as f32 - 5.0).collect();
+        let mut swept = scores.clone();
+        let sum = exponentials(&mut swept);
+        let max = 5.0;
+        for (score, value) in scores.iter().zip(&swept) {
+            assert_eq!(
+                value.to_bits(),
+                exp(score - max).to_bits(),
+                "exp({score} − {max})"
+            );
+        }
+        let want: f64 = scores
+            .iter()
+            .map(|score| f64::from(score - max).exp())
+            .sum();
+        assert!(
+            (f64::from(sum) - want).abs() < 1e-6 * want,
+            "{sum} vs {want}"
+        );
     }
 
     #[test]

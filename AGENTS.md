@@ -257,6 +257,10 @@ guaranteed to", "may or may not").
 - No allocation in a per-row or per-block kernel loop.
 - No optimization without a measurement, and no pessimization either: don't
   rebuild, reparse or re-sort the same data in a loop.
+- `knowledge.md` records what measuring the browser runtimes taught (V8's
+  tiering, the kernels' operation budget, stores, vectorization, bit-exactness).
+  Read it before touching a kernel, a store or a split, and add to it only what
+  was measured in a page.
 
 ### Tests: only what guards behavior
 
