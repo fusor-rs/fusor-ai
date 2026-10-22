@@ -44,5 +44,69 @@
       "outputs": {},
       "metrics": []
     }
+  },
+  "timings": {
+    "bench/prompt": {
+      "value": 0.02,
+      "unit": "ms",
+      "spread": 0
+    },
+    "bench/text": {
+      "value": 15.1,
+      "unit": "ms",
+      "spread": 0.609271523178808
+    },
+    "bench/unet": {
+      "value": 2105.72,
+      "unit": "ms",
+      "spread": 0.9637226221909847
+    },
+    "bench/sampler": {
+      "value": 2054.69,
+      "unit": "ms",
+      "spread": 0.5249113004881515
+    },
+    "bench/decode": {
+      "value": 4166.94,
+      "unit": "ms",
+      "spread": 0.5728544207499989
+    },
+    "bench/a generation of 20 steps at guidance 5": {
+      "value": 44500,
+      "unit": "ms",
+      "spread": 0.5213483146067416
+    },
+    "web-threaded/loadMs": {
+      "value": 2154,
+      "unit": "ms"
+    },
+    "web-threaded/metrics.time": {
+      "value": 54200,
+      "unit": "ms"
+    },
+    "web-threaded/metrics.per-step": {
+      "value": 5760,
+      "unit": "ms"
+    },
+    "web-threaded/revisitMs": {
+      "value": 1278,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/loadMs": {
+      "value": 2135,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/metrics.time": {
+      "value": 18300,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/metrics.per-step": {
+      "value": 1950,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/revisitMs": {
+      "value": 1273,
+      "unit": "ms"
+    }
   }
 }

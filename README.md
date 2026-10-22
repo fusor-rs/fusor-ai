@@ -134,7 +134,7 @@ ming-wasm is a complete worked example, and [AGENTS.md](AGENTS.md#repository) sa
 | Browser | `packages/host` | `loader.js` (build choice, part streaming, OPFS cache), `worker.js` (the shared half of a model's engine worker: loading with stale-part eviction, the clamp-free yield, error routing, the request count), `compute.js` (the compute-worker pool), `thread-host.js` and the `protocol.js` they share |
 | | `packages/e2e` | `kit.mjs`: the shared half of a product's headless Chrome run (its flags, the local server, a fresh profile with every request recorded, the revisit check, the results file and exit status) |
 | | `packages/ui` | `base.css`: the palette, layout, masthead, cards, controls and footer every product's page shares, linked before its own `app.css` |
-| Tools | `scripts/` | `build-runtime.sh`, `check-wasm-imports.mjs`, `check-layers.mjs`, `serve.mjs`, `install-tools.sh`, `integrate.mjs` (every model's outputs against its baseline) |
+| Tools | `scripts/` | `build-runtime.sh`, `check-wasm-imports.mjs`, `check-layers.mjs`, `serve.mjs`, `install-tools.sh`, `integrate.mjs` (every model's outputs and timings against its baseline) |
 | | `tools/kernel-harness` | A page that replays the kernels with a page's run-time sizes (`node bench.mjs <module.wasm>`), for explaining kernel speed (`knowledge.md`) |
 
 On crates.io each toolkit crate is `fusor-ai-<name>`, such as `fusor-ai-kernels`, and its library keeps the short name (`use kernels::…`). The model crates are not published.

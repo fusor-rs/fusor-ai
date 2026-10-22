@@ -1,8 +1,8 @@
 {
   "platform": "darwin-arm64",
   "bundles": {
-    "dist/model": "sha256:964651a6d318598fa15990a2a0e6a1b2f2aed6b981431b590fb07274bcb5678c",
-    "dist/model-f32": "sha256:3f2516d9d1d223b63c602c4fe6f2edb74e3231813f0fe66efa6d8cd6b0903bc8"
+    "dist/model": "sha256:60bb25fd240aca0f962ff83c6cb46fc7ce460fc6878d59bb050d47b8e1d6fd67",
+    "dist/model-f32": "sha256:afd1cf2293384d65e06d66be960f8e96986196ef90181269ffd91b1ba9416f49"
   },
   "parity": {
     "status": 0,
@@ -21,8 +21,8 @@
       0
     ],
     "outputs": {
-      "web-single-relaxed.wav": "sha256:c7efb4955598b89859aee387cba63ab7d67ebc830581fb49a7c1abe7cef3260b",
-      "web-single.wav": "sha256:43ee6f558b6dbdf8ace27c07763c4d8d17e35e22a2b4ac6f08a9df010602a9ca"
+      "web-single-relaxed.wav": "sha256:38df6e3afc625332741041d4855fb1ce0cb592c31d41deade7a26faef6c98951",
+      "web-single.wav": "sha256:16c475722010740488e6b3b6de98958a06637cb023c557ec28dc1b08db193e35"
     },
     "metrics": [],
     "unstable": {
@@ -36,8 +36,8 @@
       0
     ],
     "outputs": {
-      "web-threaded-relaxed/.wav": "sha256:043bedcd5691ef0d55df5f5844ad97b3bd6bccbfe041b943499cd78d2ae67a4e",
-      "web-threaded/.wav": "sha256:601c32e913c34cd1ac010281768faf5bdc6bf3827c4c08bdec6f956082550d42"
+      "web-threaded-relaxed/.wav": "sha256:c11d6a849e12865c7d171243ec55e25b251911f24c8d8eac873ab7cd3c05ac35",
+      "web-threaded/.wav": "sha256:cfdd9c4328115abf8e60bffed8daebc7f39f6a961c686ec7598001f91d5bff38"
     },
     "metrics": [
       "WER=0.000",
@@ -46,6 +46,68 @@
     "unstable": {
       "outputs": {},
       "metrics": []
+    }
+  },
+  "timings": {
+    "bench/voice + text prompt (27 tokens)": {
+      "value": 4.49,
+      "unit": "ms",
+      "spread": 1.1091314031180401
+    },
+    "bench/flow": {
+      "value": 0.91,
+      "unit": "ms",
+      "spread": 1.7252747252747251
+    },
+    "bench/decode": {
+      "value": 3.8,
+      "unit": "ms",
+      "spread": 0.6578947368421053
+    },
+    "bench/frame": {
+      "value": 4.71,
+      "unit": "ms",
+      "spread": 0.8619957537154991
+    },
+    "web-threaded/openToFirstAudioMs": {
+      "value": 532,
+      "unit": "ms"
+    },
+    "web-threaded/warm.heard": {
+      "value": 74,
+      "unit": "ms"
+    },
+    "web-threaded/warm.rtf": {
+      "value": 0.061,
+      "unit": ""
+    },
+    "web-threaded/warm.per-frame": {
+      "value": 4.8,
+      "unit": "ms"
+    },
+    "web-threaded/revisitMs": {
+      "value": 278,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/openToFirstAudioMs": {
+      "value": 401,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/warm.heard": {
+      "value": 15,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/warm.rtf": {
+      "value": 0.036,
+      "unit": ""
+    },
+    "web-threaded-relaxed/warm.per-frame": {
+      "value": 2.8,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/revisitMs": {
+      "value": 275,
+      "unit": "ms"
     }
   }
 }

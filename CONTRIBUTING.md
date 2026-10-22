@@ -25,8 +25,11 @@ baseline in `models/<model>/baseline.json`; `integration.json` says how each pro
 checked. A change that moves no number leaves every output identical. A change meant to move
 them records the new outputs with `--bless`, so the baseline's diff shows what moved. A change
 to a kernel backend reaches every model whose weight formats it reads, the `formats` its
-`models/<model>/model.toml` lists. Attach the report, `target/integrate/report.md`, to the pull
-request.
+`models/<model>/model.toml` lists. The run also times the model, its native bench three times and
+the figures its page measured in the e2e runs, and the report sets each timing beside the
+baseline's, flagging those that moved beyond their noise; timings never fail the run, and run
+only on a maintainer's machine, never in CI. Attach the report, `target/integrate/report.md`, to
+the pull request.
 
 Each model's repository runs its `just check` and `just runtimes` on GitHub through this
 repository's reusable [Product workflow](.github/workflows/product.yml).

@@ -436,6 +436,7 @@ name = "fusor-ai-blocks"
 version = "0.1.2"
 dependencies = [
  "fusor-ai-bundle",
+ "fusor-ai-compile",
  "fusor-ai-kernels",
  "fusor-ai-media",
  "fusor-ai-team",

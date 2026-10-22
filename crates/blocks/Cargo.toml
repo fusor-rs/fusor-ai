@@ -21,5 +21,8 @@ media.workspace = true
 serde.workspace = true
 realfft.workspace = true
 
+[dev-dependencies]
+compile.workspace = true
+
 [lints]
 workspace = true

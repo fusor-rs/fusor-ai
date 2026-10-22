@@ -69,5 +69,122 @@
       "outputs": {},
       "metrics": []
     }
+  },
+  "timings": {
+    "bench/preprocess": {
+      "value": 9.99,
+      "unit": "ms",
+      "spread": 0.11611611611611612
+    },
+    "bench/embed": {
+      "value": 14.16,
+      "unit": "ms",
+      "spread": 0.34533898305084737
+    },
+    "bench/encode": {
+      "value": 2881.52,
+      "unit": "ms",
+      "spread": 0.09155584552597246
+    },
+    "bench/project": {
+      "value": 30.04,
+      "unit": "ms",
+      "spread": 0.0848868175765646
+    },
+    "bench/prefill": {
+      "value": 411.64,
+      "unit": "ms",
+      "spread": 0.17223787775726357
+    },
+    "bench/decode": {
+      "value": 2.58,
+      "unit": "ms",
+      "spread": 0.9806201550387595
+    },
+    "bench/read whole": {
+      "value": 3547,
+      "unit": "ms",
+      "spread": 0.12492246969269803
+    },
+    "web-threaded/images.table.first": {
+      "value": 8220,
+      "unit": "ms"
+    },
+    "web-threaded/images.table.speed": {
+      "value": 91,
+      "unit": "/s"
+    },
+    "web-threaded/images.table.wallMs": {
+      "value": 9099,
+      "unit": "ms"
+    },
+    "web-threaded/images.formula.first": {
+      "value": 3210,
+      "unit": "ms"
+    },
+    "web-threaded/images.formula.speed": {
+      "value": 119,
+      "unit": "/s"
+    },
+    "web-threaded/images.formula.wallMs": {
+      "value": 4079,
+      "unit": "ms"
+    },
+    "web-threaded/images.book.first": {
+      "value": 22480,
+      "unit": "ms"
+    },
+    "web-threaded/images.book.speed": {
+      "value": 144,
+      "unit": "/s"
+    },
+    "web-threaded/images.book.wallMs": {
+      "value": 25693,
+      "unit": "ms"
+    },
+    "web-threaded/revisitMs": {
+      "value": 1284,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/images.table.first": {
+      "value": 3990,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/images.table.speed": {
+      "value": 338,
+      "unit": "/s"
+    },
+    "web-threaded-relaxed/images.table.wallMs": {
+      "value": 4304,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/images.formula.first": {
+      "value": 710,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/images.formula.speed": {
+      "value": 359,
+      "unit": "/s"
+    },
+    "web-threaded-relaxed/images.formula.wallMs": {
+      "value": 1049,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/images.book.first": {
+      "value": 6880,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/images.book.speed": {
+      "value": 311,
+      "unit": "/s"
+    },
+    "web-threaded-relaxed/images.book.wallMs": {
+      "value": 8578,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/revisitMs": {
+      "value": 1531,
+      "unit": "ms"
+    }
   }
 }

@@ -29,6 +29,12 @@
       "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
       "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
     ],
+    "bench": "target/release/ming bench dist/model --threads 8",
+    "page": [
+      "loadMs",
+      "generateMs",
+      "revisitMs"
+    ],
     "outputs": [
       ".wav"
     ]
@@ -62,6 +68,14 @@
     "e2e": [
       "ASR_PYTHON=.cache/asr/bin/python node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
       "ASR_PYTHON=.cache/asr/bin/python node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "bench": "target/release/phonon bench dist/model --threads 8",
+    "page": [
+      "openToFirstAudioMs",
+      "warm.heard",
+      "warm.rtf",
+      "warm.per-frame",
+      "revisitMs"
     ],
     "outputs": [
       ".wav"
@@ -98,6 +112,14 @@
       "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
       "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
     ],
+    "bench": "target/release/parakeet bench dist/model fixtures/recordings/02.wav --threads 8",
+    "page": [
+      "loadMs",
+      "file.rtf",
+      "file.delay",
+      "file.wallMs",
+      "revisitMs"
+    ],
     "outputs": [
       ".txt"
     ],
@@ -132,6 +154,13 @@
     "e2e": [
       "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
       "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "bench": "target/release/realistic-vision bench dist/model --threads 8",
+    "page": [
+      "loadMs",
+      "metrics.time",
+      "metrics.per-step",
+      "revisitMs"
     ],
     "outputs": [
       ".rgba"
@@ -168,6 +197,19 @@
       "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
       "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
     ],
+    "bench": "target/release/paddle-ocr bench dist/model fixtures/images/seal.png --task seal --threads 8",
+    "page": [
+      "images.table.first",
+      "images.table.speed",
+      "images.table.wallMs",
+      "images.formula.first",
+      "images.formula.speed",
+      "images.formula.wallMs",
+      "images.book.first",
+      "images.book.speed",
+      "images.book.wallMs",
+      "revisitMs"
+    ],
     "outputs": [
       ".txt"
     ]
@@ -202,6 +244,19 @@
     "e2e": [
       "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
       "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "bench": "target/release/oxr bench dist/model fixtures/images/book.jpg --task page --threads 8",
+    "page": [
+      "images.table.first",
+      "images.table.speed",
+      "images.table.wallMs",
+      "images.formula.first",
+      "images.formula.speed",
+      "images.formula.wallMs",
+      "images.book.first",
+      "images.book.speed",
+      "images.book.wallMs",
+      "revisitMs"
     ],
     "outputs": [
       ".txt"

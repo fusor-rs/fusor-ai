@@ -1,8 +1,8 @@
 {
   "platform": "darwin-arm64",
   "bundles": {
-    "dist/model": "sha256:3a6859d6a97990d8a33988a004f156a49f25dca93a1baffe4c600e1b738fa54b",
-    "dist/model-f32": "sha256:53ef51721bcac133839125247b8b048e20496df876e1bd3d1f4a40b9f142fcfa"
+    "dist/model": "sha256:ee9570caa8026ccb4788819196b9f46d491a7a7e7937f9afc8b4c5a7a73c8b4d",
+    "dist/model-f32": "sha256:745a2f0384219cc0df06409a33945fdb2b78bf1290ab8718bbac9c0ce3440405"
   },
   "parity": {
     "status": 0,
@@ -21,8 +21,8 @@
       0
     ],
     "outputs": {
-      "web-single-relaxed.wav": "sha256:de69aaf3e232a9eaa4efa7628dbbfb0ad618e1eaa1a245930f681d770f37e378",
-      "web-single.wav": "sha256:921ad0f0f77c6c91097f74d374c5480a1d5716f5418956f33d96a76e313ceaf1"
+      "web-single-relaxed.wav": "sha256:8ec3caaba2b9593d4d00ee17b60d55d585a3dbbd5197cfe0ea56a6777929647d",
+      "web-single.wav": "sha256:208a17b64a3d92e46a488e8f5b068ae0fb320259e289ba9bfbe1a396d73dca15"
     },
     "metrics": [],
     "unstable": {
@@ -36,8 +36,8 @@
       0
     ],
     "outputs": {
-      "web-threaded-relaxed/.wav": "sha256:02e2c5860f4944106e1ce3608f720f6d839ec11c4f5e08527a3d1ec0b94dfab5",
-      "web-threaded/.wav": "sha256:a305035ff56a33bb1aace2f15a22f3f6d5a3892da377763364207ed0e7218db4"
+      "web-threaded-relaxed/.wav": "sha256:8cb7f854dade57e3071bfcb6a893313496444646014fc8df34fb32507b31bfee",
+      "web-threaded/.wav": "sha256:f79835d6756c0b13bae5cd22b90d1608c116fb3502e5bfaeb74fe316995877a5"
     },
     "metrics": [
       "WER=0.000",
@@ -46,6 +46,82 @@
     "unstable": {
       "outputs": {},
       "metrics": []
+    }
+  },
+  "timings": {
+    "bench/threads 8: prefill 158 tokens": {
+      "value": 120,
+      "unit": "ms",
+      "spread": 0.13333333333333333
+    },
+    "bench/flow quality": {
+      "value": 20.04,
+      "unit": "ms",
+      "spread": 0.14371257485029953
+    },
+    "bench/flow balanced": {
+      "value": 19.51,
+      "unit": "ms",
+      "spread": 0.16504356740133258
+    },
+    "bench/flow fast": {
+      "value": 12.47,
+      "unit": "ms",
+      "spread": 0.21732157177225334
+    },
+    "bench/vocode": {
+      "value": 3.15,
+      "unit": "ms",
+      "spread": 0.13650793650793655
+    },
+    "bench/aggregate": {
+      "value": 0.92,
+      "unit": "ms",
+      "spread": 0.14130434782608695
+    },
+    "bench/decode": {
+      "value": 1.62,
+      "unit": "ms",
+      "spread": 0.11728395061728392
+    },
+    "bench/frame (quality )": {
+      "value": 25.34,
+      "unit": "ms",
+      "spread": 0.12707182320441998
+    },
+    "bench/frame (balanced)": {
+      "value": 25.47,
+      "unit": "ms",
+      "spread": 0.13898704358068326
+    },
+    "bench/frame (fast )": {
+      "value": 18.09,
+      "unit": "ms",
+      "spread": 0.18684355997788837
+    },
+    "web-threaded/loadMs": {
+      "value": 4117,
+      "unit": "ms"
+    },
+    "web-threaded/generateMs": {
+      "value": 4423,
+      "unit": "ms"
+    },
+    "web-threaded/revisitMs": {
+      "value": 1031,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/loadMs": {
+      "value": 2829,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/generateMs": {
+      "value": 2170,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/revisitMs": {
+      "value": 1023,
+      "unit": "ms"
     }
   }
 }

@@ -4,6 +4,10 @@
 // bundles' manifests, the parity lines, and the smoke and e2e outputs and metrics. A refactor
 // must match it exactly; `--bless` records a change meant to move it.
 //
+// It also times the model: its native bench, and the figures its page measured in the e2e runs.
+// The report sets them beside the baseline's and flags those that moved beyond their noise;
+// timings never fail the run.
+//
 //   node scripts/integrate.mjs <model>… [--bless] [--commit <rev>]
 //   node scripts/integrate.mjs --all
 //
@@ -27,6 +31,18 @@ const PLATFORM = `${process.platform}-${process.arch}`;
 const METRIC = /(?:\b[a-z]+ )?\b(?:CER|WER)[ =][0-9.]+(?: \(\d+\/\d+\))?/g;
 // The e2e runs prefix their files with the run's time: `2026-10-22T11-02-33-123Z-book.txt`.
 const STAMP = /^\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d+Z-?/;
+// A bench line's label and its first time: `  encode   12.34 ms/frame`,
+// `threads 8: prefill 12 tokens 345 ms`, `a generation of 20 steps …: 27.5 s`. The figures after
+// it on the line derive from that one.
+const BENCH_LINE = /^\s*(.*?)[\s:]+(\d+(?:\.\d+)?) (ms|s)\b/;
+// A page figure as the page shows it: `2.0 ms`, `4.86 s`, `378/s`, or a ratio (`0.024`, a
+// real-time factor). A number is milliseconds (`loadMs`).
+const PAGE_FIGURE = /^(\d+(?:\.\d+)?)\s*(ms|s|\/s)?$/;
+const BENCH_RUNS = 3;
+// A timing moved when it changed by more than this share of its baseline, or by more than twice
+// the spread of the bench runs behind either when that is wider.
+const NOISE = 0.1;
+const TIMING_TABLE = ["| Timing | Baseline | Now | Change |", "| --- | --- | --- | --- |"];
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -50,7 +66,7 @@ for (const model of models) {
     record = integrate(model, CONFIG[model]);
   } catch (error) {
     identical = false;
-    sections.push(section(model, [error.message], null));
+    sections.push(section(model, [error.message], null, null));
     continue;
   }
   const baselinePath = join(ROOT, "models", model, "baseline.json");
@@ -60,7 +76,7 @@ for (const model of models) {
   const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, "utf8")) : null;
   const differences = baseline ? compare(baseline, record) : ["no baseline: run with --bless"];
   identical &&= differences.length === 0;
-  sections.push(section(model, differences, record));
+  sections.push(section(model, differences, record, baseline));
 }
 const report = [`# Integration of fusor-ai ${commit}`, "", `Platform: ${PLATFORM}.`, "", ...sections];
 writeFileSync(join(RUNS, "report.md"), `${report.join("\n")}\n`);
@@ -93,6 +109,7 @@ function integrate(model, spec) {
       parity: parity(model, product, spec.parity, log),
       smoke: check(model, product, spec, "smoke", log),
       e2e: check(model, product, spec, "e2e", log),
+      timings: { ...bench(model, product, spec.bench, log), ...pageTimings(model, spec.page) },
     };
   } finally {
     git(vendor, "checkout", "--quiet", pinned);
@@ -141,12 +158,62 @@ function check(model, product, spec, name, log) {
   };
 }
 
+/** The bench's times over `BENCH_RUNS` runs: each line's median, and the runs' spread around it. */
+function bench(model, product, command, log) {
+  const runs = Array.from({ length: BENCH_RUNS }, () => {
+    const { status, stdout } = shell(model, product, command, log);
+    if (status !== 0) throw new Error(`\`${command}\` failed with ${status}; see ${log}`);
+    return stdout.split("\n").flatMap((line) => {
+      const [, label, number, unit] = BENCH_LINE.exec(line) ?? [];
+      if (!label) return [];
+      return [[`bench/${label.replace(/\s+/g, " ")}`, milliseconds(Number(number), unit)]];
+    });
+  });
+  return Object.fromEntries(
+    runs[0].map(([name], line) => {
+      const times = runs.map((run) => run[line][1]).sort((a, b) => a - b);
+      const median = times[Math.floor(times.length / 2)];
+      return [name, { value: median, unit: "ms", spread: (times.at(-1) - times[0]) / median }];
+    }),
+  );
+}
+
+/** The figures `fields` names in each e2e run's results, by build: `web-threaded/loadMs`. A
+ * figure the run did not reach (its check failed first) is null. */
+function pageTimings(model, fields) {
+  const runs = join(RUNS, model, "e2e");
+  const results = readdirSync(runs, { recursive: true }).filter((file) => file.endsWith(".json"));
+  return Object.fromEntries(
+    results.flatMap((file) => {
+      const shown = JSON.parse(readFileSync(join(runs, file), "utf8"));
+      return fields.map((field) => {
+        const value = field.split(".").reduce((parent, key) => parent?.[key], shown);
+        return [`${dirname(file)}/${field}`, value === undefined ? null : figure(value)];
+      });
+    }),
+  );
+}
+
+function figure(shown) {
+  if (typeof shown === "number") return { value: shown, unit: "ms" };
+  const [, number, unit = ""] = PAGE_FIGURE.exec(shown) ?? [];
+  if (number === undefined) throw new Error(`${JSON.stringify(shown)}: not a page figure`);
+  if (unit === "s" || unit === "ms") {
+    return { value: milliseconds(Number(number), unit), unit: "ms" };
+  }
+  return { value: Number(number), unit };
+}
+
+function milliseconds(number, unit) {
+  return unit === "s" ? number * 1000 : number;
+}
+
 function compare(baseline, record) {
   const differences = [];
   const walk = (path, want, got) => {
     if (typeof want === "object" && want !== null && typeof got === "object" && got !== null) {
       for (const key of new Set([...Object.keys(want), ...Object.keys(got)])) {
-        if (key !== "unstable") walk([...path, key], want[key], got[key]);
+        if (key !== "unstable" && key !== "timings") walk([...path, key], want[key], got[key]);
       }
     } else if (want !== got) {
       differences.push(`\`${path.join(".")}\`: baseline ${JSON.stringify(want)}, now ${JSON.stringify(got)}`);
@@ -156,16 +223,39 @@ function compare(baseline, record) {
   return differences;
 }
 
-function section(model, differences, record) {
+function section(model, differences, record, baseline) {
   const verdict = differences.length === 0 ? "identical to its baseline" : `${differences.length} differences`;
   const unstable = record ? [...record.smoke.unstable.metrics, ...record.e2e.unstable.metrics] : [];
+  const timings = record
+    ? [...TIMING_TABLE, ...timingRows(baseline?.timings, record.timings), ""]
+    : [];
   return [
     `## ${model}: ${verdict}`,
     "",
     ...differences.map((difference) => `- ${difference}`),
     ...unstable.map((metric) => `- not reproducible, held to its threshold only: ${metric}`),
     "",
+    ...timings,
   ].join("\n");
+}
+
+/** Each timing beside its baseline's, flagged when it moved beyond its noise. */
+function timingRows(baseline, timings) {
+  return Object.entries(timings).map(([name, now]) => {
+    const was = baseline?.[name];
+    if (!was || !now) return `| ${name} | ${shown(was)} | ${shown(now)} | |`;
+    const change = now.value / was.value - 1;
+    const noise = Math.max(NOISE, 2 * (now.spread ?? 0), 2 * (was.spread ?? 0));
+    const slower = now.unit === "/s" ? change < 0 : change > 0;
+    const moved = Math.abs(change) > noise ? (slower ? " **slower**" : " **faster**") : "";
+    return `| ${name} | ${shown(was)} | ${shown(now)} | ${(change * 100).toFixed(1)}%${moved} |`;
+  });
+}
+
+function shown(figure) {
+  if (!figure) return "–";
+  const value = Number(figure.value.toPrecision(4));
+  return figure.unit === "/s" ? `${value}/s` : `${value} ${figure.unit}`.trim();
 }
 
 function shell(model, product, command, log) {
