@@ -1,5 +1,6 @@
 //! The pre-norm layer every transformer block here is made of: `x += out(attention(norm1(x)))`,
-//! then `x += feed_forward(norm2(x))`.
+//! then `x += feed_forward(norm2(x))`; a layer may RMS-normalize each query and key head before
+//! the rotary embeddings (Qwen3).
 //!
 //! `Stack::forward` runs inside a team run, per layer nine phases separated by barriers: before
 //! each of the four projections, every thread prepares its share of the rows as that
@@ -91,9 +92,17 @@ impl FeedForward {
 pub(crate) struct Layer {
     pub(crate) norm1: Norm,
     pub(crate) qkv: Linear,
+    pub(crate) head_norms: Option<HeadNorms>,
     pub(crate) out: Linear,
     pub(crate) norm2: Norm,
     pub(crate) feed_forward: FeedForward,
+}
+
+/// RMSNorms over each head of the queries and of the keys, `head_dim` wide.
+pub(crate) struct HeadNorms {
+    pub(crate) query: Vector,
+    pub(crate) key: Vector,
+    pub(crate) eps: f32,
 }
 
 /// How rotary embeddings pair the elements of a head.
@@ -161,6 +170,8 @@ pub(crate) struct Scratch {
     pub(crate) scores: Vec<f32>,
     cos: Vec<f32>,
     sin: Vec<f32>,
+    /// A query or key head on its way through its norm.
+    head: Vec<f32>,
     /// A gated feed-forward's `up` projection of this thread's columns.
     up_share: Vec<f32>,
     /// A vision encoder's attention over all of an image's patches.
@@ -313,6 +324,7 @@ impl Stack {
             });
         scratch.cos.resize(head_dim / 2, 0.0);
         scratch.sin.resize(head_dim / 2, 0.0);
+        scratch.head.resize(head_dim, 0.0);
         let rotated = self.heads.heads + self.heads.kv_heads;
         for row in 0..pass.rows {
             let position = attention.position(row);
@@ -326,11 +338,25 @@ impl Stack {
                 let head = buffers.qkv.part(at..at + head_dim);
                 let unit = start / head_dim;
                 if unit < rotated {
-                    self.rotate(head, scratch);
+                    self.position(layer, unit, head, scratch);
                 }
                 attention.keep(index, unit, position, head);
             }
         }
+    }
+
+    /// Query or key head `unit` normed, where the layer norms heads, then rotated.
+    fn position(&self, layer: &Layer, unit: usize, head: &mut [f32], scratch: &mut Scratch) {
+        if let Some(norms) = &layer.head_norms {
+            let weight = if unit < self.heads.heads {
+                &norms.query
+            } else {
+                &norms.key
+            };
+            scratch.head.copy_from_slice(head);
+            rms_norm(&scratch.head, weight.values(), norms.eps, head);
+        }
+        self.rotate(head, scratch);
     }
 
     fn rotate(&self, head: &mut [f32], scratch: &Scratch) {

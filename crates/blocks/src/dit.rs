@@ -190,6 +190,7 @@ fn block(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, bundle:
     Ok(Layer {
         norm1: rms(scope.load("norm1", hidden)?),
         qkv: scope.load("qkv", [shape.heads().qkv(), hidden])?,
+        head_norms: None,
         out: scope.load("out", [hidden, hidden])?,
         norm2: rms(scope.load("norm2", hidden)?),
         feed_forward: FeedForward::Plain {

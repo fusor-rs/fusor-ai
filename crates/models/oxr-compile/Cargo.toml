@@ -1,0 +1,23 @@
+[package]
+name = "fusor-ai-oxr-compile"
+description = "Compiles the OXR-1.0 checkpoint into a bundle: what to keep, renames, q/k/v fusion, the vision MLP and the visual head padded to whole blocks, the visual embeddings transposed into one matrix and the dtype of every tensor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../../README.md"
+keywords = ["fusor", "ocr", "safetensors", "quantization", "wasm"]
+categories = ["development-tools", "computer-vision"]
+
+[lib]
+name = "oxr_compile"
+
+[dependencies]
+oxr.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
+compile.workspace = true
+kernels.workspace = true
+
+[lints]
+workspace = true

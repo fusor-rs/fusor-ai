@@ -92,7 +92,7 @@ impl Projector {
         for token in ctx.split(tokens, 1) {
             let merged = buffers.merged.part(token * MERGED..(token + 1) * MERGED);
             let slots = merged.as_chunks_mut::<WIDTH>().0;
-            for (patch, slot) in merged_patches(grid, token).into_iter().zip(slots) {
+            for (patch, slot) in grid.merged_patches(token, MERGE).zip(slots) {
                 let row = &seen[patch * WIDTH..(patch + 1) * WIDTH];
                 self.norm
                     .apply(row, PROJECTOR_NORM_EPS, slot.as_mut_slice());
@@ -117,13 +117,4 @@ impl Projector {
         });
         ctx.barrier();
     }
-}
-
-/// The patches of merged token `token`: its block's top left, top right, bottom left, bottom
-/// right.
-fn merged_patches(grid: Grid, token: usize) -> [usize; MERGED_PATCHES] {
-    let blocks_across = grid.columns / MERGE;
-    let (top, left) = (token / blocks_across * MERGE, token % blocks_across * MERGE);
-    let at = |row: usize, column: usize| (top + row) * grid.columns + left + column;
-    [at(0, 0), at(0, 1), at(1, 0), at(1, 1)]
 }

@@ -5,6 +5,8 @@
 //! - Qwen2: RMSNorm, a fused QKV with biases, rotary embeddings by halves, a SiLU-gated MLP.
 //!   Tensors under a prefix `p`: `p.layers.{i}.{input_norm, qkv, o, post_norm, gate, up, down}`
 //!   (q, k and v fused into `qkv`). ERNIE 4.5 is the same layer without biases.
+//! - Qwen3: Qwen2's layer without biases, each query and key head RMS-normalized before its
+//!   rotary embeddings, by `p.layers.{i}.{q_norm, k_norm}` (`head_dim` wide).
 //! - Kyutai's streaming transformer (Moshi, Mimi, Pocket TTS, Phonon): LayerNorm, a bias-free
 //!   fused QKV, interleaved rotary embeddings, multi-head attention and an exact-GELU MLP without
 //!   biases; a checkpoint's layer-scale factors are folded into `out` and `ff2` by its compiler.
@@ -22,7 +24,7 @@ use team::{Ctx, SharedBuf};
 
 pub use crate::layer::Buffers;
 use crate::layer::{
-    Activation, Attention, FeedForward, Heads, Layer, Norm, Pass, Rope, Stack, Widths,
+    Activation, Attention, FeedForward, HeadNorms, Heads, Layer, Norm, Pass, Rope, Stack, Widths,
 };
 use crate::norm::LayerNorm;
 use crate::rotary::{Position, Rotary, Rotation};
@@ -30,6 +32,7 @@ use crate::rotary::{Position, Rotary, Rotation};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Architecture {
     Qwen2,
+    Qwen3,
     Kyutai,
     Clip,
 }
@@ -264,7 +267,7 @@ impl Load for Transformer {
             |store, name| layer(store, name, shape),
         )?;
         let rope = match shape.architecture {
-            Architecture::Qwen2 => Some(Rope::Half),
+            Architecture::Qwen2 | Architecture::Qwen3 => Some(Rope::Half),
             Architecture::Kyutai => Some(Rope::Interleaved),
             Architecture::Clip => None,
         };
@@ -278,6 +281,7 @@ impl Load for Transformer {
 fn layer(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, bundle::Error> {
     match shape.architecture {
         Architecture::Qwen2 => qwen2_layer(store, prefix, shape),
+        Architecture::Qwen3 => qwen3_layer(store, prefix, shape),
         Architecture::Kyutai => layer_norm_layer(store, prefix, shape, Activation::GeluErf),
         Architecture::Clip => layer_norm_layer(store, prefix, shape, Activation::QuickGelu),
     }
@@ -295,6 +299,7 @@ fn qwen2_layer(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, b
     Ok(Layer {
         norm1: rms(scope.load("input_norm", hidden)?),
         qkv: scope.load("qkv", [shape.heads().qkv(), hidden])?,
+        head_norms: None,
         out: scope.load("o", [hidden, shape.heads().width()])?,
         norm2: rms(scope.load("post_norm", hidden)?),
         feed_forward: FeedForward::Gated {
@@ -303,6 +308,17 @@ fn qwen2_layer(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, b
             down: scope.load("down", [hidden, feed_forward])?,
         },
     })
+}
+
+fn qwen3_layer(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, bundle::Error> {
+    let mut layer = qwen2_layer(store, prefix, shape)?;
+    let mut scope = Scope::new(store, prefix);
+    layer.head_norms = Some(HeadNorms {
+        query: scope.load("q_norm", shape.head_dim)?,
+        key: scope.load("k_norm", shape.head_dim)?,
+        eps: shape.norm_eps,
+    });
+    Ok(layer)
 }
 
 /// A Kyutai or CLIP layer: LayerNorms, and an MLP with `activation`.
@@ -323,6 +339,7 @@ fn layer_norm_layer(
     Ok(Layer {
         norm1: layer_norm(scope.load("norm1", hidden)?),
         qkv: scope.load("qkv", [shape.heads().qkv(), hidden])?,
+        head_norms: None,
         out: scope.load("out", [hidden, shape.heads().width()])?,
         norm2: layer_norm(scope.load("norm2", hidden)?),
         feed_forward: FeedForward::Plain {

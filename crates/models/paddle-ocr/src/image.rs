@@ -3,7 +3,7 @@
 //! to [−1, 1], and cut into 14 × 14 patches in row-major order, each channel-major.
 
 use blocks::vit::Grid;
-use kernels::image::{Pixels, Size};
+use kernels::image::{Filter, Pixels, Size};
 use serde::Serialize;
 
 use crate::Error;
@@ -39,7 +39,7 @@ impl Patches {
     /// The patches of an RGB or RGBA image.
     pub fn of(image: &Pixels) -> Result<Self, Error> {
         let size = resized(image.size)?;
-        let rgb = image.rgb().resize_bicubic(size);
+        let rgb = image.rgb().resize(size, Filter::Bicubic);
         let grid = Grid {
             rows: size.height / PATCH,
             columns: size.width / PATCH,

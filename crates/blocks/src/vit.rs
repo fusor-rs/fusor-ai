@@ -62,6 +62,14 @@ impl Grid {
     pub fn patches(self) -> usize {
         self.rows * self.columns
     }
+
+    /// The patches of the `token`th `merge × merge` block, the blocks row-major (the grid's
+    /// sides are multiples of `merge`), and the patches of the block row-major too.
+    pub fn merged_patches(self, token: usize, merge: usize) -> impl Iterator<Item = usize> {
+        let blocks_across = self.columns / merge;
+        let (top, left) = (token / blocks_across * merge, token % blocks_across * merge);
+        (0..merge * merge).map(move |at| (top + at / merge) * self.columns + left + at % merge)
+    }
 }
 
 pub struct Vit {
@@ -162,6 +170,7 @@ fn layer(store: &mut Store, prefix: &str, shape: Shape) -> Result<Layer, bundle:
     Ok(Layer {
         norm1: layer_norm(scope.load("norm1", hidden)?),
         qkv: scope.load("qkv", [shape.heads().qkv(), hidden])?,
+        head_norms: None,
         out: scope.load("out", [hidden, hidden])?,
         norm2: layer_norm(scope.load("norm2", hidden)?),
         feed_forward: FeedForward::Plain {
