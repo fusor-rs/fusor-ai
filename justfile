@@ -23,3 +23,8 @@ host:
 # Models → blocks → primitives (AGENTS.md, "Repository").
 layers:
     node scripts/check-layers.mjs
+
+# Builds the models in their product checkouts and compares every output with its baseline
+# (scripts/integrate.mjs): `just integrate ming oxr`, `just integrate --all`.
+integrate *args:
+    node scripts/integrate.mjs {{args}}

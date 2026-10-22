@@ -1,0 +1,167 @@
+{
+  "ming": {
+    "product": "ming-wasm",
+    "build": [
+      "just model",
+      "rm -rf dist/model-f32",
+      "target/release/ming compile .cache/Ming-3.0-tts-0.5B dist/model-f32 --profile f32",
+      "just runtimes",
+      "just page",
+      "cd e2e && npm install --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model",
+      "dist/model-f32"
+    ],
+    "parity": "target/release/ming parity dist/model-f32 fixtures/goldens/ref_f32_A.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single.wav",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed.wav"
+    ],
+    "e2e": [
+      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "outputs": [
+      ".wav"
+    ]
+  },
+  "phonon": {
+    "product": "phonon-wasm",
+    "build": [
+      "just model",
+      "rm -rf dist/model-f32",
+      "target/release/phonon compile .cache/phonon-31m-en dist/model-f32 --profile f32",
+      "just runtimes",
+      "just page",
+      "cd e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model",
+      "dist/model-f32"
+    ],
+    "parity": "target/release/phonon parity dist/model-f32 fixtures/goldens/golden_f32_A.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single.wav",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed.wav"
+    ],
+    "e2e": [
+      "ASR_PYTHON=.cache/asr/bin/python node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "ASR_PYTHON=.cache/asr/bin/python node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "outputs": [
+      ".wav"
+    ]
+  },
+  "parakeet": {
+    "product": "parakeet-redux-wasm",
+    "build": [
+      "just model",
+      "just recordings",
+      "rm -rf dist/model-f32",
+      "target/release/parakeet compile .cache/parakeet-redux dist/model-f32 --profile f32",
+      "just runtimes",
+      "just page",
+      "cd e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model",
+      "dist/model-f32"
+    ],
+    "parity": "target/release/parakeet parity dist/model-f32 fixtures/goldens/golden_f32_A.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed"
+    ],
+    "e2e": [
+      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "outputs": [
+      ".txt"
+    ]
+  },
+  "realistic-vision": {
+    "product": "realistic-vision",
+    "build": [
+      "just model",
+      "rm -rf dist/model-f32",
+      "target/release/realistic-vision compile .cache/realistic-vision dist/model-f32 --profile f32",
+      "just runtimes",
+      "just page",
+      "cd e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model",
+      "dist/model-f32"
+    ],
+    "parity": "target/release/realistic-vision parity dist/model-f32 fixtures/goldens/golden_f32.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single.rgba",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed.rgba"
+    ],
+    "e2e": [
+      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "outputs": [
+      ".rgba"
+    ]
+  },
+  "paddle-ocr": {
+    "product": "paddle-ocr-wasm",
+    "build": [
+      "just model",
+      "just images",
+      "rm -rf dist/model-f32",
+      "target/release/paddle-ocr compile .cache/checkpoint dist/model-f32 --profile f32",
+      "just runtimes",
+      "just page",
+      "cd e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model",
+      "dist/model-f32"
+    ],
+    "parity": "target/release/paddle-ocr parity dist/model-f32 fixtures/goldens/golden_f32_textline.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed"
+    ],
+    "e2e": [
+      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "outputs": [
+      ".txt"
+    ]
+  },
+  "oxr": {
+    "product": "oxr-wasm",
+    "build": [
+      "just model",
+      "just images",
+      "rm -rf dist/model-f32",
+      "target/release/oxr compile .cache/checkpoint dist/model-f32 --profile f32",
+      "just runtimes",
+      "just page",
+      "cd e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model",
+      "dist/model-f32"
+    ],
+    "parity": "target/release/oxr parity dist/model-f32 fixtures/goldens/golden_f32_textline.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed"
+    ],
+    "e2e": [
+      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "outputs": [
+      ".txt"
+    ]
+  }
+}

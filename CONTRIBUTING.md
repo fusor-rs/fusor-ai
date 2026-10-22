@@ -8,18 +8,24 @@ natively and for `wasm32-unknown-unknown` (SIMD128 and relaxed SIMD), checks the
 package and the import-check self-test, and checks that every crate depends only on its own
 layer or lower ones (`AGENTS.md`, "Repository").
 
-A change to a primitive, a block or a model also has to run through the runtimes of every
-model it reaches, because the wasm backends only execute there. A model's runtimes live in
-its own repository ([ming-wasm](https://github.com/fusor-rs/ming-wasm),
+A change to a primitive, a block or a model also has to run through the runtimes of every model
+it reaches, because the wasm backends only execute there. A model's runtimes, page and checks
+live in its own repository ([ming-wasm](https://github.com/fusor-rs/ming-wasm),
 [phonon-wasm](https://github.com/fusor-rs/phonon-wasm),
 [parakeet-redux-wasm](https://github.com/fusor-rs/parakeet-redux-wasm),
-[realistic-vision](https://github.com/fusor-rs/realistic-vision)): point its
-`vendor/fusor-ai` submodule at your change, run `just build` there once, then
-`just runtimes`, `just smoke`, `just parity` and `just e2e`. A change to a kernel backend
-reaches every model whose weight formats it reads: Ming for `Q7b32` and `Q4b32`, Parakeet
-Redux for `T2b128`, Realistic Vision for `Q7b32` (its weights and its attention's keys and
-values). Say in the pull request what they showed (parity numbers, real-time
-factor, word error rate).
+[realistic-vision](https://github.com/fusor-rs/realistic-vision),
+[paddle-ocr-wasm](https://github.com/fusor-rs/paddle-ocr-wasm),
+[oxr-wasm](https://github.com/fusor-rs/oxr-wasm)), checked out beside this one. `just integrate
+<model>…` (or `--all`) points each one's `vendor/fusor-ai` submodule at the current commit,
+builds its bundles, runtimes and page, runs its parity, Node smoke and headless-Chrome e2e
+checks, restores the pin, and compares every output with the model's baseline in
+`integration/<model>.json`; `integration.json` says how each product is built and checked. A
+change that moves no number leaves every output identical. A change meant to move them records
+the new outputs with `--bless`, so the baseline's diff shows what moved. A change to a kernel
+backend reaches every model whose weight formats it reads: Ming for `Q7b32` and `Q4b32`,
+Parakeet Redux for `T2b128`, Realistic Vision for `Q7b32` (its weights and its attention's keys
+and values). Attach the report, `target/integrate/report.md`, to the pull request.
+
 Each model's repository runs its `just check` and `just runtimes` on GitHub through this
 repository's reusable [Product workflow](.github/workflows/product.yml).
 

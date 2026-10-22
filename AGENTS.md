@@ -73,9 +73,9 @@ Constraints that hold everywhere:
 - Kernels must agree across targets: a change to an `arch` backend is not done
   until the f64 reference test passes for every backend natively and the
   runtimes (both SIMD128 and relaxed SIMD) of every model whose weight formats
-  it touches produce the same result they did before (`just smoke` and
-  `just e2e` in the model's repository, its submodule at the change): Ming for
-  `Q7b32` and `Q4b32`, Parakeet Redux for `T2b128`, Realistic Vision for `Q7b32`.
+  it touches produce the same result they did before (`just integrate`): Ming
+  for `Q7b32` and `Q4b32`, Parakeet Redux for `T2b128`, Realistic Vision for
+  `Q7b32`.
 - Every crate shares the version in `[workspace.package]`.
 
 ## The standard
@@ -320,12 +320,11 @@ just check
 It runs formatting, the workspace tests, Clippy natively and for
 `wasm32-unknown-unknown` (SIMD128 and relaxed SIMD), docs, the host package and
 import-check self-test, and the layer check. A change to a primitive, a block or
-a model also needs the runtime build and checks of every model it reaches, run
-in the model's repository (ming-wasm, phonon-wasm, parakeet-redux-wasm,
-realistic-vision, paddle-ocr-wasm, oxr-wasm) with its
-`vendor/fusor-ai` submodule at the change: `just runtimes`, `just smoke`,
-`just parity` (the same numbers as before unless the change is meant to move
-them) and `just e2e`.
+a model also needs `just integrate` on every model it reaches: its bundles,
+runtimes, parity, smoke and e2e checks, built in the model's repository with its
+`vendor/fusor-ai` submodule at the change, give exactly the outputs of its
+baseline (`integration/<model>.json`) unless the change is meant to move them
+(`--bless`).
 
 ## Final review
 
