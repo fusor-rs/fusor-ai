@@ -15,7 +15,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { parseArgs } from "node:util";
 
 const ROOT = git(process.cwd(), "rev-parse", "--show-toplevel");
@@ -23,8 +23,9 @@ const CONFIG = JSON.parse(readFileSync(join(ROOT, "integration.json"), "utf8"));
 const BASELINES = join(ROOT, "integration");
 const RUNS = join(ROOT, "target/integrate");
 const PLATFORM = `${process.platform}-${process.arch}`;
-// `CER 0.0123 (3/244)`, `WER 0.0000 (0/52)`, `WER=0.05`: the metrics the products' checks print.
-const METRIC = /\b(?:CER|WER)[ =][0-9.]+(?: \(\d+\/\d+\))?/g;
+// `CER 0.0123 (3/244)`, `live WER 0.0512`, `WER=0.05`: the metrics the products' checks print,
+// with the word naming the case when one precedes them.
+const METRIC = /(?:\b[a-z]+ )?\b(?:CER|WER)[ =][0-9.]+(?: \(\d+\/\d+\))?/g;
 // The e2e runs prefix their files with the run's time: `2026-10-22T11-02-33-123Z-book.txt`.
 const STAMP = /^\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d+Z-?/;
 
@@ -50,7 +51,7 @@ for (const model of models) {
     record = integrate(model, CONFIG[model]);
   } catch (error) {
     identical = false;
-    sections.push(section(model, [error.message]));
+    sections.push(section(model, [error.message], null));
     continue;
   }
   const baselinePath = join(BASELINES, `${model}.json`);
@@ -61,7 +62,7 @@ for (const model of models) {
   const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, "utf8")) : null;
   const differences = baseline ? compare(baseline, record) : ["no baseline: run with --bless"];
   identical &&= differences.length === 0;
-  sections.push(section(model, differences));
+  sections.push(section(model, differences, record));
 }
 const report = [`# Integration of fusor-ai ${commit}`, "", `Platform: ${PLATFORM}.`, "", ...sections];
 writeFileSync(join(RUNS, "report.md"), `${report.join("\n")}\n`);
@@ -91,7 +92,7 @@ function integrate(model, spec) {
     return {
       platform: PLATFORM,
       bundles: Object.fromEntries(spec.bundles.map((bundle) => [bundle, sha256(join(product, bundle, "manifest.json"))])),
-      parity: lines(shell(model, product, spec.parity, log).stdout),
+      parity: parity(model, product, spec.parity, log),
       smoke: check(model, product, spec, "smoke", log),
       e2e: check(model, product, spec, "e2e", log),
     };
@@ -110,24 +111,45 @@ function fetchGoldens(model, product, goldens, log) {
   }
 }
 
-/** Runs a check's commands with `{out}` in each replaced by its output directory: the hashes of
- * the outputs it wrote there and the metrics it printed, whatever its exit status. */
+function parity(model, product, command, log) {
+  const { status, stdout } = shell(model, product, command, log);
+  return { status, lines: stdout.split("\n").filter((line) => line !== "") };
+}
+
+/** Runs a check's commands with `{out}` in each replaced by its output directory, and records
+ * each command's exit status, the hashes of the outputs written there and the metrics printed.
+ * The outputs and metrics whose `<check>/<name>` matches the model's `unstable` pattern come from
+ * a check that is not reproducible (live audio fed in real time): they are recorded under
+ * `unstable`, which the comparison skips, so only the exit statuses hold them to their
+ * thresholds. */
 function check(model, product, spec, name, log) {
   const out = join(RUNS, model, name);
   mkdirSync(out, { recursive: true });
-  const printed = spec[name].map((command) => shell(model, product, command.replaceAll("{out}", out), log).stdout);
-  const outputs = readdirSync(out, { recursive: true })
+  const runs = spec[name].map((command) => shell(model, product, command.replaceAll("{out}", out), log));
+  const files = readdirSync(out, { recursive: true })
     .filter((file) => spec.outputs.some((extension) => file.endsWith(extension)))
-    .sort()
-    .map((file) => [join(dirname(file), file.split("/").pop().replace(STAMP, "")), sha256(join(out, file))]);
-  return { outputs: Object.fromEntries(outputs), metrics: printed.join("").match(METRIC) ?? [] };
+    .sort();
+  const unstable = (text) => spec.unstable !== undefined && new RegExp(spec.unstable).test(`${name}/${text}`);
+  const outputs = files.map((file) => [join(dirname(file), basename(file).replace(STAMP, "")), sha256(join(out, file))]);
+  const metrics = runs.flatMap(({ stdout }) => stdout.match(METRIC) ?? []);
+  return {
+    statuses: runs.map(({ status }) => status),
+    outputs: Object.fromEntries(outputs.filter(([file]) => !unstable(file))),
+    metrics: metrics.filter((metric) => !unstable(metric)),
+    unstable: {
+      outputs: Object.fromEntries(outputs.filter(([file]) => unstable(file))),
+      metrics: metrics.filter(unstable),
+    },
+  };
 }
 
 function compare(baseline, record) {
   const differences = [];
   const walk = (path, want, got) => {
     if (typeof want === "object" && want !== null && typeof got === "object" && got !== null) {
-      for (const key of new Set([...Object.keys(want), ...Object.keys(got)])) walk([...path, key], want[key], got[key]);
+      for (const key of new Set([...Object.keys(want), ...Object.keys(got)])) {
+        if (key !== "unstable") walk([...path, key], want[key], got[key]);
+      }
     } else if (want !== got) {
       differences.push(`\`${path.join(".")}\`: baseline ${JSON.stringify(want)}, now ${JSON.stringify(got)}`);
     }
@@ -136,9 +158,16 @@ function compare(baseline, record) {
   return differences;
 }
 
-function section(model, differences) {
+function section(model, differences, record) {
   const verdict = differences.length === 0 ? "identical to its baseline" : `${differences.length} differences`;
-  return [`## ${model}: ${verdict}`, "", ...differences.map((difference) => `- ${difference}`), ""].join("\n");
+  const unstable = record ? [...record.smoke.unstable.metrics, ...record.e2e.unstable.metrics] : [];
+  return [
+    `## ${model}: ${verdict}`,
+    "",
+    ...differences.map((difference) => `- ${difference}`),
+    ...unstable.map((metric) => `- not reproducible, held to its threshold only: ${metric}`),
+    "",
+  ].join("\n");
 }
 
 function shell(model, product, command, log) {
@@ -147,10 +176,6 @@ function shell(model, product, command, log) {
   const result = spawnSync("sh", ["-c", command], { cwd: product, encoding: "utf8", maxBuffer: 1 << 30 });
   appendFileSync(log, `${result.stdout}${result.stderr}exit ${result.status}\n\n`);
   return result;
-}
-
-function lines(text) {
-  return text.split("\n").filter((line) => line !== "");
 }
 
 function sha256(path) {

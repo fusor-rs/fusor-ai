@@ -100,7 +100,8 @@
     ],
     "outputs": [
       ".txt"
-    ]
+    ],
+    "unstable": "^e2e/.*live"
   },
   "realistic-vision": {
     "product": "realistic-vision",
