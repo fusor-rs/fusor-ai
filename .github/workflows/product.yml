@@ -1,0 +1,52 @@
+name: Product
+# The checks of a product repository (a model's page, built on fusor-ai through its
+# `vendor/fusor-ai` submodule), called from the product's own workflow:
+#
+#   jobs:
+#     check:
+#       uses: fusor-rs/fusor-ai/.github/workflows/product.yml@main
+#
+# Linux only: some products are private repositories, where macOS minutes count
+# ten times against the free quota.
+on: workflow_call
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@1.99.0
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@just
+      - run: just check
+
+  # The four runtimes, each through the sealed-runtime import check.
+  runtimes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@1.99.0
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@just
+      - run: just tools
+      - run: just runtimes

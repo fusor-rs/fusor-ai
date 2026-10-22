@@ -20,6 +20,8 @@ reaches every model whose weight formats it reads: Ming for `Q7b32` and `Q4b32`,
 Redux for `T2b128`, Realistic Vision for `Q7b32` (its weights and its attention's keys and
 values). Say in the pull request what they showed (parity numbers, real-time
 factor, word error rate).
+Each model's repository runs its `just check` and `just runtimes` on GitHub through this
+repository's reusable [Product workflow](.github/workflows/product.yml).
 
 The threaded runtimes need `nightly-2025-11-15` with `rust-src`
 (`rustup toolchain install nightly-2025-11-15 --component rust-src --target
