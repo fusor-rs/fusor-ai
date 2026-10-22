@@ -1,11 +1,11 @@
 # Contributing
 
-Use Rust 1.99 or later, edition 2024, Node.js 20 or later, and `just`. `unsafe` is denied
+Use Rust 1.99 or later, edition 2024, Node.js 20 or later, Python 3 and `just`. `unsafe` is denied
 except in the modules that state why they need it (see `AGENTS.md`).
 
 Run `just check` before considering a change complete. It formats, tests and lints the crates
 natively and for `wasm32-unknown-unknown` (SIMD128 and relaxed SIMD), checks the host
-package and the import-check self-test, and checks that every crate depends only on its own
+package, the import-check self-test and the golden-dump scripts' syntax, and checks that every crate depends only on its own
 layer or lower ones (`AGENTS.md`, "Repository").
 
 A change to a primitive, a block or a model also has to run through the runtimes of every model

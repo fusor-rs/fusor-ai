@@ -18,6 +18,7 @@ wasm:
 host:
     for file in packages/host/*.js scripts/*.mjs; do node --check "$file" || exit 1; done
     for file in scripts/*.sh; do bash -n "$file" || exit 1; done
+    for file in models/*/reference/*.py; do python3 -m py_compile "$file" || exit 1; done
     node scripts/check-wasm-imports.mjs --selftest
 
 # Models → blocks → primitives (AGENTS.md, "Repository").
