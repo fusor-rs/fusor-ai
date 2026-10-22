@@ -2,4 +2,6 @@
 .DS_Store
 /.tools/
 /.cache/
+/models/*/reference/target/
+__pycache__/
 .idea/

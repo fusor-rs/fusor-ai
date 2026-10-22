@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Enforces the crate layers of AGENTS.md: models → blocks → primitives, never upwards. A model
-// may depend on its own family (`ming-compile` → `ming`), never on another model. Blocks must
-// not name tensors or hard-code dimensions: those belong to a model.
+// Enforces the crate layers of AGENTS.md: models → blocks → primitives, never upwards. A model's
+// crates may depend on each other (`models/ming/cli` → `models/ming/model`), never on another
+// model. Blocks must not name tensors or hard-code dimensions: those belong to a model.
 
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
@@ -10,7 +10,7 @@ import { join, relative } from "node:path";
 const LAYERS = [
   { name: "primitive", match: /^crates\/(team|kernels|bundle|compile|runtime|harness)$/ },
   { name: "block", match: /^crates\/blocks$/ },
-  { name: "model", match: /^crates\/models\/[^/]+$/ },
+  { name: "model", match: /^models\/[^/]+\/(model|compile|runtime|cli)$/ },
 ];
 const BLOCK_SOURCES = "crates/blocks/src";
 const LITMUS = [
@@ -35,8 +35,8 @@ function layerOf(dir) {
   return layer;
 }
 
-// `crates/models/ming-compile` belongs to the `ming` family.
-const familyOf = (dir) => dir.split("/").pop().split("-")[0];
+// `models/ming/compile` belongs to the `ming` family.
+const familyOf = (dir) => dir.split("/")[1];
 const crates = new Map(
   metadata.packages.map((pkg) => {
     const dir = directoryOf(pkg);

@@ -1,0 +1,14 @@
+# The reference's goldens for `phonon parity` (`just goldens`): Gradium's own Rust runtime at a
+# pinned commit, outside the workspace and its lints.
+[package]
+name = "phonon-golden-harness"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+ptts = { git = "https://github.com/gradium-ai/xn-ptts", rev = "6f42148066dfe3640ab2099d5c2f088c826937d6", features = ["hf"] }
+xn = "=0.2.12"
+anyhow = "=1.0.104"
+
+[workspace]

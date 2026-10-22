@@ -8,8 +8,9 @@
 # (+ relaxed SIMD), web-threaded and web-threaded-relaxed (shared memory and Rayon workers: the
 # `threads` feature of <package>, built with THREADS_TOOLCHAIN, build-std and the atomics flags
 # fusor pins for its workers).
-# The crate is built with the Cargo profile PROFILE (default `wasm`), each variant in its own
-# target directory. TOOLS holds wasm-bindgen and wasm-opt (scripts/install-tools.sh).
+# The crate is built in fusor-ai's workspace, with its lock and Cargo configuration, under the
+# Cargo profile PROFILE (default `wasm`), each variant in its own target directory under the
+# caller's `target/`. TOOLS holds wasm-bindgen and wasm-opt (scripts/install-tools.sh).
 set -euo pipefail
 PACKAGE="$1"
 VARIANT="$2"
@@ -35,7 +36,7 @@ read -r threads relaxed < <(node --input-type=module -e '
 
 flags=()
 cargo=(cargo)
-args=(build -p "$PACKAGE" --target wasm32-unknown-unknown --profile "$PROFILE" --target-dir "target/$VARIANT")
+args=(build -p "$PACKAGE" --target wasm32-unknown-unknown --profile "$PROFILE" --target-dir "$PWD/target/$VARIANT")
 # LLVM has already inlined with the crates' attributes in view. wasm-opt's one-caller inlining is
 # unbounded by default and would fold kernels marked #[inline(never)] back into the function a
 # forward enters once per call, which V8 then never tiers up from its baseline compiler; bound it
@@ -63,7 +64,7 @@ if ((${#flags[@]})); then
   cargo+=(--config "target.wasm32-unknown-unknown.rustflags=[$joined]")
 fi
 
-"${cargo[@]}" "${args[@]}"
+(cd "$HERE/.." && "${cargo[@]}" "${args[@]}")
 out="$DIST/$VARIANT"
 rm -rf "$out"
 "$TOOLS/wasm-bindgen" --target web --no-typescript --out-dir "$out" --out-name "$LIB" \

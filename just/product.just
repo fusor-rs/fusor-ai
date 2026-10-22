@@ -3,10 +3,12 @@
 #   import 'vendor/fusor-ai/just/product.just'
 #   name := "paddle-ocr"
 #
-# where `name` names its crates (`<name>-runtime`, `<name>-cli`), and adds its own `host` (the
-# syntax checks of its scripts), `model` (the bundle in dist/model), `fixtures` (the fixed inputs
-# its checks read; an empty recipe when there are none) and whatever else is its own. A runtime
-# that needs more shared memory than build-runtime.sh's 2 GB sets `export MAX_MEMORY := "…"`.
+# where `name` names its model in fusor-ai, `models/<name>`, whose crates `<name>-runtime` and
+# `<name>-cli` are built in fusor-ai's workspace into the product's `target/`. It adds its own
+# `host` (the syntax checks of its scripts), `model` (the bundle in dist/model), `fixtures` (the
+# fixed inputs its checks read; an empty recipe when there are none) and whatever else is its
+# own. A runtime that needs more shared memory than build-runtime.sh's 2 GB sets
+# `export MAX_MEMORY := "…"`.
 
 fusor_ai := "vendor/fusor-ai"
 model := "dist/model"
@@ -20,26 +22,17 @@ threads_toolchain := "nightly-2025-11-15"
 wasm_bindgen_version := "0.2.129"
 variants := "web-single web-single-relaxed web-threaded web-threaded-relaxed"
 glue := replace(name, "-", "_") + "_runtime"
-version := shell('v=$(cargo pkgid -p "$1"); echo "${v##*[#@]}"', name + "-cli")
+version := shell('v=$(cargo pkgid --manifest-path "$1/Cargo.toml" -p "$2"); echo "${v##*[#@]}"', fusor_ai, name + "-cli")
 
 default:
     @just --list
 
-check: lint wasm host
+# The runtime and CLI are checked in fusor-ai with the model they carry; a product checks its page.
+check: lint host
 
 lint:
-    cargo fmt --all -- --check
     cargo fmt --manifest-path {{app}}/Cargo.toml -- --check
     cargo clippy --manifest-path {{app}}/Cargo.toml --target wasm32-unknown-unknown --locked -- -D warnings
-    cargo test --workspace --locked
-    cargo clippy --workspace --all-targets --locked -- -D warnings
-    cargo doc --workspace --no-deps --locked
-
-# The runtime compiles a different kernel backend per target feature set: lint each.
-wasm:
-    cargo clippy -p {{name}}-runtime --target wasm32-unknown-unknown --locked -- -D warnings
-    cargo clippy -p {{name}}-runtime --target wasm32-unknown-unknown --locked --target-dir target/relaxed \
-      --config 'target.wasm32-unknown-unknown.rustflags=["-C", "target-feature=+simd128,+relaxed-simd"]' -- -D warnings
 
 build: tools native model runtimes page
 
@@ -53,7 +46,7 @@ tools:
     cd {{app}} && {{fusor}} install
 
 native:
-    {{nice}} cargo build --release -p {{name}}-cli
+    cd {{fusor_ai}} && {{nice}} cargo build --release -p {{name}}-cli --target-dir {{justfile_directory()}}/target
 
 # The four browser runtimes, fusor-ai's loader and worker kit next to them, and the
 # sealed-runtime check.

@@ -18,15 +18,15 @@ The crates are layers. A crate depends only on its own layer or the ones below i
 | --- | --- | --- |
 | Primitives | `crates/team`, `crates/kernels`, `crates/bundle`, `crates/compile`, `crates/runtime`, `crates/harness` | the SPMD thread team; tensors and their block-quantized formats, the int8 matmul over per-target `arch` backends, f32 operations, `Linear`, `conv` (products over many rows, 2-D convolutions), `rng`, `wav`, `image`; the bundle manifest, the streaming `Store`, the `Load`, `Engine` and `Stages` traits and the bundled `Tokenizer`; the safetensors reader, `BundleWriter` and the profile-driven `Tensors`; the browser runtime shell every model's runtime is built on; the native harness every model's CLI is built on |
 | Blocks | `crates/blocks` | architecture pieces parameterized by a shape: `transformer` (Qwen2, Qwen3, Kyutai and CLIP), `rotary`, `vit`, `dit`, `norm` (LayerNorm, GroupNorm), `adaln_mlp`, `flow` (flow-matching integration), `istft`, `seanet`, `conformer`, `unet` (latent diffusion's UNet), `vae` (its autoencoder's decoder), `dpm` (DPM-Solver++ sampling) |
-| Models | `crates/models/<model>`, `crates/models/<model>-compile` | one model: its dimensions, tensor names, wiring, sampler settings, prompts and text frontend; its compiler |
+| Models | `models/<model>/model`, `compile`, `runtime`, `cli` | one model: its dimensions, tensor names, wiring, sampler settings, prompts and text frontend; its compiler; its browser runtime on the runtime shell; its CLI on the harness. Beside them, `reference/`, the script that dumps its goldens from the reference implementation |
 
 Beside the crates: `packages/host`, the browser side every model shares (`loader.js`,
 `worker.js`, `compute.js`, `thread-host.js`, `protocol.js`), and `scripts/`: the runtime build, the import
 and layer checks, the dev server and the pinned tool installer.
 
 A model's products live in its own repository, which consumes fusor-ai as the git submodule
-`vendor/fusor-ai`: its wasm-bindgen runtime, its native CLI, its page, its goldens and
-end-to-end checks, its documentation and its releases. Ming's is
+`vendor/fusor-ai` and builds its runtime and CLI from it: its page, its end-to-end checks, its
+documentation and its releases. Ming's is
 [ming-wasm](https://github.com/fusor-rs/ming-wasm), Phonon's
 [phonon-wasm](https://github.com/fusor-rs/phonon-wasm), Parakeet Redux's
 [parakeet-redux-wasm](https://github.com/fusor-rs/parakeet-redux-wasm), Realistic Vision's

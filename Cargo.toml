@@ -7,18 +7,30 @@ members = [
     "crates/compile",
     "crates/runtime",
     "crates/harness",
-    "crates/models/ming",
-    "crates/models/ming-compile",
-    "crates/models/phonon",
-    "crates/models/phonon-compile",
-    "crates/models/parakeet",
-    "crates/models/parakeet-compile",
-    "crates/models/realistic-vision",
-    "crates/models/realistic-vision-compile",
-    "crates/models/paddle-ocr",
-    "crates/models/paddle-ocr-compile",
-    "crates/models/oxr",
-    "crates/models/oxr-compile",
+    "models/ming/model",
+    "models/ming/compile",
+    "models/ming/runtime",
+    "models/ming/cli",
+    "models/phonon/model",
+    "models/phonon/compile",
+    "models/phonon/runtime",
+    "models/phonon/cli",
+    "models/parakeet/model",
+    "models/parakeet/compile",
+    "models/parakeet/runtime",
+    "models/parakeet/cli",
+    "models/realistic-vision/model",
+    "models/realistic-vision/compile",
+    "models/realistic-vision/runtime",
+    "models/realistic-vision/cli",
+    "models/paddle-ocr/model",
+    "models/paddle-ocr/compile",
+    "models/paddle-ocr/runtime",
+    "models/paddle-ocr/cli",
+    "models/oxr/model",
+    "models/oxr/compile",
+    "models/oxr/runtime",
+    "models/oxr/cli",
 ]
 resolver = "2"
 
@@ -62,18 +74,18 @@ bundle = { package = "fusor-ai-bundle", path = "crates/bundle", version = "=0.1.
 compile = { package = "fusor-ai-compile", path = "crates/compile", version = "=0.1.2" }
 runtime = { package = "fusor-ai-runtime", path = "crates/runtime", version = "=0.1.2" }
 harness = { package = "fusor-ai-harness", path = "crates/harness", version = "=0.1.2" }
-ming = { package = "fusor-ai-ming", path = "crates/models/ming", version = "=0.1.2" }
-ming-compile = { package = "fusor-ai-ming-compile", path = "crates/models/ming-compile", version = "=0.1.2" }
-phonon = { package = "fusor-ai-phonon", path = "crates/models/phonon", version = "=0.1.2" }
-phonon-compile = { package = "fusor-ai-phonon-compile", path = "crates/models/phonon-compile", version = "=0.1.2" }
-parakeet = { package = "fusor-ai-parakeet", path = "crates/models/parakeet", version = "=0.1.2" }
-parakeet-compile = { package = "fusor-ai-parakeet-compile", path = "crates/models/parakeet-compile", version = "=0.1.2" }
-realistic-vision = { package = "fusor-ai-realistic-vision", path = "crates/models/realistic-vision", version = "=0.1.2" }
-realistic-vision-compile = { package = "fusor-ai-realistic-vision-compile", path = "crates/models/realistic-vision-compile", version = "=0.1.2" }
-paddle-ocr = { package = "fusor-ai-paddle-ocr", path = "crates/models/paddle-ocr", version = "=0.1.2" }
-paddle-ocr-compile = { package = "fusor-ai-paddle-ocr-compile", path = "crates/models/paddle-ocr-compile", version = "=0.1.2" }
-oxr = { package = "fusor-ai-oxr", path = "crates/models/oxr", version = "=0.1.2" }
-oxr-compile = { package = "fusor-ai-oxr-compile", path = "crates/models/oxr-compile", version = "=0.1.2" }
+ming = { package = "fusor-ai-ming", path = "models/ming/model", version = "=0.1.2" }
+ming-compile = { package = "fusor-ai-ming-compile", path = "models/ming/compile", version = "=0.1.2" }
+phonon = { package = "fusor-ai-phonon", path = "models/phonon/model", version = "=0.1.2" }
+phonon-compile = { package = "fusor-ai-phonon-compile", path = "models/phonon/compile", version = "=0.1.2" }
+parakeet = { package = "fusor-ai-parakeet", path = "models/parakeet/model", version = "=0.1.2" }
+parakeet-compile = { package = "fusor-ai-parakeet-compile", path = "models/parakeet/compile", version = "=0.1.2" }
+realistic-vision = { package = "fusor-ai-realistic-vision", path = "models/realistic-vision/model", version = "=0.1.2" }
+realistic-vision-compile = { package = "fusor-ai-realistic-vision-compile", path = "models/realistic-vision/compile", version = "=0.1.2" }
+paddle-ocr = { package = "fusor-ai-paddle-ocr", path = "models/paddle-ocr/model", version = "=0.1.2" }
+paddle-ocr-compile = { package = "fusor-ai-paddle-ocr-compile", path = "models/paddle-ocr/compile", version = "=0.1.2" }
+oxr = { package = "fusor-ai-oxr", path = "models/oxr/model", version = "=0.1.2" }
+oxr-compile = { package = "fusor-ai-oxr-compile", path = "models/oxr/compile", version = "=0.1.2" }
 rayon = "=1.12.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
@@ -85,6 +97,10 @@ regex = "=1.13.1"
 wasm-bindgen = "=0.2.129"
 wasm-bindgen-rayon = { version = "=1.3.0", features = ["no-bundler"] }
 getrandom = "=0.3.4"
+anyhow = "=1.0.104"
+clap = { version = "=4.6.7", features = ["derive"] }
+png = "=0.18.1"
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
 
 [profile.dev]
 debug = "line-tables-only"
@@ -96,3 +112,11 @@ debug = false
 
 [profile.release]
 debug = false
+
+# Browser runtimes (scripts/build-runtime.sh): speed, fat LTO for size, abort on panic.
+[profile.wasm]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"

@@ -1,0 +1,27 @@
+[package]
+name = "realistic-vision-cli"
+description = "The native Realistic Vision host: compile the checkpoint, generate images, benchmark, and check parity with the reference goldens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "realistic-vision"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+realistic-vision = { workspace = true, features = ["threads"] }
+realistic-vision-compile.workspace = true
+harness.workspace = true
+bundle.workspace = true
+compile.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+png.workspace = true
+
+[lints]
+workspace = true

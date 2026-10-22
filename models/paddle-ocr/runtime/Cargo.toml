@@ -1,0 +1,28 @@
+[package]
+name = "paddle-ocr-runtime"
+description = "The PaddleOCR-VL browser runtime: the model behind a wasm-bindgen surface (bundle parts and RGBA pixels in, text out)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+paddle-ocr.workspace = true
+runtime.workspace = true
+serde_json.workspace = true
+
+[features]
+# Threaded runtimes (scripts/build-runtime.sh): the team runs on a wasm-bindgen-rayon pool of
+# page-owned workers sharing this module's memory.
+threads = ["paddle-ocr/threads", "runtime/threads"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+
+[lints]
+workspace = true

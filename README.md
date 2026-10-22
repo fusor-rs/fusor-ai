@@ -92,14 +92,14 @@ Type some text and press Generate: the page speaks it, 1.5–2× faster than rea
 
 A model is a library here and an app in its own repository. The library lives in [the models layer](#the-toolkit):
 
-1. **The model** (`crates/models/<model>`): its dimensions, its wiring of blocks and its sampling loop, with each component loading itself from a `bundle::Store`.
-2. **The compiler** (`crates/models/<model>-compile`): reads the checkpoint with `compile::Checkpoint`, keeps, renames and fuses the tensors the model needs, picks a format per tensor and writes the bundle with `BundleWriter`.
+1. **The model** (`models/<model>/model`): its dimensions, its wiring of blocks and its sampling loop, with each component loading itself from a `bundle::Store`.
+2. **The compiler** (`models/<model>/compile`): reads the checkpoint with `compile::Checkpoint`, keeps, renames and fuses the tensors the model needs, picks a format per tensor and writes the bundle with `BundleWriter`.
+3. **The runtime** (`models/<model>/runtime`): a wasm-bindgen `cdylib` that takes the bundle's parts and runs inference. `scripts/build-runtime.sh` builds its four variants and `scripts/check-wasm-imports.mjs` proves each one is sealed.
+4. **A native CLI** (`models/<model>/cli`) that compiles bundles, benchmarks the model and checks parity with the reference implementation.
 
 The app depends on fusor-ai as a submodule and holds the rest:
 
-3. **The runtime**: a wasm-bindgen `cdylib` that takes the bundle's parts and runs inference. `scripts/build-runtime.sh` builds its four variants and `scripts/check-wasm-imports.mjs` proves each one is sealed.
-4. **The page**: a worker that loads the runtime with `packages/host/loader.js`, and a page that hands it compute workers with `packages/host/compute.js`.
-5. **A native CLI** that compiles bundles, benchmarks the model and checks parity with the reference implementation.
+5. **The page**: a worker that loads the runtime with `packages/host/loader.js`, and a page that hands it compute workers with `packages/host/compute.js`.
 
 ming-wasm is a complete worked example, and [AGENTS.md](AGENTS.md#repository) says where each piece of new code goes.
 
@@ -146,7 +146,7 @@ On crates.io each crate is `fusor-ai-<name>`, such as `fusor-ai-kernels`, and it
 | PaddleOCR-VL-1.6: `paddle-ocr`, `paddle-ocr-compile`; app in [paddle-ocr-wasm](https://github.com/fusor-rs/paddle-ocr-wasm) | Document reading: text, tables, formulas, charts and seals off an image | `vit`, `rotary`, `transformer` | A formula's first token in 0.9 s and a book page's in 9.3 s on eight threads in Chrome on an Apple M4 Pro, then 270–370 tokens per second; 831 MB bundle |
 | OXR-1.0: `oxr`, `oxr-compile`; app in [oxr-wasm](https://github.com/fusor-rs/oxr-wasm) | Document parsing to Markdown: a whole page, text, tables, formulas, code and chemical structures off an image | `vit`, `rotary`, `transformer` | A formula's first token in 1.3 s and a book page's in 5.3 s on eight threads in Chrome on an Apple M4 Pro, then 170–210 tokens per second; 1420 MB bundle |
 
-Each model's library lives in `crates/models/`. Its runtime, CLI, page, documentation and releases live in its app's repository.
+Each model's library, compiler, runtime and CLI live in `models/<model>/`. Its page, documentation and releases live in its app's repository.
 
 ## Documentation
 
@@ -200,7 +200,7 @@ fusor-ai is v0.1 and experimental. Until 1.0, each minor release may change the 
 
 ## Contributing
 
-fusor-ai is an open source project in early development. The [contributing guide](CONTRIBUTING.md) covers the setup, checks and workflow. The toolkit lives in `crates/`, `packages/host` and `scripts/`, and the model libraries in `crates/models`.
+fusor-ai is an open source project in early development. The [contributing guide](CONTRIBUTING.md) covers the setup, checks and workflow. The toolkit lives in `crates/`, `packages/host` and `scripts/`, and the models in `models/`.
 
 fusor-ai is built with the help of AI tools, mainly Claude Code, under the same rules the project asks of contributors: see [Using AI tools](CONTRIBUTING.md#using-ai-tools).
 

@@ -1,6 +1,6 @@
 //! Architecture blocks: shape-parameterized pieces of model architectures, written once on the
 //! fusor-ai kernels and thread team. A block never names a checkpoint, a tensor of a particular
-//! model, a sample rate or a language; the models in `crates/models` configure and wire them.
+//! model, a sample rate or a language; the models in `models/` configure and wire them.
 //!
 //! Every block loads itself from a bundle with `bundle::Load`, under the tensor names relative to
 //! a prefix that its documentation lists.

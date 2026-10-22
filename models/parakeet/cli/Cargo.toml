@@ -1,0 +1,26 @@
+[package]
+name = "parakeet-cli"
+description = "The native Parakeet Redux host: compile the checkpoint, transcribe, benchmark, and check parity with the reference goldens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "parakeet"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+parakeet = { workspace = true, features = ["threads"] }
+parakeet-compile.workspace = true
+harness.workspace = true
+bundle.workspace = true
+compile.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true
