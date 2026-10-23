@@ -383,6 +383,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 
 [[package]]
+name = "equivalent"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
+
+[[package]]
 name = "esaxx-rs"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -432,6 +438,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
 name = "fusor-ai-blocks"
 version = "0.1.2"
 dependencies = [
@@ -463,6 +475,7 @@ dependencies = [
  "blake3",
  "fusor-ai-bundle",
  "fusor-ai-kernels",
+ "miniz_oxide 0.8.9",
  "serde",
  "serde_json",
  "thiserror",
@@ -474,8 +487,60 @@ version = "0.1.2"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
+ "fusor-ai-media",
+ "image",
  "rayon",
  "thiserror",
+]
+
+[[package]]
+name = "fusor-ai-indra-ocr"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-blocks",
+ "fusor-ai-bundle",
+ "fusor-ai-kernels",
+ "fusor-ai-media",
+ "fusor-ai-team",
+ "regex",
+ "serde",
+ "serde_json",
+ "unicode-bidi",
+ "unicode-normalization",
+ "unicode-properties",
+]
+
+[[package]]
+name = "fusor-ai-indra-ocr-compile"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-indra-ocr",
+ "fusor-ai-kernels",
+]
+
+[[package]]
+name = "fusor-ai-intern-decision"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-blocks",
+ "fusor-ai-bundle",
+ "fusor-ai-kernels",
+ "fusor-ai-media",
+ "fusor-ai-team",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "fusor-ai-intern-decision-compile"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-intern-decision",
+ "fusor-ai-kernels",
 ]
 
 [[package]]
@@ -485,6 +550,27 @@ dependencies = [
  "fusor-ai-team",
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "fusor-ai-kronos"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-blocks",
+ "fusor-ai-bundle",
+ "fusor-ai-kernels",
+ "fusor-ai-team",
+ "serde",
+]
+
+[[package]]
+name = "fusor-ai-kronos-compile"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-kernels",
+ "fusor-ai-kronos",
 ]
 
 [[package]]
@@ -693,6 +779,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashbrown"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+
+[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -717,6 +809,68 @@ dependencies = [
  "png",
  "zune-core",
  "zune-jpeg",
+]
+
+[[package]]
+name = "indexmap"
+version = "2.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
+dependencies = [
+ "equivalent",
+ "hashbrown",
+]
+
+[[package]]
+name = "indra-ocr-cli"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "clap",
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-harness",
+ "fusor-ai-indra-ocr",
+ "fusor-ai-indra-ocr-compile",
+ "fusor-ai-kernels",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "indra-ocr-runtime"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-indra-ocr",
+ "fusor-ai-runtime",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "intern-decision-cli"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "clap",
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-harness",
+ "fusor-ai-intern-decision",
+ "fusor-ai-intern-decision-compile",
+ "image",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "intern-decision-runtime"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-intern-decision",
+ "fusor-ai-runtime",
+ "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -748,6 +902,31 @@ checksum = "7883d941dae510fb2d978fc3fe018c71c9e2892fd38854de3e8b92c2e5ad9cc5"
 dependencies = [
  "cfg-if",
  "futures-util",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "kronos-cli"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "clap",
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-harness",
+ "fusor-ai-kronos",
+ "fusor-ai-kronos-compile",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "kronos-runtime"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-kronos",
+ "fusor-ai-runtime",
+ "serde_json",
  "wasm-bindgen",
 ]
 
@@ -926,7 +1105,6 @@ dependencies = [
  "fusor-ai-harness",
  "fusor-ai-oxr",
  "fusor-ai-oxr-compile",
- "image",
 ]
 
 [[package]]
@@ -950,7 +1128,6 @@ dependencies = [
  "fusor-ai-harness",
  "fusor-ai-paddle-ocr",
  "fusor-ai-paddle-ocr-compile",
- "image",
 ]
 
 [[package]]
@@ -1273,6 +1450,8 @@ version = "1.0.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6"
 dependencies = [
+ "foldhash",
+ "indexmap",
  "itoa",
  "memchr",
  "serde",
@@ -1377,6 +1556,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyvec"
+version = "1.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
+
+[[package]]
 name = "tokenizers"
 version = "0.22.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1420,10 +1605,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "unicode-bidi"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-normalization-alignments"
@@ -1433,6 +1633,12 @@ checksum = "43f613e4fa046e69818dd287fdc4bc78175ff20331479dab6e1b0f98d57062de"
 dependencies = [
  "smallvec",
 ]
+
+[[package]]
+name = "unicode-properties"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7df058c713841ad818f1dc5d3fd88063241cc61f49f5fbea4b951e8cf5a8d71d"
 
 [[package]]
 name = "unicode-segmentation"

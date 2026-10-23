@@ -21,7 +21,6 @@ bundle.workspace = true
 compile.workspace = true
 anyhow.workspace = true
 clap.workspace = true
-image.workspace = true
 
 [lints]
 workspace = true

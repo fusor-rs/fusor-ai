@@ -1,0 +1,123 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model": "sha256:ed1b3b77ec147e32f5aa220d29b3d4f8d8f9a16091b571923f2bb948531a55f4"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "# minutes",
+      "normalize: 2400 values, rel 0.00e0, max abs 0.00e0",
+      "normalize mean: 6 values, rel 0.00e0, max abs 0.00e0",
+      "normalize deviation: 6 values, rel 0.00e0, max abs 0.00e0",
+      "normalize: 520 stamps identical",
+      "encode: 8000 values, rel 1.97e-6, max abs 6.94e-1",
+      "encode: 400 of 400 tokens identical",
+      "read, s1 logits: 1024 values, rel 5.16e-4, max abs 2.22e-2",
+      "sample, s2 logits: 1024 values, rel 1.59e-3, max abs 2.51e-2",
+      "sample, the forecast: 720 values, rel 3.28e-7, max abs 2.50e0",
+      "decode: 3072 values, rel 3.42e-7, max abs 3.34e-6",
+      "# alibaba",
+      "normalize: 1536 values, rel 0.00e0, max abs 0.00e0",
+      "normalize mean: 6 values, rel 0.00e0, max abs 0.00e0",
+      "normalize deviation: 6 values, rel 0.00e0, max abs 0.00e0",
+      "normalize: 320 stamps identical",
+      "encode: 5120 values, rel 4.46e-6, max abs 1.66e0",
+      "encode: 256 of 256 tokens identical",
+      "read, s1 logits: 1024 values, rel 2.26e-3, max abs 2.77e-2",
+      "sample, s2 logits: 1024 values, rel 1.27e-3, max abs 3.01e-2",
+      "sample, the forecast: 384 values, rel 1.30e-6, max abs 3.00e0",
+      "decode: 1920 values, rel 2.93e-7, max abs 1.43e-6"
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-single-relaxed/alibaba.forecast.json": "sha256:9f462d69b77bd566ac935af9300181d65c419e5b34e6115457a0424c6694abab",
+      "web-single-relaxed/minutes.forecast.json": "sha256:2118001340190ba9addd2aca21188cef4bddbeb6c9150938cf816e05b0699452",
+      "web-single/alibaba.forecast.json": "sha256:9f462d69b77bd566ac935af9300181d65c419e5b34e6115457a0424c6694abab",
+      "web-single/minutes.forecast.json": "sha256:e36f87f3cd96c2f34d14f3d65cc6696cd3484817d44e148fc94f93252a539e9c"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-threaded-relaxed/alibaba.forecast.json": "sha256:fc0ec2e997112fc5c7786a8c17b25b40c1ffd7ac53272ebaac0f8256c76f3203",
+      "web-threaded-relaxed/minutes.forecast.json": "sha256:c41ef74b5fc24d8663e31b491e667c0ae6eb57cf583a35030cebaa57e30bbbbe",
+      "web-threaded/alibaba.forecast.json": "sha256:fc0ec2e997112fc5c7786a8c17b25b40c1ffd7ac53272ebaac0f8256c76f3203",
+      "web-threaded/minutes.forecast.json": "sha256:1806d22aaec41af8a3084ca7b9fa85be1520b55334c663d5b9ecdd267f70e7d2"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "timings": {
+    "bench/normalize": {
+      "value": 0,
+      "unit": "ms",
+      "spread": null
+    },
+    "bench/encode": {
+      "value": 9.13,
+      "unit": "ms",
+      "spread": 0.01095290251916754
+    },
+    "bench/read": {
+      "value": 98,
+      "unit": "ms",
+      "spread": 0.01306122448979593
+    },
+    "bench/sample": {
+      "value": 8.18,
+      "unit": "ms",
+      "spread": 0.037897310513447385
+    },
+    "bench/decode": {
+      "value": 12.88,
+      "unit": "ms",
+      "spread": 0.029503105590062032
+    },
+    "bench/forecast whole": {
+      "value": 1264.6,
+      "unit": "ms",
+      "spread": 0.13300648426379888
+    },
+    "web-threaded/cases.minutes.time": {
+      "value": 3460,
+      "unit": "ms"
+    },
+    "web-threaded/cases.alibaba.time": {
+      "value": 310,
+      "unit": "ms"
+    },
+    "web-threaded/revisitMs": {
+      "value": 272,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/cases.minutes.time": {
+      "value": 1440,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/cases.alibaba.time": {
+      "value": 200,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/revisitMs": {
+      "value": 268,
+      "unit": "ms"
+    }
+  }
+}

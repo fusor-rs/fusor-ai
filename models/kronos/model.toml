@@ -1,0 +1,2 @@
+product = "https://github.com/andreespirela/kronos-wasm"
+formats = ["Q7b32"]

@@ -13,6 +13,7 @@ mod blob;
 pub mod conv;
 mod linear;
 mod matmul;
+pub mod numpy;
 pub mod ops;
 mod quant;
 pub mod rng;

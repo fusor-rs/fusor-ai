@@ -261,5 +261,139 @@
     "outputs": [
       ".txt"
     ]
+  },
+  "intern-decision": {
+    "product": "intern-decision-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/golden_f32_refund.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/intern-decision/golden_f32_refund.safetensors",
+        "sha256": "sha256:92a97009688d046f6c47713f18b89a81f5bb15c4f1cbae5ce830c81e728b0ba0"
+      },
+      {
+        "file": "fixtures/goldens/golden_f32_seal.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/intern-decision/golden_f32_seal.safetensors",
+        "sha256": "sha256:bde1132a88deeab87ee0c371815accecd6b9d08151a28d28fd7401f49c989170"
+      }
+    ],
+    "build": [
+      "just model",
+      "just images",
+      "rm -rf dist/model-f32",
+      "target/release/intern-decision compile .cache/checkpoint dist/model-f32 --profile f32",
+      "just runtimes",
+      "just page",
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model",
+      "dist/model-f32"
+    ],
+    "parity": "target/release/intern-decision parity dist/model-f32 fixtures/goldens/golden_f32_refund.safetensors fixtures/goldens/golden_f32_seal.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed"
+    ],
+    "e2e": [
+      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "bench": "target/release/intern-decision bench dist/model fixtures/requests.json seal --images fixtures/images --threads 8",
+    "page": [
+      "cases.refund.time",
+      "cases.refund.speed",
+      "cases.seal.time",
+      "cases.seal.speed",
+      "revisitMs"
+    ],
+    "outputs": [
+      ".response.json"
+    ]
+  },
+  "indra-ocr": {
+    "product": "indra-ocr-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/golden_f32_scan.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/indra-ocr/golden_f32_scan.safetensors",
+        "sha256": "sha256:f1990e114ef07102cbc604e7e7e5608a1d6d807315bb3615ce1897bfd53caf07"
+      },
+      {
+        "file": "fixtures/goldens/golden_f32_equations.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/indra-ocr/golden_f32_equations.safetensors",
+        "sha256": "sha256:4c0529916b437046b9bacd18f785ee4f65c21b039d7802efe802f8f21436ce28"
+      }
+    ],
+    "build": [
+      "just model",
+      "just images",
+      "just runtimes",
+      "just page",
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model"
+    ],
+    "parity": "target/release/indra-ocr parity dist/model fixtures/goldens/golden_f32_scan.safetensors fixtures/goldens/golden_f32_equations.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed"
+    ],
+    "e2e": [
+      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "bench": "target/release/indra-ocr bench dist/model fixtures/pages.json scan --images fixtures/images --threads 8",
+    "page": [
+      "cases.scan.time",
+      "cases.equations.time",
+      "revisitMs"
+    ],
+    "outputs": [
+      ".page.json"
+    ]
+  },
+  "kronos": {
+    "product": "kronos-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/golden_f32_minutes.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/kronos/golden_f32_minutes.safetensors",
+        "sha256": "sha256:f1a79e630869197eced6f0ffa77cf16a2b5deb98dea49e1d644d2c31457984a5"
+      },
+      {
+        "file": "fixtures/goldens/golden_f32_alibaba.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/kronos/golden_f32_alibaba.safetensors",
+        "sha256": "sha256:5e9aa579709a55f7f411805efc50162424440c952872247e59d3d2a18600db76"
+      }
+    ],
+    "build": [
+      "just model",
+      "just series",
+      "just runtimes",
+      "just page",
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model"
+    ],
+    "parity": "target/release/kronos parity dist/model fixtures/cases.json fixtures/series fixtures/goldens/golden_f32_minutes.safetensors fixtures/goldens/golden_f32_alibaba.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed"
+    ],
+    "e2e": [
+      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "bench": "target/release/kronos bench dist/model fixtures/cases.json minutes --series fixtures/series --threads 8",
+    "page": [
+      "cases.minutes.time",
+      "cases.alibaba.time",
+      "revisitMs"
+    ],
+    "outputs": [
+      ".forecast.json"
+    ]
   }
 }

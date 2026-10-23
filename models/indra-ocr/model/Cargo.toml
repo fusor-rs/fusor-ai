@@ -1,0 +1,32 @@
+[package]
+name = "fusor-ai-indra-ocr"
+description = "indra-ocr: the model. No I/O; builds for native and wasm32."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "indra_ocr"
+
+[dependencies]
+team.workspace = true
+kernels.workspace = true
+media.workspace = true
+blocks.workspace = true
+bundle.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+unicode-bidi.workspace = true
+unicode-normalization.workspace = true
+unicode-properties.workspace = true
+
+[features]
+# Run the thread team on Rayon's pool (native, and the threaded browser runtimes).
+threads = ["team/threads"]
+
+[lints]
+workspace = true

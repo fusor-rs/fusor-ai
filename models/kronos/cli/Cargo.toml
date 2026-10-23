@@ -1,0 +1,28 @@
+[package]
+name = "kronos-cli"
+description = "The native Kronos-base host: compile the checkpoints, forecast series, benchmark, and check parity with the reference goldens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "kronos"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+kronos = { workspace = true, features = ["threads"] }
+kronos-compile.workspace = true
+harness.workspace = true
+bundle.workspace = true
+compile.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

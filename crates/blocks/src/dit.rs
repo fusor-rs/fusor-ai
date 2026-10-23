@@ -40,6 +40,7 @@ impl Shape {
         Widths {
             hidden: self.hidden,
             heads: self.heads(),
+            mixer: self.heads().qkv(),
             feed_forward: self.feed_forward,
         }
     }

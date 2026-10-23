@@ -1,0 +1,29 @@
+[package]
+name = "indra-ocr-cli"
+description = "The native indra-ocr host: compile the checkpoint, read pages, check parity and time the stages."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "indra-ocr"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+indra-ocr = { workspace = true, features = ["threads"] }
+indra-ocr-compile.workspace = true
+harness.workspace = true
+bundle.workspace = true
+compile.workspace = true
+kernels.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+
+[lints]
+workspace = true

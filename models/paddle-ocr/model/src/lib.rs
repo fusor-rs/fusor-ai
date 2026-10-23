@@ -13,7 +13,6 @@ pub mod model;
 pub mod pipeline;
 pub mod prompt;
 pub mod session;
-mod vision;
 
 pub use blocks::vit::Grid;
 pub use blocks::vit::preprocessing::{Layout, Patches};

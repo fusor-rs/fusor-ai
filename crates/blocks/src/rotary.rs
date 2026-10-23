@@ -49,6 +49,10 @@ pub enum Rotation {
     /// Qwen2-VL's multimodal RoPE: the frequencies of `Sequence` in three consecutive sections
     /// of these lengths, turned by the temporal, height and width positions.
     Multimodal([usize; 3]),
+    /// Qwen3-VL's interleaved multimodal RoPE: frequency `i` turned by the temporal, height and
+    /// width positions in turn (`i % 3`), the height and width ones only within the first
+    /// `3 · sections[1]` and `3 · sections[2]` frequencies, the temporal one elsewhere.
+    MultimodalInterleaved([usize; 3]),
     /// A vision patch's: the first half of the frequencies by its row, the second by its column,
     /// each half `base^(−2i/(head_dim/2))`.
     Grid,
@@ -62,6 +66,9 @@ pub struct Rotary {
 }
 
 impl Rotary {
+    /// The frequencies of the first `head_dim` elements of a head (all of it, or the rotated part
+    /// of a partial rotary embedding).
+    ///
     /// # Panics
     /// When a multimodal rotation's sections do not add up to `head_dim / 2`.
     pub fn new(rotation: Rotation, base: f32, head_dim: usize) -> Self {
@@ -78,6 +85,14 @@ impl Rotary {
                     .into_iter()
                     .zip(sections)
                     .flat_map(|(axis, len)| std::iter::repeat_n(axis, len));
+                (rope_inv_freq(base, head_dim), axes.collect())
+            }
+            Rotation::MultimodalInterleaved([_, height, width]) => {
+                let axes = (0..half).map(|i| match i % 3 {
+                    1 if i < 3 * height => Axis::Height,
+                    2 if i < 3 * width => Axis::Width,
+                    _ => Axis::Temporal,
+                });
                 (rope_inv_freq(base, head_dim), axes.collect())
             }
             Rotation::Grid => {

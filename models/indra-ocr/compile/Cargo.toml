@@ -1,0 +1,21 @@
+[package]
+name = "fusor-ai-indra-ocr-compile"
+description = "Compiles the indra-ocr checkpoint (its ONNX networks, language models and vocabularies) into a bundle."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "indra_ocr_compile"
+
+[dependencies]
+bundle.workspace = true
+compile.workspace = true
+indra-ocr.workspace = true
+kernels.workspace = true
+
+[lints]
+workspace = true

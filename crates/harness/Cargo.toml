@@ -16,6 +16,8 @@ name = "harness"
 [dependencies]
 bundle.workspace = true
 compile.workspace = true
+media.workspace = true
+image.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
 

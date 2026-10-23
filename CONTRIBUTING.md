@@ -15,12 +15,16 @@ live in its own repository ([ming-wasm](https://github.com/fusor-rs/ming-wasm),
 [parakeet-redux-wasm](https://github.com/fusor-rs/parakeet-redux-wasm),
 [realistic-vision](https://github.com/fusor-rs/realistic-vision),
 [paddle-ocr-wasm](https://github.com/fusor-rs/paddle-ocr-wasm),
-[oxr-wasm](https://github.com/fusor-rs/oxr-wasm)), checked out beside this one. `just integrate
+[oxr-wasm](https://github.com/fusor-rs/oxr-wasm),
+[intern-decision-wasm](https://github.com/fusor-rs/intern-decision-wasm),
+[indra-ocr-wasm](https://github.com/fusor-rs/indra-ocr-wasm),
+[kronos-wasm](https://github.com/andreespirela/kronos-wasm)), checked out beside this one. `just integrate
 <model>…` (or `--all`) fetches the model's goldens from the
 [fusorlabs/fusor-ai-goldens](https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens)
-dataset, pinned by revision and sha256, points its product's `vendor/fusor-ai` submodule at the
-current commit, builds its bundles, runtimes and page, runs its parity, Node smoke and
-headless-Chrome e2e checks, restores the pin, and compares every output with the model's
+dataset, pinned by revision and sha256, links its product's `vendor/fusor-ai` to this working
+tree as it is on disk, committed or not, builds its bundles, runtimes and page, runs its parity,
+Node smoke and headless-Chrome e2e checks, puts the submodule's checkout back, and compares every
+output with the model's
 baseline in `models/<model>/baseline.json`; `integration.json` says how each product is built and
 checked. A change that moves no number leaves every output identical. A change meant to move
 them records the new outputs with `--bless`, so the baseline's diff shows what moved. A change

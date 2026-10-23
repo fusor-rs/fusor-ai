@@ -1,0 +1,137 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model": "sha256:396ce01ec44b5b6e2b36755c04703b425d418bf65259f315f88b1d7e90a58e78",
+    "dist/model-f32": "sha256:1d2bf02d10ea86f0eb6332ca587b0b91a8cc5954bf5a91f400439c086087663e"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "3 questions, prompt: 355 ids identical",
+      "read hidden: 6144 values, rel 2.33e-6, max abs 5.03e-5",
+      "read logits: 7 values, rel 3.74e-7, max abs 2.10e-5",
+      "read: decisions identical: [String(\"billing\"), String(\"1\"), String(\"yes\")]",
+      "decide: 7 values, rel 1.28e-6, max abs 1.28e-6",
+      "4 questions, prompt: 755 ids identical",
+      "preprocess: 1228800 values, rel 0.00e0, max abs 0.00e0",
+      "embed: 1638400 values, rel 3.13e-7, max abs 2.98e-6",
+      "encode: 1638400 values, rel 8.64e-2, max abs 2.94e3",
+      "merge: 819200 values, rel 1.48e-6, max abs 8.11e-6",
+      "read hidden: 8192 values, rel 2.74e-6, max abs 5.53e-5",
+      "read logits: 11 values, rel 6.15e-7, max abs 3.05e-5",
+      "read: decisions identical: [String(\"yes\"), String(\"round\"), String(\"red\"), String(\"3\")]",
+      "decide: 11 values, rel 2.24e-6, max abs 2.06e-6"
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-single-relaxed/refund.response.json": "sha256:e21fa7e744753814d193a940bb475e5520ea5ecd1cc8a7b920322878feb2d9d0",
+      "web-single-relaxed/seal.response.json": "sha256:2b3634f1e06357b505f1afa6106cd0f18c6bb51613a76a8f7768e7cd0b99ce8b",
+      "web-single/refund.response.json": "sha256:d304e87a7e965133cf0e8f51f47eeebfe463930e0ff3e1bfa9b6cd087ab16bee",
+      "web-single/seal.response.json": "sha256:8a99dda30109c8b236ba064c7fa74260af821ce02df937405aa5010b706b3a20"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-threaded-relaxed/refund.response.json": "sha256:e21fa7e744753814d193a940bb475e5520ea5ecd1cc8a7b920322878feb2d9d0",
+      "web-threaded-relaxed/seal.response.json": "sha256:2b3634f1e06357b505f1afa6106cd0f18c6bb51613a76a8f7768e7cd0b99ce8b",
+      "web-threaded/refund.response.json": "sha256:d304e87a7e965133cf0e8f51f47eeebfe463930e0ff3e1bfa9b6cd087ab16bee",
+      "web-threaded/seal.response.json": "sha256:8a99dda30109c8b236ba064c7fa74260af821ce02df937405aa5010b706b3a20"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "timings": {
+    "bench/preprocess": {
+      "value": 9.23,
+      "unit": "ms",
+      "spread": 0.03250270855904666
+    },
+    "bench/embed": {
+      "value": 10.3,
+      "unit": "ms",
+      "spread": 0.021359223300970762
+    },
+    "bench/encode": {
+      "value": 1347.14,
+      "unit": "ms",
+      "spread": 0.04139881526790087
+    },
+    "bench/merge": {
+      "value": 20.48,
+      "unit": "ms",
+      "spread": 0.03564453125000002
+    },
+    "bench/read": {
+      "value": 2285.78,
+      "unit": "ms",
+      "spread": 0.035440856075387925
+    },
+    "bench/decide": {
+      "value": 0.01,
+      "unit": "ms",
+      "spread": 1
+    },
+    "bench/decide whole": {
+      "value": 3724.8,
+      "unit": "ms",
+      "spread": 0.030874140893470788
+    },
+    "web-threaded/cases.refund.time": {
+      "value": 6110,
+      "unit": "ms"
+    },
+    "web-threaded/cases.refund.speed": {
+      "value": 113,
+      "unit": "/s"
+    },
+    "web-threaded/cases.seal.time": {
+      "value": 9800,
+      "unit": "ms"
+    },
+    "web-threaded/cases.seal.speed": {
+      "value": 130,
+      "unit": "/s"
+    },
+    "web-threaded/revisitMs": {
+      "value": 2028,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/cases.refund.time": {
+      "value": 3870,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/cases.refund.speed": {
+      "value": 343,
+      "unit": "/s"
+    },
+    "web-threaded-relaxed/cases.seal.time": {
+      "value": 3390,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/cases.seal.speed": {
+      "value": 370,
+      "unit": "/s"
+    },
+    "web-threaded-relaxed/revisitMs": {
+      "value": 2277,
+      "unit": "ms"
+    }
+  }
+}

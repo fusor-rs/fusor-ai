@@ -1,10 +1,12 @@
-//! Native model compilation: read a safetensors checkpoint, encode each tensor in the format the
-//! runtime reads, and write the bundle's parts and manifest.
+//! Native model compilation: read a checkpoint (safetensors, ONNX, NumPy `.npz`), encode each
+//! tensor in the format the runtime reads, and write the bundle's parts and manifest.
 //!
 //! What a model keeps, how its tensors are renamed or fused, and which format each gets (its
 //! `Profile`) is the model's own compiler; this crate is the part every model shares.
 
 mod checkpoint;
+mod npz;
+mod onnx;
 mod profile;
 mod table;
 mod tensors;
@@ -15,6 +17,8 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 
 pub use checkpoint::Checkpoint;
+pub use npz::{Array, Values, read_npz};
+pub use onnx::{Node, Onnx, OnnxTensor};
 pub use profile::{Profile, profile};
 pub use table::{Layout, Table};
 pub use tensors::Tensors;

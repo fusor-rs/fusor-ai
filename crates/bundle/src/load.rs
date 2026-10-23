@@ -1,4 +1,4 @@
-use kernels::conv::{self, Conv2d};
+use kernels::conv::{self, Conv2d, Depthwise2d, DepthwiseShape};
 use kernels::{Linear, Table, Vector};
 
 use crate::{Error, Store};
@@ -89,5 +89,30 @@ impl Load for Conv2d {
     fn load(store: &mut Store, prefix: &str, shape: conv::Shape) -> Result<Self, Error> {
         let linear = Linear::load(store, prefix, shape.matrix())?;
         Ok(Conv2d::new(linear, shape.kernel, shape.stride)?)
+    }
+}
+
+/// The depthwise convolution `prefix`: `prefix.weight`, `[channels, height · width]`, each
+/// channel's taps row-major, and its bias when the bundle has one.
+impl Load for Depthwise2d {
+    type Shape = DepthwiseShape;
+
+    fn load(store: &mut Store, prefix: &str, shape: DepthwiseShape) -> Result<Self, Error> {
+        let [height, width] = shape.window;
+        let weight = Table::load(
+            store,
+            &format!("{prefix}.weight"),
+            [shape.channels, height * width],
+        )?;
+        let bias = store
+            .take_optional(&format!("{prefix}.bias"))
+            .map(Vector::new)
+            .transpose()?;
+        Ok(Depthwise2d::new(
+            &weight,
+            bias.as_ref(),
+            shape.window,
+            shape.stride,
+        )?)
     }
 }

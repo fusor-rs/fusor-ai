@@ -1,5 +1,6 @@
 //! The native host every model's CLI shares: the thread pool, the bundle loader, the compile
-//! command, the parity comparisons against reference goldens and the stage timings of `bench`.
+//! command, image files, the parity comparisons against reference goldens and the stage timings
+//! of `bench`.
 
 pub mod bench;
 pub mod parity;
@@ -8,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use bundle::{Engine, Manifest, Store};
+use media::image::{Pixels, Size};
 
 /// Bytes pushed into the store per write, as the browser loader streams a part.
 const CHUNK: usize = 8 << 20;
@@ -21,6 +23,11 @@ pub enum Error {
     },
     #[error(transparent)]
     Bundle(#[from] bundle::Error),
+    #[error("{path}: {source}")]
+    Image {
+        path: PathBuf,
+        source: image::ImageError,
+    },
     #[error("the thread pool: {0}")]
     Threads(#[from] rayon::ThreadPoolBuildError),
 }
@@ -60,6 +67,25 @@ pub fn load<E: Engine>(dir: &Path) -> Result<E, Error> {
         engine.threads()
     );
     Ok(engine)
+}
+
+/// The pixels of a PNG or JPEG file, as RGBA.
+pub fn image(path: &Path) -> Result<Pixels, Error> {
+    let bytes = std::fs::read(path).map_err(unreadable(path.to_path_buf()))?;
+    let image = image::load_from_memory(&bytes)
+        .map_err(|source| Error::Image {
+            path: path.to_path_buf(),
+            source,
+        })?
+        .into_rgba8();
+    Ok(Pixels {
+        size: Size {
+            width: image.width() as usize,
+            height: image.height() as usize,
+        },
+        channels: 4,
+        values: image.into_raw(),
+    })
 }
 
 fn unreadable(path: PathBuf) -> impl FnOnce(std::io::Error) -> Error {

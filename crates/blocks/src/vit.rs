@@ -9,6 +9,7 @@
 //! `forward` runs inside a team run over the rows of `Buffers::hidden`, one per patch, row-major
 //! over the image's patch grid.
 
+pub mod merger;
 pub mod preprocessing;
 pub mod tower;
 
@@ -45,6 +46,7 @@ impl Shape {
         Widths {
             hidden: self.hidden,
             heads: self.heads(),
+            mixer: self.heads().qkv(),
             feed_forward: self.feed_forward,
         }
     }

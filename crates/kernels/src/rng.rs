@@ -1,5 +1,6 @@
 //! A seeded random number generator for sampling: xoshiro256** seeded through SplitMix64,
-//! normals by Box–Muller. Deterministic across hosts, and needs no entropy import.
+//! normals by Box–Muller and categorical draws. Deterministic across hosts, and needs no entropy
+//! import.
 
 pub struct Rng {
     state: [u64; 4],
@@ -48,5 +49,24 @@ impl Rng {
                 *second = (radius * angle.sin()) as f32;
             }
         }
+    }
+
+    /// An index drawn with probability proportional to its weight.
+    ///
+    /// # Panics
+    /// When no weight is positive.
+    pub fn choose(&mut self, weights: &[f32]) -> usize {
+        let total: f64 = weights.iter().map(|&weight| f64::from(weight)).sum();
+        let mut remaining = self.uniform() * total;
+        for (index, &weight) in weights.iter().enumerate() {
+            remaining -= f64::from(weight);
+            if weight > 0.0 && remaining <= 0.0 {
+                return index;
+            }
+        }
+        weights
+            .iter()
+            .rposition(|&weight| weight > 0.0)
+            .expect("a positive weight")
     }
 }

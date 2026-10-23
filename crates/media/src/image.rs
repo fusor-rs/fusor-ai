@@ -1,6 +1,7 @@
 //! Image resampling as vision models' reference preprocessing does it: Pillow's bilinear and
 //! bicubic resizes of 8-bit images, and PyTorch's bilinear and bicubic interpolation of a grid of
-//! f32 vectors (a learned position table resampled to an image's patch grid).
+//! f32 vectors (a learned position table resampled to an image's patch grid), with its corner
+//! cells on the image's or not.
 
 /// Width and height, in pixels or grid cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,6 +163,51 @@ pub fn resize_bilinear(grid: &[f32], from: Size, to: Size, width: usize) -> Vec<
         }
     }
     out
+}
+
+/// `grid` resampled to `to` cells bilinearly with its corner cells on the corners of `to`
+/// (`align_corners=True`), as Qwen3-VL computes it in f32: cell positions from `torch.linspace`,
+/// and each cell the sum of its four neighbours times their weights, top left, top right,
+/// bottom left, bottom right in turn.
+pub fn resize_bilinear_corners(grid: &[f32], from: Size, to: Size, width: usize) -> Vec<f32> {
+    let rows = corner_taps(from.height, to.height);
+    let columns = corner_taps(from.width, to.width);
+    let cell = |row: usize, column: usize| &grid[(row * from.width + column) * width..][..width];
+    let mut out = Vec::with_capacity(to.height * to.width * width);
+    for &(top, bottom, down) in &rows {
+        for &(left, right, across) in &columns {
+            let [top_left, top_right] = [cell(top, left), cell(top, right)];
+            let [bottom_left, bottom_right] = [cell(bottom, left), cell(bottom, right)];
+            let upper = [(1.0 - down) * (1.0 - across), (1.0 - down) * across];
+            let lower = [down * (1.0 - across), down * across];
+            out.extend((0..width).map(|i| {
+                top_left[i] * upper[0]
+                    + top_right[i] * upper[1]
+                    + bottom_left[i] * lower[0]
+                    + bottom_right[i] * lower[1]
+            }));
+        }
+    }
+    out
+}
+
+/// Per output cell of an axis resampled with its corners aligned: the two source cells and the
+/// weight of the second, the positions `torch.linspace(0, source − 1, target)` in f32.
+fn corner_taps(source: usize, target: usize) -> Vec<(usize, usize, f32)> {
+    let end = (source - 1) as f32;
+    let step = end / target.saturating_sub(1).max(1) as f32;
+    let halfway = target / 2;
+    (0..target)
+        .map(|out| {
+            let position = if out < halfway {
+                out as f32 * step
+            } else {
+                end - step * (target - 1 - out) as f32
+            };
+            let first = position as usize;
+            (first, (first + 1).min(source - 1), position - first as f32)
+        })
+        .collect()
 }
 
 /// `grid` resampled to `to` cells as `F.interpolate(mode="bicubic", align_corners=False)` does

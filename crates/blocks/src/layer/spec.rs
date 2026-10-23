@@ -38,13 +38,14 @@ impl LayerSpec {
         Some(Rope::Interleaved),
     );
     pub(crate) const CLIP: Self = Self::plain(NormSpec::Layer, Activation::QuickGelu, None);
+    pub(crate) const ENCODER: Self = Self::plain(NormSpec::Layer, Activation::GeluErf, None);
     pub(crate) const VIT: Self =
         Self::plain(NormSpec::Layer, Activation::GeluTanh, Some(Rope::Half));
     pub(crate) const DIT: Self =
         Self::plain(NormSpec::Rms, Activation::GeluTanh, Some(Rope::Interleaved));
 
-    /// The layer of Kyutai's transformer, CLIP's text encoder and the ViT and DiT blocks:
-    /// `norm1`, `out`, `norm2` and a plain feed-forward with `activation`.
+    /// The layer of Kyutai's transformer, CLIP's text encoder, the encoder and the ViT and DiT
+    /// blocks: `norm1`, `out`, `norm2` and a plain feed-forward with `activation`.
     const fn plain(norm: NormSpec, activation: Activation, rope: Option<Rope>) -> Self {
         Self {
             norm,

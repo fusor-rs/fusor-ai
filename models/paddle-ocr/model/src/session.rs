@@ -7,6 +7,7 @@ use blocks::lm::{self, Lm};
 use blocks::reading::{self, VisionLanguage};
 pub use blocks::reading::{Plan, Prediction, Progress};
 use blocks::vit::Grid;
+use blocks::vit::merger;
 use blocks::vit::preprocessing::{Patches, Preprocessing};
 use blocks::vit::tower::{self, Tower};
 use bundle::Store;
@@ -15,10 +16,9 @@ use team::{Ctx, SharedBuf};
 
 use crate::Error;
 use crate::image::{self, PREPROCESSING};
-use crate::model::{LANGUAGE, Model, TOWER};
+use crate::model::{LANGUAGE, Model, PROJECTOR, TOWER};
 use crate::pipeline::Stage;
 use crate::prompt::{END, Prompt, Task};
-use crate::vision;
 
 /// The longest answer, in tokens.
 pub const MAX_TOKENS: usize = 2048;
@@ -34,7 +34,7 @@ impl VisionLanguage for Model {
     type Task = Task;
     type Prompt = Prompt;
     type Stage = Stage;
-    type Buffers = vision::Buffers;
+    type Buffers = merger::Buffers;
 
     const SEE: Stage = Stage::Encode;
     const PREFILL: Stage = Stage::Prefill;
@@ -51,8 +51,8 @@ impl VisionLanguage for Model {
         Model::load(store)
     }
 
-    fn buffers() -> vision::Buffers {
-        vision::Buffers::new()
+    fn buffers() -> merger::Buffers {
+        merger::Buffers::new(&PROJECTOR, PREPROCESSING.max_patches())
     }
 
     fn tower(&self) -> &Tower {
@@ -76,11 +76,11 @@ impl VisionLanguage for Model {
     }
 
     /// The projector over the tower's output.
-    fn tokens(&self, ctx: &Ctx, tower: &tower::Buffers, buffers: &vision::Buffers, grid: Grid) {
+    fn tokens(&self, ctx: &Ctx, tower: &tower::Buffers, buffers: &merger::Buffers, grid: Grid) {
         self.projector.forward(ctx, tower, buffers, grid);
     }
 
-    fn image_tokens(buffers: &vision::Buffers) -> &SharedBuf {
+    fn image_tokens(buffers: &merger::Buffers) -> &SharedBuf {
         &buffers.tokens
     }
 }

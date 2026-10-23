@@ -8,7 +8,7 @@ use super::{Norm, Pass};
 
 /// The rows a projection reads: the residual stream through a norm, or a buffer as it is.
 #[derive(Clone, Copy)]
-pub(super) enum Source<'layer> {
+pub(crate) enum Source<'layer> {
     Normed(&'layer Norm),
     Buffer(&'layer SharedBuf),
 }
@@ -18,7 +18,7 @@ pub(super) enum Source<'layer> {
 /// of the quantization groups of all the rows (whole rows for f32 weights), so that one row is
 /// shared out as evenly as thousands; a row's norm is computed by every thread holding part of
 /// it.
-pub(super) fn prepare(pass: &Pass, source: Source, linear: &Linear) {
+pub(crate) fn prepare(pass: &Pass, source: Source, linear: &Linear) {
     let (buffers, matrix) = (pass.buffers, linear.matrix());
     let width = matrix.cols;
     let unit = match matrix.storage {
@@ -62,7 +62,7 @@ pub(super) fn prepare(pass: &Pass, source: Source, linear: &Linear) {
 
 /// The input `prepare` made for `linear` over the call's rows, once every thread's share is in
 /// (after a barrier).
-pub(super) fn input<'pass>(
+pub(crate) fn input<'pass>(
     pass: &Pass<'pass>,
     source: Source<'pass>,
     linear: &Linear,

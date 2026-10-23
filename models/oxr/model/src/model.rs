@@ -7,7 +7,7 @@ use blocks::norm::LayerNorm;
 use blocks::rotary::Rotation;
 use blocks::transformer::{self, Architecture};
 use blocks::vit;
-use blocks::vit::tower::{self, Ending, Tower};
+use blocks::vit::tower::{self, Ending, Resample, Tower};
 use bundle::{Load, Scope, Store, Tokenizer};
 use kernels::{Linear, Table};
 use media::image::Filter;
@@ -31,7 +31,7 @@ pub(crate) const TOWER: tower::Shape = tower::Shape {
     encoder: VISION_SHAPE,
     patch_values: PATCH_VALUES,
     position_grid: POSITION_GRID,
-    resample: Filter::Bicubic,
+    resample: Resample::Interpolate(Filter::Bicubic),
     ending: Ending::Encoder,
 };
 

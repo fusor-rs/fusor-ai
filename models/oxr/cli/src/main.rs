@@ -9,14 +9,13 @@
 mod bench;
 mod parity;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use oxr::prompt::Task;
 use oxr::session::{Engine, Request};
-use oxr::{Pixels, Size};
 
 #[derive(Parser)]
 #[command(name = "oxr", version)]
@@ -91,30 +90,14 @@ fn main() -> Result<()> {
             bundle,
             image,
             task,
-        } => bench::run(&mut harness::load(&bundle)?, &decode(&image)?, task)?,
+        } => bench::run(&mut harness::load(&bundle)?, &harness::image(&image)?, task)?,
     }
     Ok(())
 }
 
-/// The pixels of a PNG or JPEG file, as RGBA.
-fn decode(path: &Path) -> Result<Pixels> {
-    let bytes = std::fs::read(path).with_context(|| path.display().to_string())?;
-    let image = image::load_from_memory(&bytes)
-        .with_context(|| path.display().to_string())?
-        .into_rgba8();
-    Ok(Pixels {
-        size: Size {
-            width: image.width() as usize,
-            height: image.height() as usize,
-        },
-        channels: 4,
-        values: image.into_raw(),
-    })
-}
-
 fn read(engine: &mut Engine, images: &[PathBuf], request: &Request) -> Result<()> {
     for path in images {
-        let image = decode(path)?;
+        let image = harness::image(path)?;
         println!("# {}", path.display());
         let start = Instant::now();
         let plan = engine.start(&image, request)?;

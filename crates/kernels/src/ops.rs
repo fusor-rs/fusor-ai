@@ -182,6 +182,14 @@ pub fn elu(x: f32) -> f32 {
     if x > 0.0 { x } else { negative }
 }
 
+/// HardSwish as ONNX defines it, `x · HardSigmoid(x)` with `HardSigmoid(x) = clamp(x/6 + 1/2,
+/// 0, 1)`.
+#[inline(always)]
+pub fn hard_swish(x: f32) -> f32 {
+    const SLOPE: f32 = 1.0 / 6.0;
+    x * (SLOPE * x + 0.5).clamp(0.0, 1.0)
+}
+
 #[inline(always)]
 pub fn silu(x: f32) -> f32 {
     x / (1.0 + exp(-x))

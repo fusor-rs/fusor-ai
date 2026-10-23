@@ -15,6 +15,8 @@
 //! - CLIP's text encoder: the Kyutai layer's tensors, with biases on every linear, a quick-GELU
 //!   MLP and no rotary embeddings: its positions are learned, added to the input by the model
 //!   (`rope_base` is unused).
+//! - An encoder (Indra OCR's reading-order network): CLIP's layer with an exact-GELU MLP, its
+//!   rows attending to each other under `Mask::Full`.
 //!
 //! A final norm after the last layer, where a model has one, is the model's.
 
@@ -32,6 +34,7 @@ pub enum Architecture {
     Qwen3,
     Kyutai,
     Clip,
+    Encoder,
 }
 
 impl Architecture {
@@ -41,6 +44,7 @@ impl Architecture {
             Architecture::Qwen3 => &LayerSpec::QWEN3,
             Architecture::Kyutai => &LayerSpec::KYUTAI,
             Architecture::Clip => &LayerSpec::CLIP,
+            Architecture::Encoder => &LayerSpec::ENCODER,
         }
     }
 }
@@ -73,6 +77,7 @@ impl Shape {
         Widths {
             hidden: self.hidden,
             heads: self.heads(),
+            mixer: self.heads().qkv(),
             feed_forward: self.feed_forward,
         }
     }
@@ -94,6 +99,9 @@ pub enum Mask {
     Causal,
     /// The last `n` positions up to and including `p`.
     Window(usize),
+    /// Every position of the call and of the calls before it: an encoder reads its whole
+    /// sequence in one call.
+    Full,
 }
 
 /// The KV cache: `capacity` slots per layer and KV head; position `p` lives in slot
@@ -108,12 +116,74 @@ pub struct KvCache {
 
 impl KvCache {
     pub fn new(shape: Shape, capacity: usize) -> Self {
-        let len = shape.layers * shape.kv_heads * capacity * shape.head_dim;
+        Self::of(shape.layers, shape.heads(), capacity)
+    }
+
+    /// The cache of `layers` attention layers of `heads`.
+    pub(crate) fn of(layers: usize, heads: Heads, capacity: usize) -> Self {
+        let len = layers * heads.kv_heads * capacity * heads.head_dim;
         Self {
-            heads: shape.heads(),
+            heads,
             capacity,
             keys: SharedBuf::new(len),
             values: SharedBuf::new(len),
+        }
+    }
+
+    /// Keeps head `unit` (query heads, then key heads, then value heads) of a row at `position`
+    /// of layer `layer`: its key and value heads.
+    pub(crate) fn keep(&self, layer: usize, unit: usize, position: usize, head: &[f32]) {
+        let Heads {
+            heads, kv_heads, ..
+        } = self.heads;
+        if unit < heads {
+            return;
+        }
+        let target = if unit < heads + kv_heads {
+            &self.keys
+        } else {
+            &self.values
+        };
+        let at = self.offset(layer, (unit - heads) % kv_heads, position);
+        target.part(at..at + head.len()).copy_from_slice(head);
+    }
+
+    /// This thread's share of the query heads of layer `layer`, attending over the cache under
+    /// `span`'s mask into `buffers.attention`; row `r`'s queries lead row `r` of `buffers.qkv`,
+    /// `stride` wide.
+    pub(crate) fn attend(&self, pass: &Pass, layer: usize, span: Span, stride: usize) {
+        let Heads {
+            heads,
+            kv_heads,
+            head_dim,
+        } = self.heads;
+        let buffers = pass.buffers;
+        let width = self.heads.width();
+        let scratch = buffers.scratch.get(pass.ctx);
+        let qkv = buffers.qkv.read();
+        let (keys, values) = (self.keys.read(), self.values.read());
+        for head in pass.ctx.split(heads, 1) {
+            let kv_head = head / (heads / kv_heads);
+            for row in 0..span.rows {
+                let position = span.first + row;
+                let (first_key, end_key) = match span.mask {
+                    Mask::Causal => (0, position + 1),
+                    Mask::Window(window) => ((position + 1).saturating_sub(window), position + 1),
+                    Mask::Full => (0, span.first + span.rows),
+                };
+                let query = &qkv[row * stride + head * head_dim..][..head_dim];
+                let at = row * width + head * head_dim;
+                attend(
+                    query,
+                    end_key - first_key,
+                    |j| {
+                        let slot = self.offset(layer, kv_head, first_key + j);
+                        (&keys[slot..slot + head_dim], &values[slot..slot + head_dim])
+                    },
+                    &mut scratch.scores,
+                    buffers.attention.part(at..at + head_dim),
+                );
+            }
         }
     }
 
@@ -165,7 +235,7 @@ impl Transformer {
     fn run(&self, ctx: &Ctx, buffers: &Buffers, attention: &Cached) {
         let Cached { cache, span, .. } = attention;
         let reach = match span.mask {
-            Mask::Causal => span.first + span.rows,
+            Mask::Causal | Mask::Full => span.first + span.rows,
             Mask::Window(window) => window + span.rows,
         };
         assert!(
@@ -206,56 +276,11 @@ impl Attention for Cached<'_> {
     }
 
     fn keep(&self, layer: usize, unit: usize, position: usize, head: &[f32]) {
-        let Heads {
-            heads, kv_heads, ..
-        } = self.cache.heads;
-        if unit < heads {
-            return;
-        }
-        let target = if unit < heads + kv_heads {
-            &self.cache.keys
-        } else {
-            &self.cache.values
-        };
-        let at = self
-            .cache
-            .offset(layer, (unit - heads) % kv_heads, position);
-        target.part(at..at + head.len()).copy_from_slice(head);
+        self.cache.keep(layer, unit, position, head);
     }
 
     fn attend(&self, pass: &Pass, layer: usize) {
-        let Heads {
-            heads,
-            kv_heads,
-            head_dim,
-        } = pass.heads;
-        let (cache, buffers, span) = (self.cache, pass.buffers, self.span);
-        let (qkv_width, width) = (pass.heads.qkv(), pass.heads.width());
-        let scratch = buffers.scratch.get(pass.ctx);
-        let qkv = buffers.qkv.read();
-        let (keys, values) = (cache.keys.read(), cache.values.read());
-        for head in pass.ctx.split(heads, 1) {
-            let kv_head = head / (heads / kv_heads);
-            for row in 0..span.rows {
-                let position = span.first + row;
-                let first_key = match span.mask {
-                    Mask::Causal => 0,
-                    Mask::Window(window) => (position + 1).saturating_sub(window),
-                };
-                let query = &qkv[row * qkv_width + head * head_dim..][..head_dim];
-                let at = row * width + head * head_dim;
-                attend(
-                    query,
-                    position + 1 - first_key,
-                    |j| {
-                        let slot = cache.offset(layer, kv_head, first_key + j);
-                        (&keys[slot..slot + head_dim], &values[slot..slot + head_dim])
-                    },
-                    &mut scratch.scores,
-                    buffers.attention.part(at..at + head_dim),
-                );
-            }
-        }
+        self.cache.attend(pass, layer, self.span, pass.heads.qkv());
     }
 }
 

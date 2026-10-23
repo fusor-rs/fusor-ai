@@ -549,3 +549,270 @@ pub fn relative_error(got: &[f32], want: &[f64]) -> f64 {
         .sum();
     (error / dot(want, want)).sqrt()
 }
+
+/// A hybrid stack's delta rule: its heads and the taps of its convolution.
+#[derive(Clone, Copy)]
+pub struct DeltaDims {
+    pub key_heads: usize,
+    pub value_heads: usize,
+    pub key_dim: usize,
+    pub value_dim: usize,
+    pub kernel: usize,
+}
+
+impl DeltaDims {
+    fn keys(&self) -> usize {
+        self.key_heads * self.key_dim
+    }
+
+    fn values(&self) -> usize {
+        self.value_heads * self.value_dim
+    }
+
+    fn channels(&self) -> usize {
+        2 * self.keys() + self.values()
+    }
+}
+
+/// A hybrid stack's dimensions: its attention's (`dims`, `rotary_dim` elements of a head
+/// rotated), its delta rule's, and which layers attend.
+#[derive(Clone, Copy)]
+pub struct HybridDims {
+    pub dims: Dims,
+    pub rotary_dim: usize,
+    pub delta: DeltaDims,
+    pub attention_interval: usize,
+}
+
+impl Weights {
+    /// `LAYERS` hybrid layers with `blocks::hybrid`'s names, the `i`th under `prefix.i`: the last
+    /// of every `attention_interval` with gated attention, the others with the delta rule.
+    pub fn hybrid(&mut self, prefix: &str, shape: &HybridDims) -> Hybrid {
+        let Dims {
+            hidden,
+            feed_forward,
+            ..
+        } = shape.dims;
+        let layers = (0..LAYERS).map(|i| {
+            let name = |part: &str| format!("{prefix}.{i}.{part}");
+            let norm1 = self.tensor(&name("input_norm"), &[hidden], 1.0, 0.2);
+            let mixer = if (i + 1) % shape.attention_interval == 0 {
+                self.gated_attention(&name, &shape.dims)
+            } else {
+                self.delta_rule(&name, hidden, &shape.delta)
+            };
+            let norm2 = self.tensor(&name("post_norm"), &[hidden], 1.0, 0.2);
+            let gate = self.linear(&name("gate"), [feed_forward, hidden], Bias::Without);
+            let up = self.linear(&name("up"), [feed_forward, hidden], Bias::Without);
+            let down = self.linear(&name("down"), [hidden, feed_forward], Bias::Without);
+            HybridLayer {
+                norm1,
+                mixer,
+                norm2,
+                feed_forward: FeedForward::Gated { gate, up, down },
+            }
+        });
+        Hybrid(layers.collect())
+    }
+
+    fn gated_attention(&mut self, name: &dyn Fn(&str) -> String, dims: &Dims) -> Mixer {
+        let Dims {
+            hidden,
+            heads,
+            kv_heads,
+            head_dim,
+            ..
+        } = *dims;
+        let columns = (2 * heads + 2 * kv_heads) * head_dim;
+        Mixer::Attention {
+            qkv: self.linear(&name("qkv"), [columns, hidden], Bias::Without),
+            norms: [
+                self.tensor(&name("q_norm"), &[head_dim], 1.0, 0.2),
+                self.tensor(&name("k_norm"), &[head_dim], 1.0, 0.2),
+            ],
+            out: self.linear(&name("o"), [hidden, dims.width()], Bias::Without),
+        }
+    }
+
+    fn delta_rule(
+        &mut self,
+        name: &dyn Fn(&str) -> String,
+        hidden: usize,
+        delta: &DeltaDims,
+    ) -> Mixer {
+        let columns = delta.channels() + delta.values() + 2 * delta.value_heads;
+        Mixer::Delta(DeltaRule {
+            input: self.linear(&name("input"), [columns, hidden], Bias::Without),
+            taps: self.tensor(&name("conv"), &[delta.channels(), delta.kernel], 0.0, 0.5),
+            a_log: self.tensor(&name("a_log"), &[delta.value_heads], 0.0, 1.0),
+            dt_bias: self.tensor(&name("dt_bias"), &[delta.value_heads], 0.5, 0.5),
+            norm: self.tensor(&name("norm"), &[delta.value_dim], 1.0, 0.2),
+            out: self.linear(&name("out"), [hidden, delta.values()], Bias::Without),
+        })
+    }
+}
+
+pub struct Hybrid(Vec<HybridLayer>);
+
+impl Hybrid {
+    /// Every layer over the rows of `x`, `rows × hidden`, in place, the rotated part of row `r`'s
+    /// query and key heads turned by `angles(r)`.
+    pub fn apply(&self, x: &mut [f64], shape: &HybridDims, angles: &dyn Fn(usize) -> Vec<f64>) {
+        let eps = shape.dims.eps;
+        for layer in &self.0 {
+            let normed = rms_norm(x, &layer.norm1, eps);
+            let mixed = match &layer.mixer {
+                Mixer::Attention { qkv, norms, out } => {
+                    let attended = gated_attention(&qkv.apply(&normed), norms, shape, angles);
+                    out.apply(&attended)
+                }
+                Mixer::Delta(rule) => rule.out.apply(&rule.apply(&normed, &shape.delta, eps)),
+            };
+            add(x, &mixed);
+            add(
+                x,
+                &layer.feed_forward.apply(&rms_norm(x, &layer.norm2, eps)),
+            );
+        }
+    }
+}
+
+struct HybridLayer {
+    norm1: Vec<f64>,
+    mixer: Mixer,
+    norm2: Vec<f64>,
+    feed_forward: FeedForward,
+}
+
+enum Mixer {
+    Attention {
+        qkv: Linear,
+        norms: [Vec<f64>; 2],
+        out: Linear,
+    },
+    Delta(DeltaRule),
+}
+
+/// Causal attention of the rows' query heads (each row's units: query heads, their gates, key
+/// heads, value heads), each output times the sigmoid of its gate.
+fn gated_attention(
+    qkv: &[f64],
+    [query_norm, key_norm]: &[Vec<f64>; 2],
+    shape: &HybridDims,
+    angles: &dyn Fn(usize) -> Vec<f64>,
+) -> Vec<f64> {
+    let dims = &shape.dims;
+    let units = 2 * dims.heads + 2 * dims.kv_heads;
+    let mut heads = Vec::new();
+    let mut gates = Vec::new();
+    for (row, units) in qkv.chunks_exact(units * dims.head_dim).enumerate() {
+        for (unit, head) in units.chunks_exact(dims.head_dim).enumerate() {
+            let norm = match unit {
+                unit if unit < dims.heads => Some(query_norm),
+                unit if unit < 2 * dims.heads => {
+                    gates.extend(head.iter().map(|&gate| 1.0 / (1.0 + (-gate).exp())));
+                    continue;
+                }
+                unit if unit < 2 * dims.heads + dims.kv_heads => Some(key_norm),
+                _ => None,
+            };
+            let mut head = head.to_vec();
+            if let Some(norm) = norm {
+                head = rms_norm(&head, norm, dims.eps);
+                rotate(&mut head[..shape.rotary_dim], &angles(row), Pairing::Half);
+            }
+            heads.push(head);
+        }
+    }
+    let mut attended = attend(&heads, dims, Mask::Causal);
+    for (value, gate) in attended.iter_mut().zip(gates) {
+        *value *= gate;
+    }
+    attended
+}
+
+struct DeltaRule {
+    input: Linear,
+    taps: Vec<f64>,
+    a_log: Vec<f64>,
+    dt_bias: Vec<f64>,
+    norm: Vec<f64>,
+    out: Linear,
+}
+
+impl DeltaRule {
+    /// The gated delta rule over the rows of `normed`, from an empty memory: each value head's
+    /// output, gated, side by side.
+    fn apply(&self, normed: &[f64], delta: &DeltaDims, eps: f64) -> Vec<f64> {
+        let projected = self.input.apply(normed);
+        let columns = self.input.weight.len() / self.input.inputs;
+        let rows: Vec<&[f64]> = projected.chunks_exact(columns).collect();
+        let channels = delta.channels();
+        let convolved: Vec<Vec<f64>> = (0..rows.len())
+            .map(|row| {
+                (0..channels)
+                    .map(|channel| {
+                        let taps = &self.taps[channel * delta.kernel..][..delta.kernel];
+                        let sum = taps.iter().enumerate().map(|(tap, weight)| {
+                            let back = delta.kernel - 1 - tap;
+                            row.checked_sub(back)
+                                .map_or(0.0, |at| weight * rows[at][channel])
+                        });
+                        silu(sum.sum())
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut out = vec![0.0; rows.len() * delta.values()];
+        for head in 0..delta.value_heads {
+            let key_head = head / (delta.value_heads / delta.key_heads);
+            let mut memory = vec![vec![0.0; delta.key_dim]; delta.value_dim];
+            for (row, qkv) in convolved.iter().enumerate() {
+                let unit =
+                    |offset: usize, head: usize, dim: usize| &qkv[offset + head * dim..][..dim];
+                let scale = 1.0 / (delta.key_dim as f64).sqrt();
+                let query = l2_normalized(unit(0, key_head, delta.key_dim), scale);
+                let key = l2_normalized(unit(delta.keys(), key_head, delta.key_dim), 1.0);
+                let value = unit(2 * delta.keys(), head, delta.value_dim);
+                let gates = &rows[row][channels..];
+                let correction = 1.0 / (1.0 + (-gates[delta.values() + head]).exp());
+                let rate = (1.0
+                    + (gates[delta.values() + delta.value_heads + head] + self.dt_bias[head])
+                        .exp())
+                .ln();
+                let decay = (-self.a_log[head].exp() * rate).exp();
+                let reading: Vec<f64> = memory
+                    .iter_mut()
+                    .zip(value)
+                    .map(|(remembered, value)| {
+                        remember(remembered, &key, value, decay, correction);
+                        dot(remembered, &query)
+                    })
+                    .collect();
+                let z = &gates[head * delta.value_dim..][..delta.value_dim];
+                let normed = rms_norm(&reading, &self.norm, eps);
+                let at = row * delta.values() + head * delta.value_dim;
+                for ((out, normed), z) in out[at..].iter_mut().zip(normed).zip(z) {
+                    *out = normed * silu(*z);
+                }
+            }
+        }
+        out
+    }
+}
+
+/// One value's row of a head's memory decayed, then corrected toward `value` by the error of
+/// its recall of `key`.
+fn remember(remembered: &mut [f64], key: &[f64], value: &f64, decay: f64, correction: f64) {
+    remembered.iter_mut().for_each(|weight| *weight *= decay);
+    let error = (value - dot(remembered, key)) * correction;
+    for (weight, key) in remembered.iter_mut().zip(key) {
+        *weight += error * key;
+    }
+}
+
+/// `x / ‖x‖ · scale`, with FLA's epsilon of 1e-6 under the root.
+fn l2_normalized(x: &[f64], scale: f64) -> Vec<f64> {
+    let inverse = 1.0 / (dot(x, x) + 1e-6).sqrt();
+    x.iter().map(|value| value * inverse * scale).collect()
+}

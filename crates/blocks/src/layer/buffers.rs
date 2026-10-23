@@ -8,10 +8,11 @@ use crate::attention;
 
 /// Activations of one forward call of up to `rows` positions.
 pub struct Buffers {
-    pub(super) rows: usize,
+    pub(crate) rows: usize,
     hidden_width: usize,
     /// The residual stream, `rows × hidden`: the input of `forward` and its output.
     pub hidden: SharedBuf,
+    /// The token mixer's input projection (a fused QKV), `rows × mixer`.
     pub(crate) qkv: SharedBuf,
     pub(crate) attention: SharedBuf,
     /// The feed-forward's inner activations.
@@ -31,10 +32,10 @@ pub(crate) struct Scratch {
     pub(crate) normed: Vec<f32>,
     pub(crate) quant: QuantizedRows,
     pub(crate) scores: Vec<f32>,
-    pub(super) cos: Vec<f32>,
-    pub(super) sin: Vec<f32>,
+    pub(crate) cos: Vec<f32>,
+    pub(crate) sin: Vec<f32>,
     /// A query or key head on its way through its norm.
-    pub(super) head: Vec<f32>,
+    pub(crate) head: Vec<f32>,
     /// A gated feed-forward's `up` projection of this thread's columns.
     pub(super) up_share: Vec<f32>,
     /// A vision encoder's attention over all of an image's patches.
@@ -45,6 +46,8 @@ pub(crate) struct Scratch {
 pub(crate) struct Widths {
     pub(crate) hidden: usize,
     pub(crate) heads: Heads,
+    /// Columns of the token mixer's input projection: `heads.qkv()` for attention.
+    pub(crate) mixer: usize,
     pub(crate) feed_forward: usize,
 }
 
@@ -58,7 +61,7 @@ impl Buffers {
             rows,
             hidden_width: widths.hidden,
             hidden: SharedBuf::new(rows * widths.hidden),
-            qkv: SharedBuf::new(rows * widths.heads.qkv()),
+            qkv: SharedBuf::new(rows * widths.mixer),
             attention: SharedBuf::new(rows * widths.heads.width()),
             inner: SharedBuf::new(rows * widths.feed_forward),
             normed: SharedBuf::new(rows * widths.hidden),

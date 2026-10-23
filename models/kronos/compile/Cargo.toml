@@ -1,0 +1,21 @@
+[package]
+name = "fusor-ai-kronos-compile"
+description = "Compiles the Kronos-base and Kronos-Tokenizer-base checkpoints into a bundle: what to keep, renames and the dtype of every tensor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "kronos_compile"
+
+[dependencies]
+bundle.workspace = true
+compile.workspace = true
+kernels.workspace = true
+kronos.workspace = true
+
+[lints]
+workspace = true

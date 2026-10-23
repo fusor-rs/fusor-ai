@@ -1,0 +1,29 @@
+[package]
+name = "intern-decision-cli"
+description = "The native Intern-Decision-2B host: compile the checkpoint, decide requests, benchmark, and check parity with the reference goldens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "intern-decision"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+intern-decision = { workspace = true, features = ["threads"] }
+intern-decision-compile.workspace = true
+harness.workspace = true
+bundle.workspace = true
+compile.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+image.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+
+[lints]
+workspace = true

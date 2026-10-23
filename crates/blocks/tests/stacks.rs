@@ -4,6 +4,7 @@
 mod support;
 
 use blocks::dit::{self, Dit, Sequences};
+use blocks::hybrid::{self, AttentionShape, DeltaShape, Hybrid};
 use blocks::lm::{self, Embedding, Lm, Positions, Reader, Rows};
 use blocks::rotary::{Position, Rotation};
 use blocks::transformer::{self, Architecture, KvCache, Span, Transformer};
@@ -13,8 +14,9 @@ use kernels::DType;
 use team::Team;
 
 use support::{
-    Bias, Dims, HeadNorms, Kind, LAYERS, Llama, Mask, NormKind, Pairing, Plain, Rotary, Weights,
-    angles, gelu_erf, gelu_tanh, quick_gelu, relative_error, rms_norm, widen,
+    Bias, DeltaDims, Dims, HeadNorms, HybridDims, Kind, LAYERS, Llama, Mask, NormKind, Pairing,
+    Plain, Rotary, Weights, angles, gelu_erf, gelu_tanh, quick_gelu, relative_error, rms_norm,
+    widen,
 };
 
 const EPS: f32 = 1e-6;
@@ -148,7 +150,7 @@ fn reading_error(case: &Reading) -> f64 {
                 height: row * 2 % 5,
                 width: row * 3 % 7,
             },
-            Rotation::Sequence | Rotation::Grid => Position::uniform(row),
+            _ => Position::uniform(row),
         })
         .collect();
     let logits = read(&lm, &shape, &ids, &positions);
@@ -163,7 +165,7 @@ fn reading_error(case: &Reading) -> f64 {
         .collect();
     let sections = match case.rotation {
         Rotation::Multimodal(sections) => sections,
-        Rotation::Sequence | Rotation::Grid => [DECODER.head_dim / 2, 0, 0],
+        _ => [DECODER.head_dim / 2, 0, 0],
     };
     let angles = |row: usize| decoder_angles(positions[row], sections);
     let rotary = Rotary {
@@ -186,7 +188,7 @@ fn read(lm: &Lm, shape: &lm::Shape, ids: &[u32], positions: &[Position]) -> Vec<
     for rows in [0..ROWS - 1, ROWS - 1..ROWS] {
         let positions = match shape.stack.rotation {
             Rotation::Multimodal(_) => Positions::Given(&positions[rows.clone()]),
-            Rotation::Sequence | Rotation::Grid => Positions::Sequential,
+            _ => Positions::Sequential,
         };
         let rows = Rows {
             embeddings: &embeddings[rows.start * hidden..rows.end * hidden],
@@ -204,11 +206,13 @@ struct Stream {
     pairing: Option<Pairing>,
     mask: transformer::Mask,
     capacity: usize,
+    /// Rows per call.
+    call: usize,
     weights: DType,
 }
 
 const WINDOW: usize = 4;
-const STREAMS: [Stream; 2] = [
+const STREAMS: [Stream; 3] = [
     Stream {
         architecture: Architecture::Kyutai,
         plain: Plain {
@@ -219,6 +223,7 @@ const STREAMS: [Stream; 2] = [
         pairing: Some(Pairing::Interleaved),
         mask: transformer::Mask::Window(WINDOW),
         capacity: WINDOW + CALL,
+        call: CALL,
         weights: DType::Q7b32,
     },
     Stream {
@@ -231,6 +236,20 @@ const STREAMS: [Stream; 2] = [
         pairing: None,
         mask: transformer::Mask::Causal,
         capacity: ROWS,
+        call: CALL,
+        weights: DType::F32,
+    },
+    Stream {
+        architecture: Architecture::Encoder,
+        plain: Plain {
+            norm: NormKind::Layer,
+            bias: Bias::With,
+            activation: gelu_erf,
+        },
+        pairing: None,
+        mask: transformer::Mask::Full,
+        capacity: ROWS,
+        call: ROWS,
         weights: DType::F32,
     },
 ];
@@ -247,7 +266,7 @@ fn transformer_attends_over_its_cache_like_the_reference() {
     }
 }
 
-/// The error of the output of `ROWS` rows through the stack in calls of `CALL` rows.
+/// The error of the output of `ROWS` rows through the stack in calls of `case.call` rows.
 fn stream_error(case: &Stream) -> f64 {
     let mut weights = Weights::new("transformer", 2);
     let input = weights.floats(ROWS * DECODER.hidden, 0.0, 1.0);
@@ -266,6 +285,7 @@ fn stream_error(case: &Stream) -> f64 {
     let mask = match case.mask {
         transformer::Mask::Causal => Mask::Causal,
         transformer::Mask::Window(n) => Mask::Window(n),
+        transformer::Mask::Full => Mask::Full,
     };
     stack.apply(&mut x, &DECODER, rotary.as_ref(), mask);
     relative_error(&output, &x)
@@ -280,10 +300,10 @@ fn stream(
     let hidden = DECODER.hidden;
     let team = Team::global();
     let cache = KvCache::new(shape, case.capacity);
-    let mut buffers = shape.buffers(CALL, team.threads());
+    let mut buffers = shape.buffers(case.call, team.threads());
     let mut output = Vec::new();
-    for first in (0..ROWS).step_by(CALL) {
-        let rows = CALL.min(ROWS - first);
+    for first in (0..ROWS).step_by(case.call) {
+        let rows = case.call.min(ROWS - first);
         buffers.hidden.get_mut()[..rows * hidden]
             .copy_from_slice(&input[first * hidden..(first + rows) * hidden]);
         let span = Span {
@@ -394,4 +414,109 @@ fn diffusion_transformer_attends_within_each_sequence_like_the_reference() {
     }
     let error = relative_error(buffers.hidden.read(), &x);
     assert!(error < tolerance(DIT_WEIGHTS), "error {error:.2e}");
+}
+
+/// Two hybrid layers: the delta rule, then gated attention over half of each head rotated.
+const HYBRID: HybridDims = HybridDims {
+    dims: DECODER,
+    rotary_dim: DECODER.head_dim / 2,
+    delta: DeltaDims {
+        key_heads: 2,
+        value_heads: 8,
+        key_dim: 16,
+        value_dim: 8,
+        kernel: 4,
+    },
+    attention_interval: 2,
+};
+const HYBRID_SECTIONS: [usize; 3] = [2, 1, 1];
+
+#[test]
+fn hybrid_stack_carries_its_state_across_calls_like_the_reference() {
+    let mut weights = Weights::new("hybrid", 5);
+    let input = weights.floats(ROWS * DECODER.hidden, 0.0, 1.0);
+    let stack = weights.hybrid("hybrid.layers", &HYBRID);
+    let shape = hybrid_shape();
+    let hybrid = Hybrid::load(&mut weights.store(DType::F32), "hybrid", shape)
+        .expect("the bundle holds every tensor the block loads");
+    let positions: Vec<Position> = (0..ROWS)
+        .map(|row| Position {
+            temporal: row,
+            height: row * 2 % 5,
+            width: row * 3 % 7,
+        })
+        .collect();
+    let output = read_hybrid(&hybrid, &shape, &input, &positions);
+
+    let mut x = widen(&input);
+    let angles = |row: usize| {
+        let Position {
+            temporal,
+            height,
+            width,
+        } = positions[row];
+        let axes = [temporal, height, width, temporal];
+        angles(&axes, ROPE_BASE.into(), HYBRID.rotary_dim)
+    };
+    stack.apply(&mut x, &HYBRID, &angles);
+    let error = relative_error(&output, &x);
+    assert!(error < tolerance(DType::F32), "error {error:.2e}");
+}
+
+fn hybrid_shape() -> hybrid::Shape {
+    let DeltaDims {
+        key_heads,
+        value_heads,
+        key_dim,
+        value_dim,
+        kernel,
+    } = HYBRID.delta;
+    hybrid::Shape {
+        hidden: DECODER.hidden,
+        layers: LAYERS,
+        attention_interval: HYBRID.attention_interval,
+        attention: AttentionShape {
+            heads: DECODER.heads,
+            kv_heads: DECODER.kv_heads,
+            head_dim: DECODER.head_dim,
+            rotary_dim: HYBRID.rotary_dim,
+            rope_base: ROPE_BASE,
+            rotation: Rotation::MultimodalInterleaved(HYBRID_SECTIONS),
+        },
+        delta: DeltaShape {
+            key_heads,
+            value_heads,
+            key_dim,
+            value_dim,
+            kernel,
+        },
+        feed_forward: DECODER.feed_forward,
+        norm_eps: EPS,
+    }
+}
+
+/// The output of `input`'s rows through the stack in calls of `CALL` rows.
+fn read_hybrid(
+    hybrid: &Hybrid,
+    shape: &hybrid::Shape,
+    input: &[f32],
+    positions: &[Position],
+) -> Vec<f32> {
+    let hidden = DECODER.hidden;
+    let team = Team::global();
+    let state = hybrid::State::new(shape, ROWS);
+    let mut buffers = shape.buffers(CALL, team.threads());
+    let mut output = Vec::new();
+    for first in (0..ROWS).step_by(CALL) {
+        let rows = first..ROWS.min(first + CALL);
+        buffers.stack.hidden.get_mut()[..rows.len() * hidden]
+            .copy_from_slice(&input[rows.start * hidden..rows.end * hidden]);
+        let call = hybrid::Rows {
+            first,
+            positions: &positions[rows.clone()],
+        };
+        team.run(|ctx| hybrid.forward(ctx, &state, &buffers, &call));
+        output.extend_from_slice(&buffers.stack.hidden.read()[..rows.len() * hidden]);
+    }
+    output
 }

@@ -11,6 +11,7 @@ pub mod conformer;
 pub mod dit;
 pub mod dpm;
 pub mod flow;
+pub mod hybrid;
 pub mod istft;
 mod layer;
 pub mod lm;

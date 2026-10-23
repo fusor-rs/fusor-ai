@@ -1,0 +1,29 @@
+[package]
+name = "fusor-ai-intern-decision"
+description = "InternLM's Intern-Decision-2B structured decision model: image preprocessing, the NaViT vision encoder and merger, the Qwen3.5 hybrid language model, the request's prompt and its calibrated answers. No I/O; builds for native and wasm32."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "intern_decision"
+
+[dependencies]
+team.workspace = true
+kernels.workspace = true
+media.workspace = true
+blocks.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
+serde.workspace = true
+# The request's questions and options keep their order, as Python's dicts do.
+serde_json = { workspace = true, features = ["preserve_order"] }
+
+[features]
+# Run the thread team on Rayon's pool (native, and the threaded browser runtimes).
+threads = ["team/threads"]
+
+[lints]
+workspace = true

@@ -3,13 +3,12 @@
 //! (`paddle-ocr-compile`) writes exactly these names.
 
 use blocks::lm::{self, Embedding, Lm};
-use blocks::norm::LayerNorm;
 use blocks::rotary::Rotation;
 use blocks::transformer::{self, Architecture};
 use blocks::vit;
-use blocks::vit::tower::{self, Ending, Tower};
-use bundle::{Load, Scope, Store, Tokenizer};
-use kernels::Linear;
+use blocks::vit::merger::{self, Merger};
+use blocks::vit::tower::{self, Ending, Resample, Tower};
+use bundle::{Load, Store, Tokenizer};
 use media::image::Filter;
 
 use crate::Error;
@@ -30,7 +29,7 @@ pub(crate) const TOWER: tower::Shape = tower::Shape {
     encoder: VISION_SHAPE,
     patch_values: PATCH_VALUES,
     position_grid: POSITION_GRID,
-    resample: Filter::Bilinear,
+    resample: Resample::Interpolate(Filter::Bilinear),
     ending: Ending::Norm,
 };
 
@@ -45,9 +44,13 @@ pub const VISION_SHAPE: vit::Shape = vit::Shape {
 /// SigLIP's 4304 MLP units, padded with zero units to whole quantization blocks
 /// (`gelu(0) = 0`, so they add nothing).
 pub const VISION_FEED_FORWARD: usize = 4320;
-/// Width of a merged token: four patches side by side.
-pub const MERGED: usize = VISION_SHAPE.hidden * MERGE * MERGE;
-pub const PROJECTOR_NORM_EPS: f32 = 1e-5;
+/// The projector: each 2 × 2 block of patches, LayerNorm-ed, into one token.
+pub(crate) const PROJECTOR: merger::Shape = merger::Shape {
+    patch: VISION_SHAPE.hidden,
+    merge: MERGE,
+    hidden: HIDDEN,
+    norm_eps: 1e-5,
+};
 
 /// ERNIE 4.5 0.3B: a Qwen2-style layer without biases, its 16 query heads twice the width of
 /// its residual stream, and multimodal RoPE over temporal, height and width sections.
@@ -71,17 +74,9 @@ pub(crate) const LANGUAGE: lm::Shape = lm::Shape {
     embedding: Embedding::Own,
 };
 
-/// Four neighbouring patches into one token: LayerNorm, then `down(gelu(up(·)))` of the four
-/// side by side.
-pub(crate) struct Projector {
-    pub(crate) norm: LayerNorm,
-    pub(crate) up: Linear,
-    pub(crate) down: Linear,
-}
-
 pub struct Model {
     pub(crate) vision: Tower,
-    pub(crate) projector: Projector,
+    pub(crate) projector: Merger,
     pub(crate) language: Lm,
     pub(crate) tokenizer: Tokenizer,
 }
@@ -89,12 +84,7 @@ pub struct Model {
 impl Model {
     pub(crate) fn load(store: &mut Store) -> Result<Self, Error> {
         let vision = Tower::load(store, "vision", TOWER)?;
-        let mut scope = Scope::new(store, "projector");
-        let projector = Projector {
-            norm: scope.load("norm", VISION_SHAPE.hidden)?,
-            up: scope.load("up", [MERGED, MERGED])?,
-            down: scope.load("down", [HIDDEN, MERGED])?,
-        };
+        let projector = Merger::load(store, "projector", PROJECTOR)?;
         let language = Lm::load(store, "llm", LANGUAGE)?;
         let tokenizer = Tokenizer::take(store)?;
         Ok(Self {

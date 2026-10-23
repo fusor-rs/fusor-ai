@@ -1,6 +1,6 @@
 [package]
 name = "fusor-ai-compile"
-description = "Native model compilation for fusor-ai: read safetensors checkpoints, encode tensors, write hashed bundle parts and the manifest."
+description = "Native model compilation for fusor-ai: read safetensors, ONNX and NumPy checkpoints, encode tensors, write hashed bundle parts and the manifest."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -20,6 +20,7 @@ serde.workspace = true
 serde_json.workspace = true
 blake3.workspace = true
 thiserror.workspace = true
+miniz_oxide.workspace = true
 
 [lints]
 workspace = true

@@ -1,24 +1,24 @@
 #!/usr/bin/env node
-// Integration: builds each model in its product checkout against this fusor-ai commit, and
-// compares everything it produces with the model's baseline, `models/<model>/baseline.json`: the
-// bundles' manifests, the parity lines, and the smoke and e2e outputs and metrics. A refactor
-// must match it exactly; `--bless` records a change meant to move it.
+// Integration: builds each model in its product checkout against this fusor-ai working tree, as
+// it is on disk, committed or not, and compares everything it produces with the model's baseline,
+// `models/<model>/baseline.json`: the bundles' manifests, the parity lines, and the smoke and e2e
+// outputs and metrics. A refactor must match it exactly; `--bless` records a change meant to move
+// it.
 //
 // It also times the model: its native bench, and the figures its page measured in the e2e runs.
 // The report sets them beside the baseline's and flags those that moved beyond their noise;
 // timings never fail the run.
 //
-//   node scripts/integrate.mjs <model>… [--bless] [--commit <rev>]
+//   node scripts/integrate.mjs <model>… [--bless]
 //   node scripts/integrate.mjs --all
 //
-// `--commit` builds another fusor-ai commit than the one checked out, such as a product's pin.
-// The products are checkouts beside fusor-ai (integration.json). Each product's
-// `vendor/fusor-ai` is pointed at this commit for the run and restored to its pin afterwards.
-// The report and each model's outputs and log go to target/integrate/.
+// The products are checkouts beside fusor-ai (integration.json). For the run, each product's
+// `vendor/fusor-ai` is a link to this working tree, its own checkout set aside beside it and put
+// back afterwards. The report and each model's outputs and log go to target/integrate/.
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -46,17 +46,15 @@ const TIMING_TABLE = ["| Timing | Baseline | Now | Change |", "| --- | --- | ---
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { all: { type: "boolean" }, bless: { type: "boolean" }, commit: { type: "string" } },
+  options: { all: { type: "boolean" }, bless: { type: "boolean" } },
 });
 const models = values.all ? Object.keys(CONFIG) : positionals;
 const unknown = models.filter((model) => !(model in CONFIG));
 if (models.length === 0 || unknown.length > 0) {
   fail(`expected models from integration.json (${Object.keys(CONFIG).join(", ")}) or --all`);
 }
-if (!values.commit && git(ROOT, "status", "--porcelain", "--untracked-files=no") !== "") {
-  fail("fusor-ai has uncommitted changes: commit them, the products build from a commit");
-}
-const commit = git(ROOT, "rev-parse", "--verify", `${values.commit ?? "HEAD"}^{commit}`);
+const changed = git(ROOT, "status", "--porcelain") === "" ? "" : ", with uncommitted changes";
+const tree = `${git(ROOT, "rev-parse", "--short", "HEAD")}${changed}`;
 
 const sections = [];
 let identical = true;
@@ -78,26 +76,26 @@ for (const model of models) {
   identical &&= differences.length === 0;
   sections.push(section(model, differences, record, baseline));
 }
-const report = [`# Integration of fusor-ai ${commit}`, "", `Platform: ${PLATFORM}.`, "", ...sections];
+const report = [`# Integration of fusor-ai's working tree (${tree})`, "", `Platform: ${PLATFORM}.`, "", ...sections];
 writeFileSync(join(RUNS, "report.md"), `${report.join("\n")}\n`);
 console.log(`${identical ? "every output identical" : "outputs differ"}: ${relative(process.cwd(), join(RUNS, "report.md"))}`);
 process.exit(identical ? 0 : 1);
 
-/** Builds `model` in its product at this commit and records what it produced. */
+/** Builds `model` in its product against this working tree and records what it produced. */
 function integrate(model, spec) {
   const product = join(dirname(ROOT), spec.product);
   const vendor = join(product, "vendor/fusor-ai");
-  if (git(product, "status", "--porcelain") !== "") {
-    throw new Error(`${spec.product} has uncommitted changes: commit or stash them first`);
+  const checkout = `${vendor}.checkout`;
+  if (existsSync(checkout)) {
+    throw new Error(`${checkout} exists: an earlier run did not finish; put it back as ${vendor}`);
   }
-  const pinned = git(product, "rev-parse", "HEAD:vendor/fusor-ai");
   const run = join(RUNS, model);
   rmSync(run, { recursive: true, force: true });
   mkdirSync(run, { recursive: true });
   const log = join(run, "log.txt");
   fetchGoldens(model, product, spec.goldens, log);
-  git(vendor, "fetch", "--quiet", ROOT, commit);
-  git(vendor, "checkout", "--quiet", commit);
+  renameSync(vendor, checkout);
+  symlinkSync(ROOT, vendor, "dir");
   try {
     for (const command of spec.build) {
       const { status } = shell(model, product, command, log);
@@ -112,7 +110,8 @@ function integrate(model, spec) {
       timings: { ...bench(model, product, spec.bench, log), ...pageTimings(model, spec.page) },
     };
   } finally {
-    git(vendor, "checkout", "--quiet", pinned);
+    unlinkSync(vendor);
+    renameSync(checkout, vendor);
   }
 }
 

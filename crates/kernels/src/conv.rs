@@ -10,6 +10,8 @@
 //! `Conv2d::forward_upsampled` convolves the input repeated twice along both axes (nearest
 //! upsampling) without materializing it: the windows read it in place.
 //!
+//! `Depthwise2d` convolves each channel alone (in f32), by output pixels.
+//!
 //! `project_rows` and the convolutions give each thread whole rows when there are at least as
 //! many rows as outputs, so each thread quantizes only its own rows; otherwise every thread takes
 //! every row and a share of the output columns. Rows are gathered and quantized `CHUNK_ROWS` at
@@ -22,6 +24,7 @@ use team::Ctx;
 use crate::Error;
 use crate::linear::{COLUMN_ALIGN, Linear};
 use crate::matmul::QuantizedRows;
+use crate::tensor::{Table, Vector};
 
 /// Rows a thread gathers and quantizes at a time: its working set.
 const CHUNK_ROWS: usize = 64;
@@ -103,6 +106,104 @@ pub struct Conv2d {
 pub struct Patches {
     gathered: Vec<f32>,
     quant: QuantizedRows,
+}
+
+/// A depthwise convolution's channels, `height × width` window and stride.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DepthwiseShape {
+    pub channels: usize,
+    pub window: [usize; 2],
+    pub stride: usize,
+}
+
+/// A depthwise convolution: each channel by its own `height × width` window moved by `stride`
+/// along both axes, zeros past the image's edges (the padding is half the window).
+pub struct Depthwise2d {
+    /// The weights tap-major (window row, then column), each tap's channels contiguous.
+    taps: Vec<f32>,
+    bias: Vec<f32>,
+    window: [usize; 2],
+    stride: usize,
+}
+
+impl Depthwise2d {
+    /// `weight` is `[channels, height · width]`, each channel's taps row-major.
+    ///
+    /// # Errors
+    /// When the weight's columns are not the window's taps, or the bias not one per channel.
+    pub fn new(
+        weight: &Table,
+        bias: Option<&Vector>,
+        window: [usize; 2],
+        stride: usize,
+    ) -> Result<Self, Error> {
+        let matrix = weight.matrix();
+        let (channels, taps) = (matrix.rows, matrix.cols);
+        let bias = bias.map_or_else(|| vec![0.0; channels], |bias| bias.values().to_vec());
+        if taps != window[0] * window[1] || bias.len() != channels || stride == 0 {
+            return Err(Error::Format(format!(
+                "a depthwise convolution of {channels}×{taps} weights over a {window:?} window"
+            )));
+        }
+        let values = weight.dequantize();
+        let taps = (0..taps * channels)
+            .map(|at| values[(at % channels) * taps + at / channels])
+            .collect();
+        Ok(Self {
+            taps,
+            bias,
+            window,
+            stride,
+        })
+    }
+
+    pub fn channels(&self) -> usize {
+        self.bias.len()
+    }
+
+    pub fn output_grid(&self, grid: Grid) -> Grid {
+        let side =
+            |length: usize, window: usize| (length + 2 * (window / 2) - window) / self.stride + 1;
+        Grid {
+            images: grid.images,
+            height: side(grid.height, self.window[0]),
+            width: side(grid.width, self.window[1]),
+        }
+    }
+
+    /// `store(pixel, out)`: this thread's share of the output pixels, each pixel's channels into
+    /// `out` (the convolution of `input`, pixel-major rows of `grid`, plus the bias).
+    pub fn forward(
+        &self,
+        ctx: &Ctx,
+        (input, grid): (&[f32], Grid),
+        out: &mut Vec<f32>,
+        mut store: impl FnMut(usize, &[f32]),
+    ) {
+        let channels = self.channels();
+        let output = self.output_grid(grid);
+        let [height, width] = self.window;
+        out.resize(channels, 0.0);
+        for pixel in ctx.split(output.pixels(), 1) {
+            let image = pixel / output.area();
+            let (row, column) = (pixel / output.width % output.height, pixel % output.width);
+            out.copy_from_slice(&self.bias);
+            for tap in 0..height * width {
+                let y = (row * self.stride + tap / width).checked_sub(height / 2);
+                let x = (column * self.stride + tap % width).checked_sub(width / 2);
+                let Some((y, x)) = y.zip(x).filter(|&(y, x)| y < grid.height && x < grid.width)
+                else {
+                    continue;
+                };
+                let at = ((image * grid.height + y) * grid.width + x) * channels;
+                let weights = &self.taps[tap * channels..(tap + 1) * channels];
+                for ((out, value), weight) in out.iter_mut().zip(&input[at..]).zip(weights) {
+                    *out += value * weight;
+                }
+            }
+            store(pixel, out);
+        }
+    }
 }
 
 /// Where the rows of a product come from.

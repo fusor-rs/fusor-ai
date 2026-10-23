@@ -95,6 +95,7 @@ impl Layer {
             hidden,
             heads,
             feed_forward,
+            ..
         } = *widths;
         let mut scope = Scope::new(store, prefix);
         let [norm1, norm2] = spec.norms;

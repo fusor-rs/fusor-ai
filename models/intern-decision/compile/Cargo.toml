@@ -1,0 +1,21 @@
+[package]
+name = "fusor-ai-intern-decision-compile"
+description = "Compiles the Intern-Decision-2B checkpoint into a bundle: renames, the patch convolution's temporal fold, the norms' 1 + w, the attention layers' query and gate heads apart, and the dtype of every tensor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "intern_decision_compile"
+
+[dependencies]
+intern-decision.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
+compile.workspace = true
+kernels.workspace = true
+
+[lints]
+workspace = true
