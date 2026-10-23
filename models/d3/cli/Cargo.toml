@@ -1,0 +1,29 @@
+[package]
+name = "d3-cli"
+description = "The native d3 host: compile a d3-nano or d3-lite checkpoint, decide requests, benchmark, and check parity with the reference goldens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "d3"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+d3 = { workspace = true, features = ["threads"] }
+d3-compile.workspace = true
+harness.workspace = true
+bundle.workspace = true
+compile.workspace = true
+kernels.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+
+[lints]
+workspace = true

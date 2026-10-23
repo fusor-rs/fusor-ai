@@ -7,9 +7,10 @@ use std::ops::Range;
 
 use blocks::hybrid::{self, Rows};
 use blocks::rotary::Position;
+use blocks::transformer::Mask;
 use blocks::vit::merger;
 use blocks::vit::preprocessing::{Layout, Patches};
-use blocks::vit::{Grid, tower};
+use blocks::vit::{self, Grid, tower};
 use bundle::{Error, Store};
 use kernels::dot_f32;
 use kernels::ops::rms_norm;
@@ -18,7 +19,7 @@ use serde::Serialize;
 use team::Team;
 
 use crate::decision::{self, Response};
-use crate::image::{self, PREPROCESSING};
+use crate::image::{MAX_ASPECT, PREPROCESSING};
 use crate::model::{HIDDEN, LANGUAGE_SHAPE, MERGER, Model, NORM_EPS, TOWER};
 use crate::prompt::Prompt;
 use crate::request::{Question, Request, SYMBOLS};
@@ -193,7 +194,7 @@ impl Engine {
     /// The prompt, its images' rows `tokens` (every image's, in order), through the language
     /// model: the final-normed state of each deciding row, `questions × HIDDEN`.
     pub fn read(&mut self, prompt: &Prompt, tokens: &[f32]) -> Vec<f32> {
-        let positions = prompt.positions();
+        let positions = vit::positions(prompt.ids.len(), &prompt.images);
         let sequence = Sequence {
             prompt,
             positions: &positions,
@@ -232,6 +233,7 @@ impl Engine {
         let call = Rows {
             first: rows.start,
             positions: &positions[rows.clone()],
+            mask: Mask::Causal,
         };
         let (state, buffers) = (&self.state, &self.buffers);
         self.team
@@ -271,7 +273,7 @@ impl Engine {
         }
         let patches = images
             .iter()
-            .map(image::patches)
+            .map(|image| PREPROCESSING.centered_patches(image, MAX_ASPECT))
             .collect::<Result<Vec<_>, _>>()?;
         let grids: Vec<Grid> = patches.iter().map(|patches| patches.grid).collect();
         let (questions, prompt) = self.prompt(request, &grids)?;
@@ -286,7 +288,7 @@ impl Engine {
             questions: questions.len(),
         };
         self.job = Some(Job {
-            positions: prompt.positions(),
+            positions: vit::positions(prompt.ids.len(), &prompt.images),
             questions,
             prompt,
             patches,

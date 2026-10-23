@@ -3,7 +3,7 @@
 /// One stage of a decision, with what it consumes and produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
-    /// An image to normalized 16 × 16 patches (`image::patches`).
+    /// An image to normalized 16 × 16 patches (`Preprocessing::centered_patches`).
     Preprocess,
     /// The patches through the patch embedding, plus the position grid resampled to the image.
     Embed,

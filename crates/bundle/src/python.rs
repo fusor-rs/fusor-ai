@@ -1,6 +1,6 @@
-//! JSON values as the reference writes them into the prompt: Python's `json.dumps(value,
-//! ensure_ascii=False, indent=n)`, and `str(value)` of a scalar. Floats are written as Python's
-//! `repr` writes them (`1e-05`, `1e+16`, `100.0`), integers as their digits.
+//! Text as Python references write it into prompts: `json.dumps(value, ensure_ascii=False)`,
+//! with or without `indent`, `str(value)` of a scalar, and `str.strip()`. Floats are written as
+//! Python's `repr` writes them (`1e-05`, `1e+16`, `100.0`), integers as their digits.
 
 use serde_json::{Number, Value};
 
@@ -9,15 +9,38 @@ use crate::Error;
 /// Python's `float.repr` switches to scientific notation outside `1e-4 ≤ |x| < 1e16`.
 const FIXED_EXPONENTS: std::ops::Range<i32> = -4..16;
 
-/// `value` as `json.dumps(value, ensure_ascii=False, indent=indent)` writes it.
-pub(crate) fn dumps(value: &Value, indent: usize) -> String {
+/// How `json.dumps` lays out containers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layout {
+    /// On one line, items after `, ` and values after `: ` (no `indent`).
+    Inline,
+    /// On one line, items after `,` and values after `:` (`separators=(",", ":")`).
+    Compact,
+    /// One item per line, indented by this many spaces per level (`indent=n`).
+    Indented(usize),
+}
+
+impl Layout {
+    fn key_separator(self) -> &'static str {
+        match self {
+            Layout::Compact => ":",
+            Layout::Inline | Layout::Indented(_) => ": ",
+        }
+    }
+}
+
+/// `value` as `json.dumps(value, ensure_ascii=False)` writes it, laid out as `layout`.
+pub fn dumps(value: &Value, layout: Layout) -> String {
     let mut out = String::new();
-    write(&mut out, value, indent, 0);
+    write(&mut out, value, layout, 0);
     out
 }
 
 /// A description or an instruction: a string as it is, a scalar as Python's `str` writes it.
-pub(crate) fn text(value: &Value) -> Result<String, Error> {
+///
+/// # Errors
+/// When `value` is an array or an object.
+pub fn text(value: &Value) -> Result<String, Error> {
     match value {
         Value::String(text) => Ok(text.clone()),
         Value::Number(number) => Ok(self::number(number)),
@@ -30,7 +53,15 @@ pub(crate) fn text(value: &Value) -> Result<String, Error> {
     }
 }
 
-fn write(out: &mut String, value: &Value, indent: usize, depth: usize) {
+/// `text` without the leading and trailing characters Python's `str.isspace` matches: Unicode's
+/// whitespace and the information separators U+001C–U+001F (`str.strip()`, Jinja's `trim`).
+pub fn strip(text: &str) -> &str {
+    text.trim_matches(|character: char| {
+        character.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&character)
+    })
+}
+
+fn write(out: &mut String, value: &Value, layout: Layout, depth: usize) {
     match value {
         Value::Null => out.push_str("null"),
         Value::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
@@ -41,37 +72,46 @@ fn write(out: &mut String, value: &Value, indent: usize, depth: usize) {
         Value::Array(items) => {
             out.push('[');
             for (index, item) in items.iter().enumerate() {
-                open(out, index, indent, depth + 1);
-                write(out, item, indent, depth + 1);
+                open(out, index, layout, depth + 1);
+                write(out, item, layout, depth + 1);
             }
-            close(out, ']', indent, depth);
+            close(out, ']', layout, depth);
         }
         Value::Object(entries) => {
             out.push('{');
             for (index, (key, item)) in entries.iter().enumerate() {
-                open(out, index, indent, depth + 1);
+                open(out, index, layout, depth + 1);
                 out.push_str(&quoted(key));
-                out.push_str(": ");
-                write(out, item, indent, depth + 1);
+                out.push_str(layout.key_separator());
+                write(out, item, layout, depth + 1);
             }
-            close(out, '}', indent, depth);
+            close(out, '}', layout, depth);
         }
     }
 }
 
 /// The separator before item `index` of a container, then the item's indentation.
-fn open(out: &mut String, index: usize, indent: usize, depth: usize) {
+fn open(out: &mut String, index: usize, layout: Layout, depth: usize) {
     if index > 0 {
         out.push(',');
     }
-    out.push('\n');
-    out.push_str(&" ".repeat(indent * depth));
+    match layout {
+        Layout::Inline if index > 0 => out.push(' '),
+        Layout::Inline | Layout::Compact => {}
+        Layout::Indented(indent) => line(out, indent * depth),
+    }
 }
 
-fn close(out: &mut String, bracket: char, indent: usize, depth: usize) {
-    out.push('\n');
-    out.push_str(&" ".repeat(indent * depth));
+fn close(out: &mut String, bracket: char, layout: Layout, depth: usize) {
+    if let Layout::Indented(indent) = layout {
+        line(out, indent * depth);
+    }
     out.push(bracket);
+}
+
+fn line(out: &mut String, spaces: usize) {
+    out.push('\n');
+    out.push_str(&" ".repeat(spaces));
 }
 
 /// A JSON string: Python escapes `"`, `\` and the control characters as `serde_json` does.

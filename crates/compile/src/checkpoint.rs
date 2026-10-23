@@ -28,6 +28,7 @@ enum Dtype {
     Bf16,
     F16,
     F32,
+    F64,
     U8,
     I32,
     I64,
@@ -41,7 +42,7 @@ impl Dtype {
             Dtype::U8 => Some(1),
             Dtype::Bf16 | Dtype::F16 => Some(2),
             Dtype::F32 | Dtype::I32 => Some(4),
-            Dtype::I64 => Some(8),
+            Dtype::F64 | Dtype::I64 => Some(8),
             Dtype::Unsupported => None,
         }
     }
@@ -126,18 +127,22 @@ impl Checkpoint {
     }
 
     pub fn u8(&self, name: &str) -> Result<Vec<u8>, Error> {
-        self.integers(name, Dtype::U8, u8::from_le_bytes)
+        self.scalars(name, Dtype::U8, u8::from_le_bytes)
     }
 
     pub fn i32(&self, name: &str) -> Result<Vec<i32>, Error> {
-        self.integers(name, Dtype::I32, i32::from_le_bytes)
+        self.scalars(name, Dtype::I32, i32::from_le_bytes)
     }
 
     pub fn i64(&self, name: &str) -> Result<Vec<i64>, Error> {
-        self.integers(name, Dtype::I64, i64::from_le_bytes)
+        self.scalars(name, Dtype::I64, i64::from_le_bytes)
     }
 
-    fn integers<const BYTES: usize, T>(
+    pub fn f64(&self, name: &str) -> Result<Vec<f64>, Error> {
+        self.scalars(name, Dtype::F64, f64::from_le_bytes)
+    }
+
+    fn scalars<const BYTES: usize, T>(
         &self,
         name: &str,
         dtype: Dtype,

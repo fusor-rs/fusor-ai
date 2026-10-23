@@ -282,13 +282,17 @@ fn stream_error(case: &Stream) -> f64 {
         pairing,
         angles: &angles,
     });
-    let mask = match case.mask {
+    stack.apply(&mut x, &DECODER, rotary.as_ref(), reference_mask(case.mask));
+    relative_error(&output, &x)
+}
+
+/// The reference's mask for a block's.
+fn reference_mask(mask: transformer::Mask) -> Mask {
+    match mask {
         transformer::Mask::Causal => Mask::Causal,
         transformer::Mask::Window(n) => Mask::Window(n),
         transformer::Mask::Full => Mask::Full,
-    };
-    stack.apply(&mut x, &DECODER, rotary.as_ref(), mask);
-    relative_error(&output, &x)
+    }
 }
 
 fn stream(
@@ -431,8 +435,23 @@ const HYBRID: HybridDims = HybridDims {
 };
 const HYBRID_SECTIONS: [usize; 3] = [2, 1, 1];
 
+/// Each mask the hybrid stack reads under, and the rows per call: a sequence read with every row
+/// seeing every other is read in one call.
+const HYBRID_CALLS: [(transformer::Mask, usize); 2] = [
+    (transformer::Mask::Causal, CALL),
+    (transformer::Mask::Full, ROWS),
+];
+
 #[test]
 fn hybrid_stack_carries_its_state_across_calls_like_the_reference() {
+    for (mask, call) in HYBRID_CALLS {
+        let error = hybrid_error(mask, call);
+        assert!(error < tolerance(DType::F32), "{mask:?}: error {error:.2e}");
+    }
+}
+
+/// The error of the output of `ROWS` rows through the hybrid stack in calls of `call` rows.
+fn hybrid_error(mask: transformer::Mask, call: usize) -> f64 {
     let mut weights = Weights::new("hybrid", 5);
     let input = weights.floats(ROWS * DECODER.hidden, 0.0, 1.0);
     let stack = weights.hybrid("hybrid.layers", &HYBRID);
@@ -446,7 +465,7 @@ fn hybrid_stack_carries_its_state_across_calls_like_the_reference() {
             width: row * 3 % 7,
         })
         .collect();
-    let output = read_hybrid(&hybrid, &shape, &input, &positions);
+    let output = read_hybrid(&hybrid, &shape, &input, &positions, (mask, call));
 
     let mut x = widen(&input);
     let angles = |row: usize| {
@@ -458,9 +477,8 @@ fn hybrid_stack_carries_its_state_across_calls_like_the_reference() {
         let axes = [temporal, height, width, temporal];
         angles(&axes, ROPE_BASE.into(), HYBRID.rotary_dim)
     };
-    stack.apply(&mut x, &HYBRID, &angles);
-    let error = relative_error(&output, &x);
-    assert!(error < tolerance(DType::F32), "error {error:.2e}");
+    stack.apply(&mut x, &HYBRID, &angles, reference_mask(mask));
+    relative_error(&output, &x)
 }
 
 fn hybrid_shape() -> hybrid::Shape {
@@ -495,27 +513,29 @@ fn hybrid_shape() -> hybrid::Shape {
     }
 }
 
-/// The output of `input`'s rows through the stack in calls of `CALL` rows.
+/// The output of `input`'s rows through the stack in calls of `call` rows under `mask`.
 fn read_hybrid(
     hybrid: &Hybrid,
     shape: &hybrid::Shape,
     input: &[f32],
     positions: &[Position],
+    (mask, call): (transformer::Mask, usize),
 ) -> Vec<f32> {
     let hidden = DECODER.hidden;
     let team = Team::global();
     let state = hybrid::State::new(shape, ROWS);
-    let mut buffers = shape.buffers(CALL, team.threads());
+    let mut buffers = shape.buffers(call, team.threads());
     let mut output = Vec::new();
-    for first in (0..ROWS).step_by(CALL) {
-        let rows = first..ROWS.min(first + CALL);
+    for first in (0..ROWS).step_by(call) {
+        let rows = first..ROWS.min(first + call);
         buffers.stack.hidden.get_mut()[..rows.len() * hidden]
             .copy_from_slice(&input[rows.start * hidden..rows.end * hidden]);
-        let call = hybrid::Rows {
+        let rows_call = hybrid::Rows {
             first,
             positions: &positions[rows.clone()],
+            mask,
         };
-        team.run(|ctx| hybrid.forward(ctx, &state, &buffers, &call));
+        team.run(|ctx| hybrid.forward(ctx, &state, &buffers, &rows_call));
         output.extend_from_slice(&buffers.stack.hidden.read()[..rows.len() * hidden]);
     }
     output

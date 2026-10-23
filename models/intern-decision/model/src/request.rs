@@ -2,11 +2,11 @@
 //! and named questions in order, each a choice among described options, a score on a numeric
 //! scale, or a yes-or-no (`noul`) decision.
 
+use bundle::python;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::Error;
-use crate::json;
 
 /// The most questions a request holds.
 pub const MAX_QUESTIONS: usize = 16;
@@ -93,7 +93,7 @@ fn question(name: &str, asked: &Value) -> Result<Question, Error> {
         )));
     }
     let instructions = match &asked.instructions {
-        Some(instructions) => json::text(instructions)?,
+        Some(instructions) => python::text(instructions)?,
         None => String::new(),
     };
     Ok(Question {
@@ -121,7 +121,7 @@ fn scores(criteria: Option<&Value>) -> Result<Vec<Candidate>, Error> {
             .map(|(index, level)| {
                 Ok(Candidate {
                     value: index.to_string(),
-                    description: json::text(level)?,
+                    description: python::text(level)?,
                 })
             })
             .collect(),
@@ -148,7 +148,7 @@ fn yes_or_no(criteria: Option<&Value>) -> Result<Vec<Candidate>, Error> {
                 .find(|(key, _)| keys.contains(&key.to_lowercase().as_str()))
         });
         match found {
-            Some((_, description)) => json::text(description),
+            Some((_, description)) => python::text(description),
             None => Ok(fallback.into()),
         }
     };
@@ -170,7 +170,7 @@ fn described(criteria: &Map<String, Value>) -> Result<Vec<Candidate>, Error> {
         .map(|(value, description)| {
             Ok(Candidate {
                 value: value.clone(),
-                description: json::text(description)?,
+                description: python::text(description)?,
             })
         })
         .collect()

@@ -1,0 +1,29 @@
+[package]
+name = "fusor-ai-d3"
+description = "vLLM Semantic Router's d3-nano and d3-lite (Decision 3.0): the model. No I/O; builds for native and wasm32."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "d3"
+
+[dependencies]
+team.workspace = true
+kernels.workspace = true
+media.workspace = true
+blocks.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
+serde.workspace = true
+# The questions and their options keep their order, as the request's JSON lists them.
+serde_json = { workspace = true, features = ["preserve_order"] }
+
+[features]
+# Run the thread team on Rayon's pool (native, and the threaded browser runtimes).
+threads = ["team/threads"]
+
+[lints]
+workspace = true

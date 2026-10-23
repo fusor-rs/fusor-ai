@@ -302,6 +302,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
 
 [[package]]
+name = "d3-cli"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "clap",
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-d3",
+ "fusor-ai-d3-compile",
+ "fusor-ai-harness",
+ "fusor-ai-kernels",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "d3-runtime"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-d3",
+ "fusor-ai-runtime",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -479,6 +506,29 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "fusor-ai-d3"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-blocks",
+ "fusor-ai-bundle",
+ "fusor-ai-kernels",
+ "fusor-ai-media",
+ "fusor-ai-team",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "fusor-ai-d3-compile"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-d3",
+ "fusor-ai-kernels",
 ]
 
 [[package]]

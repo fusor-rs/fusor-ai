@@ -129,7 +129,8 @@ pub fn run(engine: &mut Engine, goldens: &Path) -> Result<()> {
 }
 
 fn preprocess(image: &Image) -> Result<String> {
-    let patches = intern_decision::patches(&image.pixels)?;
+    let patches = intern_decision::PREPROCESSING
+        .centered_patches(&image.pixels, intern_decision::MAX_ASPECT)?;
     ensure!(
         patches.grid == image.grid,
         "preprocess: grid {:?}, reference {:?}",

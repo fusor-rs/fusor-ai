@@ -6,13 +6,12 @@
 
 use std::ops::Range;
 
-use blocks::rotary::Position;
 use blocks::vit::Grid;
 use bundle::Tokenizer;
+use bundle::python::{self, Layout, strip};
 use serde_json::{Map, Value};
 
 use crate::Error;
-use crate::json;
 use crate::model::MERGE;
 use crate::request::{Question, SYMBOLS};
 
@@ -52,7 +51,7 @@ impl Prompt {
         let schema = schema(questions);
         let user = format!(
             "{INSTRUCTION}\n\n## State\n{}\n## Decision schema\n{schema}",
-            json::dumps(state, STATE_INDENT)
+            python::dumps(state, Layout::Indented(STATE_INDENT))
         );
         if user.contains(DECISION) {
             return Err(Error::Request(format!(
@@ -72,7 +71,7 @@ impl Prompt {
             .iter()
             .map(|question| (question.name.clone(), DECISION.into()))
             .collect();
-        let answer = json::dumps(&Value::Object(answers), ANSWER_INDENT);
+        let answer = python::dumps(&Value::Object(answers), Layout::Indented(ANSWER_INDENT));
         let text = format!(
             "<|im_start|>system\n{SYSTEM}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n\
              <|im_start|>assistant\n<think>\n\n</think>\n\n{}<|im_end|>\n",
@@ -97,30 +96,6 @@ impl Prompt {
             images,
             decisions,
         })
-    }
-
-    /// Every row's rotary position: a text row's on every axis, continuing from the last; an
-    /// image token's at the image's start, down its row and across its column; the text after
-    /// an image from past its longer side.
-    pub fn positions(&self) -> Vec<Position> {
-        let mut positions = Vec::with_capacity(self.ids.len());
-        let mut images = self.images.iter().peekable();
-        let mut next = 0;
-        while positions.len() < self.ids.len() {
-            let row = positions.len();
-            let Some((rows, grid)) = images.next_if(|(rows, _)| rows.start == row) else {
-                positions.push(Position::uniform(next));
-                next += 1;
-                continue;
-            };
-            positions.extend((0..rows.len()).map(|token| Position {
-                temporal: next,
-                height: next + token / grid.columns,
-                width: next + token % grid.columns,
-            }));
-            next += grid.rows.max(grid.columns);
-        }
-        positions
     }
 }
 
@@ -168,12 +143,4 @@ fn image_rows(ids: &[u32], merged: &[Grid]) -> Result<Vec<(Range<usize>, Grid)>,
         ));
     }
     Ok(rows.into_iter().zip(merged.iter().copied()).collect())
-}
-
-/// `text` without the leading and trailing characters Python's `str.isspace` matches: Unicode's
-/// whitespace and the information separators U+001C–U+001F.
-fn strip(text: &str) -> &str {
-    text.trim_matches(|character: char| {
-        character.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&character)
-    })
 }

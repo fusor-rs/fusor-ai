@@ -1,0 +1,243 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model/nano": "sha256:480f674e4cfd63323ad0950c50e3515f744c8298c82965c5271cfd310e274a53",
+    "dist/model/lite": "sha256:5d0b8196858d8d1f4e2b4f320d27b2d2361362b670bfa089ff4cce962805db1b"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "# fixtures/goldens/nano/golden_f32_support.safetensors",
+      "read 0: 2048 values, rel 1.16e-1, max abs 7.13e-1 (128 ids identical)",
+      "read 1: 2048 values, rel 1.18e-1, max abs 6.67e-1 (109 ids identical)",
+      "read 2: 2048 values, rel 1.19e-1, max abs 5.44e-1 (108 ids identical)",
+      "answer 0: 3 values, rel 1.25e-8, max abs 1.25e-8, likeliest identical",
+      "answer 1: 2 values, rel 3.20e-10, max abs 3.20e-10, likeliest identical",
+      "answer 2: 3 values, rel 3.98e-7, max abs 2.76e-7, likeliest identical",
+      "# fixtures/goldens/nano/golden_f32_receipt.safetensors",
+      "preprocess 0: 5332992 values, rel 1.18e-4, max abs 1.57e-2",
+      "embed 0: 3555328 values, rel 9.59e-7, max abs 1.24e-5",
+      "encode 0: 3555328 values, rel 1.39e-1, max abs 4.59e3",
+      "merge 0: 1777664 values, rel 1.05e-2, max abs 2.17e-2",
+      "read 0: 2048 values, rel 1.19e-1, max abs 6.97e-1 (992 ids identical)",
+      "read 1: 2048 values, rel 1.21e-1, max abs 7.51e-1 (973 ids identical)",
+      "read 2: 2048 values, rel 1.39e-1, max abs 7.78e-1 (973 ids identical)",
+      "answer 0: 3 values, rel 7.39e-9, max abs 6.98e-9, likeliest identical",
+      "answer 1: 2 values, rel 2.91e-9, max abs 2.91e-9, likeliest identical",
+      "answer 2: 3 values, rel 1.68e-9, max abs 1.31e-9, likeliest identical",
+      "# fixtures/goldens/nano/golden_f32_clip.safetensors",
+      "preprocess 0: 1105920 values, rel 2.89e-5, max abs 7.84e-3",
+      "preprocess 1: 1105920 values, rel 4.09e-5, max abs 7.84e-3",
+      "preprocess 2: 1105920 values, rel 4.84e-5, max abs 7.84e-3",
+      "preprocess 3: 1105920 values, rel 1.83e-5, max abs 7.84e-3",
+      "embed 0: 737280 values, rel 9.20e-7, max abs 8.34e-6",
+      "embed 1: 737280 values, rel 9.20e-7, max abs 5.84e-6",
+      "embed 2: 737280 values, rel 9.22e-7, max abs 7.15e-6",
+      "embed 3: 737280 values, rel 9.23e-7, max abs 7.63e-6",
+      "encode 0: 737280 values, rel 2.09e-1, max abs 3.56e3",
+      "encode 1: 737280 values, rel 1.56e-1, max abs 3.08e3",
+      "encode 2: 737280 values, rel 2.02e-1, max abs 4.36e3",
+      "encode 3: 737280 values, rel 2.28e-1, max abs 4.75e3",
+      "merge 0: 368640 values, rel 1.09e-2, max abs 1.74e-2",
+      "merge 1: 368640 values, rel 1.07e-2, max abs 1.43e-2",
+      "merge 2: 368640 values, rel 1.07e-2, max abs 1.76e-2",
+      "merge 3: 368640 values, rel 1.11e-2, max abs 1.86e-2",
+      "read 0: 2048 values, rel 1.12e-1, max abs 6.37e-1 (868 ids identical)",
+      "read 1: 2048 values, rel 1.18e-1, max abs 6.37e-1 (852 ids identical)",
+      "answer 0: 3 values, rel 1.79e-8, max abs 1.77e-8, likeliest identical",
+      "answer 1: 2 values, rel 9.54e-8, max abs 9.31e-8, likeliest identical",
+      "# fixtures/goldens/lite/golden_f32_support.safetensors",
+      "read 0: 1024 values, rel 2.61e-2, max abs 1.54e-1 (128 ids identical)",
+      "read 1: 1024 values, rel 2.97e-2, max abs 2.37e-1 (109 ids identical)",
+      "read 2: 1024 values, rel 2.92e-2, max abs 2.05e-1 (108 ids identical)",
+      "answer 0: 3 values, rel 1.29e-9, max abs 1.28e-9, likeliest identical",
+      "answer 1: 2 values, rel 0.00e0, max abs 0.00e0, likeliest identical",
+      "answer 2: 3 values, rel 4.51e-7, max abs 1.94e-7, likeliest identical",
+      "# fixtures/goldens/lite/golden_f32_receipt.safetensors",
+      "preprocess 0: 5332992 values, rel 1.18e-4, max abs 1.57e-2",
+      "embed 0: 2666496 values, rel 1.15e-6, max abs 8.58e-6",
+      "encode 0: 2666496 values, rel 1.11e-1, max abs 1.51e3",
+      "merge 0: 888832 values, rel 1.10e-2, max abs 1.85e-2",
+      "read 0: 1024 values, rel 2.78e-2, max abs 1.74e-1 (992 ids identical)",
+      "read 1: 1024 values, rel 2.77e-2, max abs 1.26e-1 (973 ids identical)",
+      "read 2: 1024 values, rel 2.58e-2, max abs 1.39e-1 (973 ids identical)",
+      "answer 0: 3 values, rel 2.03e-8, max abs 1.86e-8, likeliest identical",
+      "answer 1: 2 values, rel 1.87e-9, max abs 1.86e-9, likeliest identical",
+      "answer 2: 3 values, rel 2.97e-10, max abs 2.91e-10, likeliest identical",
+      "# fixtures/goldens/lite/golden_f32_clip.safetensors",
+      "preprocess 0: 1105920 values, rel 2.89e-5, max abs 7.84e-3",
+      "preprocess 1: 1105920 values, rel 4.09e-5, max abs 7.84e-3",
+      "preprocess 2: 1105920 values, rel 4.84e-5, max abs 7.84e-3",
+      "preprocess 3: 1105920 values, rel 1.83e-5, max abs 7.84e-3",
+      "embed 0: 552960 values, rel 1.27e-6, max abs 7.51e-6",
+      "embed 1: 552960 values, rel 1.27e-6, max abs 8.58e-6",
+      "embed 2: 552960 values, rel 1.26e-6, max abs 6.91e-6",
+      "embed 3: 552960 values, rel 1.27e-6, max abs 6.91e-6",
+      "encode 0: 552960 values, rel 1.12e-1, max abs 9.29e2",
+      "encode 1: 552960 values, rel 8.97e-2, max abs 8.54e2",
+      "encode 2: 552960 values, rel 1.31e-1, max abs 1.25e3",
+      "encode 3: 552960 values, rel 1.93e-1, max abs 1.28e3",
+      "merge 0: 184320 values, rel 1.09e-2, max abs 1.79e-2",
+      "merge 1: 184320 values, rel 1.06e-2, max abs 2.05e-2",
+      "merge 2: 184320 values, rel 1.07e-2, max abs 1.33e-2",
+      "merge 3: 184320 values, rel 1.10e-2, max abs 1.78e-2",
+      "read 0: 1024 values, rel 3.13e-2, max abs 1.14e-1 (868 ids identical)",
+      "read 1: 1024 values, rel 3.02e-2, max abs 1.80e-1 (852 ids identical)",
+      "answer 0: 3 values, rel 2.62e-7, max abs 1.79e-7, likeliest identical",
+      "answer 1: 2 values, rel 0.00e0, max abs 0.00e0, likeliest identical"
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-single-relaxed/lite-clip.response.json": "sha256:a302c1935da7820c749cc3c63ac10f96e72daa1f167126685c862b0f8ba01343",
+      "web-single-relaxed/lite-receipt.response.json": "sha256:fefd67fa0c7d085b17f5586b582193437c9ece27e406e8863eebfb5258f5c381",
+      "web-single-relaxed/lite-support.response.json": "sha256:1cbc21f65e309e74fe9c0c2f1f832416b7b2df4e481483d28cae6d3901a12a7a",
+      "web-single-relaxed/nano-clip.response.json": "sha256:cd50166ef93f1ba6a07b98303c470527771cf2d3e3effa5d2874f280a22023da",
+      "web-single-relaxed/nano-receipt.response.json": "sha256:d1bc7e9d857c6891e74280a52ef11df2034b8dd584fcffbbddd81dd582e5fbe6",
+      "web-single-relaxed/nano-support.response.json": "sha256:ead8b690ca393ec303952ff99054a3335f8bc8b6e09415eddf9764493af29522",
+      "web-single/lite-clip.response.json": "sha256:9db58da88c669638df3f02674e082d04bf1793956597b8395f415e3e362029f4",
+      "web-single/lite-receipt.response.json": "sha256:e61a126ae60c9737361ef764b90917b913feb65368ee374812cf0f681fe1b5a0",
+      "web-single/lite-support.response.json": "sha256:fa3c5c291326904bc726c6dda8c582513a2f10aa49fe0a936e2b981806f4553a",
+      "web-single/nano-clip.response.json": "sha256:e75ce039f8d3151f427df856d2b148702a53c0d9af50468bc2e4bb945ac37528",
+      "web-single/nano-receipt.response.json": "sha256:57433b1da02eb678b1c15e54fa952a12205119887e33888de69dd003f38a797c",
+      "web-single/nano-support.response.json": "sha256:017376273c8f8b34d5ea74f0d30dfb53532b9b85bb92c1d9eb6f0094fa290059"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "outputs": {
+      "web-threaded-lite/lite-clip.response.json": "sha256:b1f772754f1bafc6d582ac7ffad26c039f92bac0d2297131fa5a021fef091feb",
+      "web-threaded-lite/lite-receipt.response.json": "sha256:e61a126ae60c9737361ef764b90917b913feb65368ee374812cf0f681fe1b5a0",
+      "web-threaded-lite/lite-support.response.json": "sha256:fa3c5c291326904bc726c6dda8c582513a2f10aa49fe0a936e2b981806f4553a",
+      "web-threaded-nano/nano-clip.response.json": "sha256:e2b791cc4f6567b49aff38fb451f633707d0841716dd342e38630742f9b87861",
+      "web-threaded-nano/nano-receipt.response.json": "sha256:57433b1da02eb678b1c15e54fa952a12205119887e33888de69dd003f38a797c",
+      "web-threaded-nano/nano-support.response.json": "sha256:017376273c8f8b34d5ea74f0d30dfb53532b9b85bb92c1d9eb6f0094fa290059",
+      "web-threaded-relaxed-lite/lite-clip.response.json": "sha256:052168554900b907204915b0acc1262c6bea7083255a460ef8b124ef061abc63",
+      "web-threaded-relaxed-lite/lite-receipt.response.json": "sha256:fefd67fa0c7d085b17f5586b582193437c9ece27e406e8863eebfb5258f5c381",
+      "web-threaded-relaxed-lite/lite-support.response.json": "sha256:1cbc21f65e309e74fe9c0c2f1f832416b7b2df4e481483d28cae6d3901a12a7a",
+      "web-threaded-relaxed-nano/nano-clip.response.json": "sha256:5cf6d535f15436fbdd3da21d3d674e0a41c7901c546b1af0f007661648423986",
+      "web-threaded-relaxed-nano/nano-receipt.response.json": "sha256:d1bc7e9d857c6891e74280a52ef11df2034b8dd584fcffbbddd81dd582e5fbe6",
+      "web-threaded-relaxed-nano/nano-support.response.json": "sha256:ead8b690ca393ec303952ff99054a3335f8bc8b6e09415eddf9764493af29522"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "timings": {
+    "bench/preprocess": {
+      "value": 30.88,
+      "unit": "ms",
+      "spread": 0.6152849740932641
+    },
+    "bench/embed": {
+      "value": 142.96,
+      "unit": "ms",
+      "spread": 0.3185506435366535
+    },
+    "bench/encode": {
+      "value": 7812.37,
+      "unit": "ms",
+      "spread": 0.31019396162752155
+    },
+    "bench/merge": {
+      "value": 91.46,
+      "unit": "ms",
+      "spread": 0.16280341132735623
+    },
+    "bench/read": {
+      "value": 6970.27,
+      "unit": "ms",
+      "spread": 0.1378813159318076
+    },
+    "bench/answer": {
+      "value": 0,
+      "unit": "ms",
+      "spread": null
+    },
+    "bench/decide whole": {
+      "value": 32590.6,
+      "unit": "ms",
+      "spread": 0.21925954109467158
+    },
+    "web-threaded-lite/cases.support.time": {
+      "value": 2680,
+      "unit": "ms"
+    },
+    "web-threaded-lite/cases.receipt.time": {
+      "value": 13910,
+      "unit": "ms"
+    },
+    "web-threaded-lite/cases.clip.time": {
+      "value": 7880,
+      "unit": "ms"
+    },
+    "web-threaded-lite/revisitMs": {
+      "value": 1273,
+      "unit": "ms"
+    },
+    "web-threaded-nano/cases.support.time": {
+      "value": 6430,
+      "unit": "ms"
+    },
+    "web-threaded-nano/cases.receipt.time": {
+      "value": 33550,
+      "unit": "ms"
+    },
+    "web-threaded-nano/cases.clip.time": {
+      "value": 19460,
+      "unit": "ms"
+    },
+    "web-threaded-nano/revisitMs": {
+      "value": 2853,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed-lite/cases.support.time": {
+      "value": 2009.9999999999998,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed-lite/cases.receipt.time": {
+      "value": 5360,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed-lite/cases.clip.time": {
+      "value": 3240,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed-lite/revisitMs": {
+      "value": 1274,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed-nano/cases.support.time": {
+      "value": 4140,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed-nano/cases.receipt.time": {
+      "value": 11860,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed-nano/cases.clip.time": {
+      "value": 6680,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed-nano/revisitMs": {
+      "value": 2280,
+      "unit": "ms"
+    }
+  }
+}

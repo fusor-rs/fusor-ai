@@ -10,6 +10,7 @@
 mod engine;
 mod load;
 mod manifest;
+pub mod python;
 mod stages;
 mod store;
 #[cfg(feature = "tokenizer")]

@@ -16,7 +16,7 @@ The crates are layers. A crate depends only on its own layer or the ones below i
 
 | Layer | Path | Holds |
 | --- | --- | --- |
-| Primitives | `crates/team`, `crates/kernels`, `crates/media`, `crates/bundle`, `crates/compile`, `crates/runtime`, `crates/harness` | the SPMD thread team; tensors and their block-quantized formats, the int8 matmul over per-target `arch` backends, f32 operations, `Linear`, `conv` (products over many rows, 2-D convolutions, depthwise ones), NumPy's float32 reductions (`numpy`), `rng`; WAV files and the image resampling and operations of models' reference preprocessing (`wav`, `image`, `opencv`); the bundle manifest, the streaming `Store`, the `Load`, `Engine` and `Stages` traits and the bundled `Tokenizer`; the safetensors, ONNX and NumPy-archive readers, `BundleWriter` and the profile-driven `Tensors`; the browser runtime shell every model's runtime is built on; the native harness every model's CLI is built on |
+| Primitives | `crates/team`, `crates/kernels`, `crates/media`, `crates/bundle`, `crates/compile`, `crates/runtime`, `crates/harness` | the SPMD thread team; tensors and their block-quantized formats, the int8 matmul over per-target `arch` backends, f32 operations, `Linear`, `conv` (products over many rows, 2-D convolutions, depthwise ones), NumPy's float32 reductions (`numpy`), `rng`; WAV files and the image resampling and operations of models' reference preprocessing (`wav`, `image`, `opencv`); the bundle manifest, the streaming `Store`, the `Load`, `Engine` and `Stages` traits, the bundled `Tokenizer` and prompt text as Python references write it (`python`); the safetensors, ONNX and NumPy-archive readers, `BundleWriter` and the profile-driven `Tensors`; the browser runtime shell every model's runtime is built on; the native harness every model's CLI is built on |
 | Blocks | `crates/blocks` | architecture pieces parameterized by a shape: `transformer` (Qwen2, Qwen3, Kyutai, CLIP and an encoder), `lm` (a causal language model's reader), `hybrid` (Qwen3.5's gated attention and gated delta rule), `rotary`, `vit` (with the vision tower, the patch merger and the image preprocessing of vision-language models), `reading` (reading an image to text, a vision-language model's engine), `dit`, `norm` (LayerNorm, GroupNorm), `adaln_mlp`, `flow` (flow-matching integration), `istft`, `seanet`, `conformer`, `unet` (latent diffusion's UNet), `vae` (its autoencoder's decoder), `dpm` (DPM-Solver++ sampling) |
 | Models | `models/<model>/model`, `compile`, `runtime`, `cli` | one model: its dimensions, tensor names, wiring, sampler settings, prompts and text frontend; its compiler; its browser runtime on the runtime shell; its CLI on the harness. Beside them, `model.toml` (its product repository and the weight formats it uses), `baseline.json` (its outputs at the last accepted commit, `just integrate`) and `reference/` (the script that dumps its goldens from the reference implementation) |
 
@@ -37,8 +37,9 @@ Phonon's [phonon-wasm](https://github.com/fusor-rs/phonon-wasm), Parakeet Redux'
 [paddle-ocr-wasm](https://github.com/fusor-rs/paddle-ocr-wasm), OXR's
 [oxr-wasm](https://github.com/fusor-rs/oxr-wasm), Intern-Decision's
 [intern-decision-wasm](https://github.com/fusor-rs/intern-decision-wasm), Indra OCR's
-[indra-ocr-wasm](https://github.com/fusor-rs/indra-ocr-wasm) and Kronos's
-[kronos-wasm](https://github.com/andreespirela/kronos-wasm).
+[indra-ocr-wasm](https://github.com/fusor-rs/indra-ocr-wasm), Kronos's
+[kronos-wasm](https://github.com/andreespirela/kronos-wasm) and Decision 3.0's
+[d3-wasm](https://github.com/fusor-rs/d3-wasm).
 
 Where code goes, asked in order:
 

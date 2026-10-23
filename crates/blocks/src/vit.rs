@@ -13,6 +13,8 @@ pub mod merger;
 pub mod preprocessing;
 pub mod tower;
 
+use std::ops::Range;
+
 use bundle::{Load, Store, load_each};
 use team::Ctx;
 
@@ -76,6 +78,32 @@ impl Grid {
         let (top, left) = (token / blocks_across * merge, token % blocks_across * merge);
         (0..merge * merge).map(move |at| (top + at / merge) * self.columns + left + at % merge)
     }
+}
+
+/// Every row's rotary position in a language model's prompt of `rows` rows, with the merged
+/// tokens of images at `images` (their rows, in order, and their grids of tokens): a text row's
+/// on every axis, continuing from the last; an image token's at the image's start, down its row
+/// and across its column; the text after an image from past its longer side. A video's frame
+/// groups, separated by their timestamps' text, are images here (Qwen3-VL, Qwen3.5).
+pub fn positions(rows: usize, images: &[(Range<usize>, Grid)]) -> Vec<Position> {
+    let mut positions = Vec::with_capacity(rows);
+    let mut images = images.iter().peekable();
+    let mut next = 0;
+    while positions.len() < rows {
+        let row = positions.len();
+        let Some((tokens, grid)) = images.next_if(|(tokens, _)| tokens.start == row) else {
+            positions.push(Position::uniform(next));
+            next += 1;
+            continue;
+        };
+        positions.extend((0..tokens.len()).map(|token| Position {
+            temporal: next,
+            height: next + token / grid.columns,
+            width: next + token % grid.columns,
+        }));
+        next += grid.rows.max(grid.columns);
+    }
+    positions
 }
 
 pub struct Vit {

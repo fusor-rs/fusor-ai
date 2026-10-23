@@ -12,7 +12,7 @@ use intern_decision::pipeline::Stage;
 use intern_decision::prompt::Prompt;
 use intern_decision::request::{Question, Request};
 use intern_decision::session::Engine;
-use intern_decision::{Grid, Patches, Pixels};
+use intern_decision::{Grid, MAX_ASPECT, PREPROCESSING, Patches, Pixels};
 
 const CALLS: usize = 3;
 
@@ -52,7 +52,7 @@ pub fn run(engine: &mut Engine, request: &Request, images: &[Pixels]) -> Result<
 fn inputs(engine: &mut Engine, request: &Request, images: &[Pixels]) -> Result<Inputs> {
     let patches = images
         .iter()
-        .map(intern_decision::patches)
+        .map(|image| PREPROCESSING.centered_patches(image, MAX_ASPECT))
         .collect::<Result<Vec<_>, _>>()?;
     let grids: Vec<Grid> = patches.iter().map(|patches| patches.grid).collect();
     let (questions, prompt) = engine.prompt(request, &grids)?;
@@ -91,7 +91,7 @@ fn milliseconds(
         Stage::Preprocess => time(CALLS, || {
             images
                 .iter()
-                .map(intern_decision::patches)
+                .map(|image| PREPROCESSING.centered_patches(image, MAX_ASPECT))
                 .collect::<Result<Vec<_>, _>>()
         })?,
         Stage::Embed => time(CALLS, || {

@@ -6,6 +6,10 @@ use serde::Serialize;
 
 use super::Grid;
 
+/// The middle of an 8-bit value's range: Qwen3-VL's processor normalizes by a mean and deviation
+/// of 0.5 after rescaling by 1/255, which is `(x − 127.5) / 127.5` in f32.
+const CENTER: f32 = 127.5;
+
 /// An image's patches, `grid.patches()` rows of a patch's values.
 pub struct Patches {
     pub grid: Grid,
@@ -21,6 +25,11 @@ pub struct Layout {
     pub resized_height: usize,
     pub rows: usize,
     pub columns: usize,
+}
+
+/// An 8-bit value scaled to [−1, 1] as Qwen3-VL's processor scales it.
+pub fn centered(value: u8) -> f32 {
+    (f32::from(value) - CENTER) / CENTER
 }
 
 /// How a vision-language model's processor cuts an image into the encoder's patches: `patch` ×
@@ -97,6 +106,29 @@ impl Preprocessing {
             }
         }
         Patches { grid, values }
+    }
+
+    /// The patches of an RGB or RGBA image as Qwen3-VL's processor gives them (Qwen3.5 too):
+    /// resized to whole blocks within the budget, every value scaled to [−1, 1].
+    ///
+    /// # Errors
+    /// When the image is empty, or wider or taller than `max_aspect` times its other side.
+    pub fn centered_patches(
+        &self,
+        image: &Pixels,
+        max_aspect: usize,
+    ) -> Result<Patches, bundle::Error> {
+        let Size { width, height } = image.size;
+        if width == 0 || height == 0 {
+            return Err(bundle::Error::Request("an image is empty".into()));
+        }
+        if width.max(height) > max_aspect * width.min(height) {
+            return Err(bundle::Error::Request(format!(
+                "an image is {width}×{height}: its aspect ratio must be at most {max_aspect}"
+            )));
+        }
+        let size = self.whole_blocks(height as f64, width as f64);
+        Ok(self.patches(image, size, centered))
     }
 
     /// How `image` is read as patches of `grid`.

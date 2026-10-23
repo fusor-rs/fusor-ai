@@ -395,5 +395,72 @@
     "outputs": [
       ".forecast.json"
     ]
+  },
+  "d3": {
+    "product": "d3-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/nano/golden_f32_support.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/d3/nano/golden_f32_support.safetensors",
+        "sha256": "sha256:2a9f753090261112a0028706e4b6932d0a419979a48d7dccefcac8eb83bc88db"
+      },
+      {
+        "file": "fixtures/goldens/nano/golden_f32_receipt.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/d3/nano/golden_f32_receipt.safetensors",
+        "sha256": "sha256:c242ab7a46e5aeb778c72c0286b9aceca47138ec321421891dd0be3a038b6af3"
+      },
+      {
+        "file": "fixtures/goldens/nano/golden_f32_clip.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/d3/nano/golden_f32_clip.safetensors",
+        "sha256": "sha256:80608b26f9cebbd12edfebeac79ab50daa4fecbf3963649bdc7e6d0593d0da01"
+      },
+      {
+        "file": "fixtures/goldens/lite/golden_f32_support.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/d3/lite/golden_f32_support.safetensors",
+        "sha256": "sha256:c732743b85de03269b9a6dd8d7a7c11d2821d43bd81b32055bc30cef006c15a5"
+      },
+      {
+        "file": "fixtures/goldens/lite/golden_f32_receipt.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/d3/lite/golden_f32_receipt.safetensors",
+        "sha256": "sha256:837f99fa470ff66c5bffb6f9f774e2d1a5372a42bdf7a534edd02940c6608e87"
+      },
+      {
+        "file": "fixtures/goldens/lite/golden_f32_clip.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/d3/lite/golden_f32_clip.safetensors",
+        "sha256": "sha256:ba2ac4c5f4227acc8016a27de45fd60303bcbcddd2bbd8a05fdcc459f4f8c218"
+      }
+    ],
+    "build": [
+      "just model",
+      "just media",
+      "just runtimes",
+      "just page",
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model/nano",
+      "dist/model/lite"
+    ],
+    "parity": "target/release/d3 parity dist/model/nano fixtures/goldens/nano/golden_f32_support.safetensors fixtures/goldens/nano/golden_f32_receipt.safetensors fixtures/goldens/nano/golden_f32_clip.safetensors --threads 8 && target/release/d3 parity dist/model/lite fixtures/goldens/lite/golden_f32_support.safetensors fixtures/goldens/lite/golden_f32_receipt.safetensors fixtures/goldens/lite/golden_f32_clip.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed"
+    ],
+    "e2e": [
+      "node e2e/run.mjs --size nano --threads 8 --build web-threaded --out {out}/web-threaded-nano",
+      "node e2e/run.mjs --size nano --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed-nano",
+      "node e2e/run.mjs --size lite --threads 8 --build web-threaded --out {out}/web-threaded-lite",
+      "node e2e/run.mjs --size lite --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed-lite"
+    ],
+    "bench": "target/release/d3 bench dist/model/nano fixtures/requests.json receipt --media fixtures/media --threads 8",
+    "page": [
+      "cases.support.time",
+      "cases.receipt.time",
+      "cases.clip.time",
+      "revisitMs"
+    ],
+    "outputs": [
+      ".response.json"
+    ]
   }
 }

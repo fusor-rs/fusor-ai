@@ -12,7 +12,6 @@
 
 pub mod decision;
 mod image;
-mod json;
 pub mod model;
 pub mod pipeline;
 pub mod prompt;
@@ -22,5 +21,5 @@ pub mod session;
 pub use blocks::vit::Grid;
 pub use blocks::vit::preprocessing::{Layout, Patches};
 pub use bundle::Error;
-pub use image::{MAX_PIXELS, MIN_PIXELS, patches};
+pub use image::{MAX_ASPECT, MAX_PIXELS, MIN_PIXELS, PREPROCESSING};
 pub use media::image::{Pixels, Size};

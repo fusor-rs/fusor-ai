@@ -13,7 +13,9 @@
 //! layer is the model's.
 //!
 //! `Hybrid::forward` runs inside a team run. Calls read consecutive rows of one sequence from its
-//! first: the delta rule's state is the sum of every row before.
+//! first: the delta rule's state is the sum of every row before. The attention layers see keys
+//! under each call's mask; under `Mask::Full` a row also sees the later rows of its own call, so a
+//! sequence read that way is read in one call.
 
 mod attention;
 mod delta;
@@ -114,11 +116,12 @@ impl State {
 }
 
 /// Rows of one sequence: from sequence position `first`, row `r` turning its rotary angles by
-/// `positions[r]`.
+/// `positions[r]`, the attention layers' keys seen under `mask`.
 #[derive(Clone, Copy)]
 pub struct Rows<'rows> {
     pub first: usize,
     pub positions: &'rows [Position],
+    pub mask: Mask,
 }
 
 enum Mixer {
@@ -146,14 +149,14 @@ impl Hybrid {
     /// # Panics
     /// When the rows are more than the buffers hold, or reach past the cache's capacity.
     pub fn forward(&self, ctx: &Ctx, state: &State, buffers: &Buffers, rows: &Rows) {
-        let Rows { first, positions } = *rows;
+        let Rows {
+            first,
+            positions,
+            mask,
+        } = *rows;
         let rows = positions.len();
         assert!(rows <= buffers.stack.rows, "the buffers hold the rows");
-        let span = Span {
-            rows,
-            first,
-            mask: Mask::Causal,
-        };
+        let span = Span { rows, first, mask };
         let pass = Pass {
             ctx,
             buffers: &buffers.stack,

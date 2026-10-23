@@ -656,15 +656,21 @@ pub struct Hybrid(Vec<HybridLayer>);
 
 impl Hybrid {
     /// Every layer over the rows of `x`, `rows × hidden`, in place, the rotated part of row `r`'s
-    /// query and key heads turned by `angles(r)`.
-    pub fn apply(&self, x: &mut [f64], shape: &HybridDims, angles: &dyn Fn(usize) -> Vec<f64>) {
+    /// query and key heads turned by `angles(r)`, the attention layers' keys seen under `mask`.
+    pub fn apply(
+        &self,
+        x: &mut [f64],
+        shape: &HybridDims,
+        angles: &dyn Fn(usize) -> Vec<f64>,
+        mask: Mask,
+    ) {
         let eps = shape.dims.eps;
         for layer in &self.0 {
             let normed = rms_norm(x, &layer.norm1, eps);
             let mixed = match &layer.mixer {
                 Mixer::Attention { qkv, norms, out } => {
-                    let attended = gated_attention(&qkv.apply(&normed), norms, shape, angles);
-                    out.apply(&attended)
+                    let heads = gated_attention(&qkv.apply(&normed), norms, shape, angles, mask);
+                    out.apply(&heads)
                 }
                 Mixer::Delta(rule) => rule.out.apply(&rule.apply(&normed, &shape.delta, eps)),
             };
@@ -693,13 +699,14 @@ enum Mixer {
     Delta(DeltaRule),
 }
 
-/// Causal attention of the rows' query heads (each row's units: query heads, their gates, key
-/// heads, value heads), each output times the sigmoid of its gate.
+/// Attention of the rows' query heads under `mask` (each row's units: query heads, their gates,
+/// key heads, value heads), each output times the sigmoid of its gate.
 fn gated_attention(
     qkv: &[f64],
     [query_norm, key_norm]: &[Vec<f64>; 2],
     shape: &HybridDims,
     angles: &dyn Fn(usize) -> Vec<f64>,
+    mask: Mask,
 ) -> Vec<f64> {
     let dims = &shape.dims;
     let units = 2 * dims.heads + 2 * dims.kv_heads;
@@ -724,7 +731,7 @@ fn gated_attention(
             heads.push(head);
         }
     }
-    let mut attended = attend(&heads, dims, Mask::Causal);
+    let mut attended = attend(&heads, dims, mask);
     for (value, gate) in attended.iter_mut().zip(gates) {
         *value *= gate;
     }

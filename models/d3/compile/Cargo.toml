@@ -1,0 +1,21 @@
+[package]
+name = "fusor-ai-d3-compile"
+description = "Compiles a d3-nano or d3-lite checkpoint into a bundle: what to keep, renames and the dtype of every tensor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "d3_compile"
+
+[dependencies]
+d3.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
+compile.workspace = true
+kernels.workspace = true
+
+[lints]
+workspace = true
