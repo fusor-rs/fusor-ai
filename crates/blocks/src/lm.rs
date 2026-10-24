@@ -1,7 +1,8 @@
 //! Causal language models: a decoder stack (`transformer`) and the RMSNorm after its last layer
 //! (`Decoder`); with the input embeddings and a head over the vocabulary (`Lm`), the reading of
-//! rows of embeddings through the stack over a KV cache, in chunks, and the prediction from the
-//! last row: its final-normed state, the head's logits and the greedy next token (`Reader`).
+//! rows of embeddings through the stack over a KV cache, in chunks (`Reader`), and the prediction
+//! from the last row, for any stack: its final-normed state, the head's logits and the greedy
+//! next token (`Prediction`).
 //!
 //! Tensors under a prefix `p`: the stack's (`p.layers.{i}…`), the final norm `p.norm`, the head
 //! `p.head` and, unless the input embeddings are the head's rows (`Embedding::Tied`), their table
@@ -67,7 +68,6 @@ pub struct Lm {
     pub decoder: Decoder,
     head: Linear,
     hidden: usize,
-    vocabulary: usize,
 }
 
 impl Load for Lm {
@@ -88,7 +88,6 @@ impl Load for Lm {
             decoder: Decoder::load(store, prefix, stack)?,
             head,
             hidden: stack.hidden,
-            vocabulary,
         })
     }
 }
@@ -121,32 +120,76 @@ pub struct Rows<'rows> {
     pub positions: Positions<'rows>,
 }
 
-/// The state of one reading: the KV cache, the activations, the last row's final-normed state
-/// and logits.
-pub struct Reader {
-    cache: KvCache,
-    buffers: Buffers,
-    /// Rows per call of the stack.
-    chunk: usize,
-    /// The final-normed hidden state of the last row read.
+/// The prediction from a row of a stack's output: its final-normed state and the head's logits
+/// over the vocabulary.
+pub struct Prediction {
+    /// The final-normed hidden state of the row.
     pub last: SharedBuf,
     pub logits: SharedBuf,
     normed: PerThread<Vec<f32>>,
     quant: PerThread<QuantizedRows>,
 }
 
+impl Prediction {
+    pub fn new(hidden: usize, vocabulary: usize, threads: usize) -> Self {
+        Self {
+            last: SharedBuf::new(hidden),
+            logits: SharedBuf::new(vocabulary),
+            normed: PerThread::new(threads, || vec![0.0; hidden]),
+            quant: PerThread::new(threads, QuantizedRows::default),
+        }
+    }
+
+    /// Inside a team run: `row`'s RMSNorm by `norm` into `last`, and this thread's columns of
+    /// `head`'s logits over it.
+    pub fn predict(&self, ctx: &Ctx, row: &[f32], norm: (&Vector, f32), head: &Linear) {
+        let (weight, eps) = norm;
+        let quant = self.quant.get(ctx);
+        let normed = self.normed.get(ctx);
+        rms_norm(row, weight.values(), eps, normed);
+        if ctx.is_first() {
+            self.last.part(0..normed.len()).copy_from_slice(normed);
+        }
+        let matrix = head.matrix();
+        let input = quant.input(&matrix, normed);
+        let cols = ctx.split(matrix.rows, NARROW_COLUMN_ALIGN);
+        head.project(&input, cols, |_, col, value| {
+            self.logits.set(col, value);
+        });
+    }
+
+    /// The most likely next token (the first of equals, as `argmax`).
+    pub fn greedy(&self) -> u32 {
+        let logits = self.logits.read();
+        let best = (0..logits.len()).fold(0, |best, token| {
+            if logits[token] > logits[best] {
+                token
+            } else {
+                best
+            }
+        });
+        best as u32
+    }
+}
+
+/// The state of one reading: the KV cache, the activations, and the prediction from the last row
+/// read.
+pub struct Reader {
+    cache: KvCache,
+    buffers: Buffers,
+    /// Rows per call of the stack.
+    chunk: usize,
+    pub prediction: Prediction,
+}
+
 impl Reader {
     /// A reader of sequences of up to `capacity` rows, `chunk` rows per call of the stack.
     pub fn new(shape: &Shape, capacity: usize, chunk: usize, threads: usize) -> Self {
-        let hidden = shape.stack.hidden;
         Self {
             cache: KvCache::new(shape.stack, capacity),
             buffers: shape.stack.buffers(chunk, threads),
             chunk,
-            last: SharedBuf::new(hidden),
-            logits: SharedBuf::new(shape.vocabulary),
-            normed: PerThread::new(threads, || vec![0.0; hidden]),
-            quant: PerThread::new(threads, QuantizedRows::default),
+            prediction: Prediction::new(shape.stack.hidden, shape.vocabulary, threads),
         }
     }
 
@@ -188,31 +231,11 @@ impl Reader {
         }
     }
 
-    /// The final norm of row `row` into `last`, and this thread's columns of its logits.
+    /// The prediction from row `row` of the last call.
     fn predict(&self, ctx: &Ctx, lm: &Lm, row: usize) {
-        let quant = self.quant.get(ctx);
-        let normed = self.normed.get(ctx);
-        lm.decoder.final_norm(&self.buffers, row, normed);
-        if ctx.is_first() {
-            self.last.part(0..lm.hidden).copy_from_slice(normed);
-        }
-        let input = quant.input(&lm.head.matrix(), normed);
-        let cols = ctx.split(lm.vocabulary, NARROW_COLUMN_ALIGN);
-        lm.head.project(&input, cols, |_, col, value| {
-            self.logits.set(col, value);
-        });
-    }
-
-    /// The most likely next token (the first of equals, as `argmax`).
-    pub fn greedy(&self) -> u32 {
-        let logits = self.logits.read();
-        let best = (0..logits.len()).fold(0, |best, token| {
-            if logits[token] > logits[best] {
-                token
-            } else {
-                best
-            }
-        });
-        best as u32
+        let decoder = &lm.decoder;
+        let hidden = &self.buffers.hidden.read()[row * lm.hidden..(row + 1) * lm.hidden];
+        let norm = (&decoder.norm, decoder.eps);
+        self.prediction.predict(ctx, hidden, norm, &lm.head);
     }
 }

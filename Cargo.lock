@@ -747,6 +747,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "fusor-ai-qwen3-5"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-blocks",
+ "fusor-ai-bundle",
+ "fusor-ai-kernels",
+ "fusor-ai-media",
+ "fusor-ai-team",
+ "serde",
+]
+
+[[package]]
+name = "fusor-ai-qwen3-5-compile"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-kernels",
+ "fusor-ai-qwen3-5",
+]
+
+[[package]]
 name = "fusor-ai-realistic-vision"
 version = "0.1.2"
 dependencies = [
@@ -1306,6 +1328,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "qwen3-5-cli"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "clap",
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-harness",
+ "fusor-ai-kernels",
+ "fusor-ai-qwen3-5",
+ "fusor-ai-qwen3-5-compile",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "qwen3-5-runtime"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-qwen3-5",
+ "fusor-ai-runtime",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]

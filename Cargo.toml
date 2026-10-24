@@ -48,6 +48,10 @@ members = [
     "models/d3/compile",
     "models/d3/runtime",
     "models/d3/cli",
+    "models/qwen3-5/model",
+    "models/qwen3-5/compile",
+    "models/qwen3-5/runtime",
+    "models/qwen3-5/cli",
 ]
 resolver = "2"
 
@@ -112,6 +116,8 @@ kronos = { package = "fusor-ai-kronos", path = "models/kronos/model", version = 
 kronos-compile = { package = "fusor-ai-kronos-compile", path = "models/kronos/compile", version = "=0.1.2" }
 d3 = { package = "fusor-ai-d3", path = "models/d3/model", version = "=0.1.2" }
 d3-compile = { package = "fusor-ai-d3-compile", path = "models/d3/compile", version = "=0.1.2" }
+qwen3-5 = { package = "fusor-ai-qwen3-5", path = "models/qwen3-5/model", version = "=0.1.2" }
+qwen3-5-compile = { package = "fusor-ai-qwen3-5-compile", path = "models/qwen3-5/compile", version = "=0.1.2" }
 rayon = "=1.12.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"

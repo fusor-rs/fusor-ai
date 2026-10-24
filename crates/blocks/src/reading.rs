@@ -219,15 +219,15 @@ impl<M: VisionLanguage> Engine<M> {
     pub fn prefill(&mut self, prompt: &M::Prompt, tokens: &[f32]) -> Prediction {
         self.read_prompt(prompt, tokens);
         Prediction {
-            hidden: self.reader.last.read().to_vec(),
-            logits: self.reader.logits.read().to_vec(),
+            hidden: self.reader.prediction.last.read().to_vec(),
+            logits: self.reader.prediction.logits.read().to_vec(),
         }
     }
 
     /// The greedy answer to the prompt with the image's `tokens`, its end excluded.
     pub fn answer(&mut self, prompt: &M::Prompt, tokens: &[f32], max_tokens: usize) -> Vec<u32> {
         self.read_prompt(prompt, tokens);
-        let mut answer = vec![self.reader.greedy()];
+        let mut answer = vec![self.reader.prediction.greedy()];
         while answer.len() < max_tokens && !ended::<M>(&answer) {
             let next = self.write(prompt, &answer);
             answer.push(next);
@@ -275,7 +275,7 @@ impl<M: VisionLanguage> Engine<M> {
             Next::Prompt => {
                 let tokens = self.image_tokens(job.patches.grid);
                 self.read_prompt(&job.prompt, &tokens);
-                job.answer.push(self.reader.greedy());
+                job.answer.push(self.reader.prediction.greedy());
                 job.next = Next::Answer;
                 M::PREFILL
             }
@@ -349,7 +349,7 @@ impl<M: VisionLanguage> Engine<M> {
             positions: positions(rotary.as_deref()),
         };
         self.reader.read(&self.team, self.model.language(), &rows);
-        self.reader.greedy()
+        self.reader.prediction.greedy()
     }
 }
 

@@ -1,0 +1,2 @@
+product = "https://github.com/fusor-rs/qwen3-5-wasm"
+formats = ["Q7b32"]

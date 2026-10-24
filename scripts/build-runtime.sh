@@ -9,8 +9,9 @@
 # `threads` feature of <package>, built with THREADS_TOOLCHAIN, build-std and the atomics flags
 # fusor pins for its workers).
 # The crate is built in fusor-ai's workspace, with its lock and Cargo configuration, under the
-# Cargo profile PROFILE (default `wasm`), each variant in its own target directory under the
-# caller's `target/`. TOOLS holds wasm-bindgen and wasm-opt (scripts/install-tools.sh).
+# Cargo profile PROFILE (default `wasm`), each variant in its own target directory under this
+# checkout's `target/runtimes/`, shared by every product built from it (`just integrate` builds
+# them all from one). TOOLS holds wasm-bindgen and wasm-opt (scripts/install-tools.sh).
 set -euo pipefail
 PACKAGE="$1"
 VARIANT="$2"
@@ -21,6 +22,7 @@ THREADS_TOOLCHAIN="${THREADS_TOOLCHAIN:-nightly-2025-11-15}"
 MAX_MEMORY="${MAX_MEMORY:-2147483648}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LIB="${PACKAGE//-/_}"
+TARGET="$HERE/../target/runtimes/$VARIANT"
 
 # "<threads> <relaxed>" of the variant, as the loader that picks it describes it.
 read -r threads relaxed < <(node --input-type=module -e '
@@ -36,7 +38,7 @@ read -r threads relaxed < <(node --input-type=module -e '
 
 flags=()
 cargo=(cargo)
-args=(build -p "$PACKAGE" --target wasm32-unknown-unknown --profile "$PROFILE" --target-dir "$PWD/target/$VARIANT")
+args=(build -p "$PACKAGE" --target wasm32-unknown-unknown --profile "$PROFILE" --target-dir "$TARGET")
 # LLVM has already inlined with the crates' attributes in view. wasm-opt's one-caller inlining is
 # unbounded by default and would fold kernels marked #[inline(never)] back into the function a
 # forward enters once per call, which V8 then never tiers up from its baseline compiler; bound it
@@ -68,7 +70,7 @@ fi
 out="$DIST/$VARIANT"
 rm -rf "$out"
 "$TOOLS/wasm-bindgen" --target web --no-typescript --out-dir "$out" --out-name "$LIB" \
-  "target/$VARIANT/wasm32-unknown-unknown/$PROFILE/$LIB.wasm"
+  "$TARGET/wasm32-unknown-unknown/$PROFILE/$LIB.wasm"
 if [[ "$threads" == true ]]; then
   for helper in "$out"/snippets/wasm-bindgen-rayon-*/src/workerHelpers.no-bundler.js; do
     cp "$HERE/../packages/host/thread-host.js" "$helper"

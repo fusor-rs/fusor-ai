@@ -462,5 +462,53 @@
     "outputs": [
       ".response.json"
     ]
+  },
+  "qwen3-5": {
+    "product": "qwen3-5-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/golden_f32_colors.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/qwen3-5/golden_f32_colors.safetensors",
+        "sha256": "sha256:1e36582c1de8918a95594a9edd36eae1e0ed00c7d8a8cbf2398c38046d6278ae"
+      },
+      {
+        "file": "fixtures/goldens/golden_f32_receipt.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/qwen3-5/golden_f32_receipt.safetensors",
+        "sha256": "sha256:4a7e4a1f0fe27f05aafaba7b1e8f4679d483fdf6bb072c29ae10e517b21aeebb"
+      },
+      {
+        "file": "fixtures/goldens/golden_f32_clip.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/qwen3-5/golden_f32_clip.safetensors",
+        "sha256": "sha256:0ffefea2783dda88d053814508d55f195bbe07fb9763d3a555230ae480851e21"
+      }
+    ],
+    "build": [
+      "just model",
+      "just media",
+      "just runtimes",
+      "just page",
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model"
+    ],
+    "parity": "target/release/qwen3-5 parity dist/model fixtures/goldens/golden_f32_colors.safetensors fixtures/goldens/golden_f32_receipt.safetensors fixtures/goldens/golden_f32_clip.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single"
+    ],
+    "e2e": [
+      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "bench": "target/release/qwen3-5 bench dist/model fixtures/conversations.json receipt --media fixtures/media --threads 8",
+    "page": [
+      "cases.colors.first",
+      "cases.receipt.first",
+      "cases.receipt.speed",
+      "cases.clip.first",
+      "revisitMs"
+    ],
+    "outputs": [
+      ".txt"
+    ]
   }
 }

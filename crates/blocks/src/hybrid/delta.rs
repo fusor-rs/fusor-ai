@@ -95,6 +95,11 @@ impl State {
         self.conv.get_mut().fill(0.0);
         self.memory.get_mut().fill(0.0);
     }
+
+    pub(super) fn copy_from(&mut self, other: &State) {
+        self.conv.get_mut().copy_from_slice(other.conv.read());
+        self.memory.get_mut().copy_from_slice(other.memory.read());
+    }
 }
 
 /// One thread's query, key and reading of one head.

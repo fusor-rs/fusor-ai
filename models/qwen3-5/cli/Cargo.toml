@@ -1,0 +1,29 @@
+[package]
+name = "qwen3-5-cli"
+description = "The native Qwen3.5-2B host: compile the checkpoint, chat over conversations, benchmark, and check parity with the reference goldens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "qwen3-5"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+qwen3-5 = { workspace = true, features = ["threads"] }
+qwen3-5-compile.workspace = true
+harness.workspace = true
+bundle.workspace = true
+compile.workspace = true
+kernels.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+
+[lints]
+workspace = true

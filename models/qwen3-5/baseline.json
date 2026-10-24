@@ -1,0 +1,137 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model": "sha256:d51550e34d3000238fd1e69a2b5cd66e396202b625d896a56e9e4b4862193e09"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "# fixtures/goldens/golden_f32_colors.safetensors",
+      "prefill 0: 24 ids identical",
+      "prefill 0 hidden: 2048 values, rel 3.79e-2, max abs 5.08e-1",
+      "prefill 0 logits: 248320 values, rel 4.59e-2, max abs 4.80e-1",
+      "decode 0 hidden: 28672 values, rel 4.28e-2, max abs 1.03e0 (14 of 14 next tokens the reference's)",
+      "prefill 1: 58 ids identical",
+      "prefill 1 hidden: 2048 values, rel 7.60e-2, max abs 1.42e0",
+      "prefill 1 logits: 248320 values, rel 7.82e-2, max abs 8.68e-1",
+      "decode 1 hidden: 194560 values, rel 5.67e-2, max abs 6.80e0 (93 of 95 next tokens the reference's)",
+      "# fixtures/goldens/golden_f32_receipt.safetensors",
+      "preprocess 0: 5332992 values, rel 1.18e-4, max abs 1.57e-2",
+      "embed 0: 3555328 values, rel 5.55e-7, max abs 6.68e-6",
+      "encode 0: 3555328 values, rel 1.37e-1, max abs 4.72e3",
+      "merge 0: 1777664 values, rel 1.05e-2, max abs 2.28e-2",
+      "prefill 0: 896 ids identical",
+      "prefill 0 hidden: 2048 values, rel 6.09e-2, max abs 8.16e-1",
+      "prefill 0 logits: 248320 values, rel 6.63e-2, max abs 7.33e-1",
+      "decode 0 hidden: 129024 values, rel 4.38e-2, max abs 1.13e0 (63 of 63 next tokens the reference's)",
+      "# fixtures/goldens/golden_f32_clip.safetensors",
+      "preprocess 0: 1351680 values, rel 2.86e-5, max abs 7.84e-3",
+      "preprocess 1: 1351680 values, rel 4.30e-5, max abs 7.84e-3",
+      "preprocess 2: 1351680 values, rel 5.48e-5, max abs 7.84e-3",
+      "preprocess 3: 1351680 values, rel 3.31e-5, max abs 7.84e-3",
+      "embed 0: 901120 values, rel 5.19e-7, max abs 4.50e-6",
+      "embed 1: 901120 values, rel 5.19e-7, max abs 3.34e-6",
+      "embed 2: 901120 values, rel 5.21e-7, max abs 3.10e-6",
+      "embed 3: 901120 values, rel 5.22e-7, max abs 2.98e-6",
+      "encode 0: 901120 values, rel 1.88e-1, max abs 3.92e3",
+      "encode 1: 901120 values, rel 1.68e-1, max abs 5.34e3",
+      "encode 2: 901120 values, rel 1.87e-1, max abs 4.32e3",
+      "encode 3: 901120 values, rel 2.09e-1, max abs 4.66e3",
+      "merge 0: 450560 values, rel 1.09e-2, max abs 1.77e-2",
+      "merge 1: 450560 values, rel 1.07e-2, max abs 1.86e-2",
+      "merge 2: 450560 values, rel 1.10e-2, max abs 1.78e-2",
+      "merge 3: 450560 values, rel 1.13e-2, max abs 1.67e-2",
+      "prefill 0: 938 ids identical",
+      "prefill 0 hidden: 2048 values, rel 5.75e-2, max abs 2.54e0",
+      "prefill 0 logits: 248320 values, rel 6.53e-2, max abs 8.06e-1",
+      "decode 0 hidden: 2048 values, rel 5.56e-2, max abs 8.64e-1 (1 of 1 next tokens the reference's)"
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      0
+    ],
+    "outputs": {
+      "web-single/clip.txt": "sha256:55c97802b397ef4da0d8e2ecf4a8fa33c1f4755da0eacec54c62cacbbcfd9713",
+      "web-single/colors.txt": "sha256:d3b4499fe04c94219269cc681d7ba33bd128647cdb1816ea5e766bcd37734978",
+      "web-single/receipt.txt": "sha256:3a9e8528842c2e1b2ee1a5bf3895a9f279754b3fd52b09ca282e7d4fa0ac0f2e"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      0
+    ],
+    "outputs": {
+      "web-threaded-relaxed/clip.txt": "sha256:55c97802b397ef4da0d8e2ecf4a8fa33c1f4755da0eacec54c62cacbbcfd9713",
+      "web-threaded-relaxed/colors.txt": "sha256:d3b4499fe04c94219269cc681d7ba33bd128647cdb1816ea5e766bcd37734978",
+      "web-threaded-relaxed/receipt.txt": "sha256:3a9e8528842c2e1b2ee1a5bf3895a9f279754b3fd52b09ca282e7d4fa0ac0f2e"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "timings": {
+    "bench/preprocess": {
+      "value": 32.14,
+      "unit": "ms",
+      "spread": 0.1449906658369633
+    },
+    "bench/embed": {
+      "value": 51.66,
+      "unit": "ms",
+      "spread": 0.05555555555555565
+    },
+    "bench/encode": {
+      "value": 4112.55,
+      "unit": "ms",
+      "spread": 0.07200398779346155
+    },
+    "bench/merge": {
+      "value": 46.16,
+      "unit": "ms",
+      "spread": 0.08687175043327552
+    },
+    "bench/prefill": {
+      "value": 2997.39,
+      "unit": "ms",
+      "spread": 0.1581042173357488
+    },
+    "bench/decode": {
+      "value": 11.02,
+      "unit": "ms",
+      "spread": 0.5480943738656987
+    },
+    "bench/reply whole": {
+      "value": 8807.2,
+      "unit": "ms",
+      "spread": 0.26989281496957035
+    },
+    "web-threaded-relaxed/cases.colors.first": {
+      "value": 4510,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/cases.receipt.first": {
+      "value": 6960,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/cases.receipt.speed": {
+      "value": 84.2,
+      "unit": "/s"
+    },
+    "web-threaded-relaxed/cases.clip.first": {
+      "value": 5140,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/revisitMs": {
+      "value": 2802,
+      "unit": "ms"
+    }
+  }
+}

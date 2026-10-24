@@ -13,9 +13,10 @@
 //! layer is the model's.
 //!
 //! `Hybrid::forward` runs inside a team run. Calls read consecutive rows of one sequence from its
-//! first: the delta rule's state is the sum of every row before. The attention layers see keys
-//! under each call's mask; under `Mask::Full` a row also sees the later rows of its own call, so a
-//! sequence read that way is read in one call.
+//! first, or from a row whose state was saved (`State::save`, `State::restore`): the delta rule's
+//! state is the sum of every row before. The attention layers see keys under each call's mask;
+//! under `Mask::Full` a row also sees the later rows of its own call, so a sequence read that way
+//! is read in one call.
 
 mod attention;
 mod delta;
@@ -64,6 +65,10 @@ impl Shape {
         self.layers / self.attention_interval
     }
 
+    fn delta_layers(&self) -> usize {
+        self.layers - self.attention_layers()
+    }
+
     fn widths(&self) -> Widths {
         Widths {
             hidden: self.hidden,
@@ -102,16 +107,35 @@ pub struct State {
 impl State {
     /// The state of sequences of up to `capacity` rows.
     pub fn new(shape: &Shape, capacity: usize) -> Self {
-        let delta_layers = shape.layers - shape.attention_layers();
         Self {
             cache: KvCache::of(shape.attention_layers(), shape.attention.heads(), capacity),
-            delta: delta::State::new(&shape.delta, delta_layers),
+            delta: delta::State::new(&shape.delta, shape.delta_layers()),
         }
     }
 
     /// Forgets the sequence read so far, to read a new one from its first row.
     pub fn clear(&mut self) {
         self.delta.clear();
+    }
+
+    /// Keeps the state after the rows read so far in `saved`.
+    pub fn save(&self, saved: &mut Saved) {
+        saved.0.copy_from(&self.delta);
+    }
+
+    /// Goes back to the state `saved` kept, to read on from the row after the rows read then:
+    /// the attention layers' keys of later rows are overwritten as those rows are read again.
+    pub fn restore(&mut self, saved: &Saved) {
+        self.delta.copy_from(&saved.0);
+    }
+}
+
+/// The delta rule's part of a `State`, kept to read a sequence on again from where it was.
+pub struct Saved(delta::State);
+
+impl Saved {
+    pub fn new(shape: &Shape) -> Self {
+        Self(delta::State::new(&shape.delta, shape.delta_layers()))
     }
 }
 

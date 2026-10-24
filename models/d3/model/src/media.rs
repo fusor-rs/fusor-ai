@@ -7,13 +7,14 @@
 //! two consecutive frames are one group, read by the tower as an image is and placed in the
 //! prompt after its time, the mean of its frames' (`<1.5 seconds>`).
 
-use blocks::vit::preprocessing::{Patches, centered};
+pub use blocks::vit::preprocessing::Video;
+use blocks::vit::preprocessing::{Group, Patches};
 use blocks::vit::{Grid, Preprocessing};
 use media::image::{Filter, Pixels, Size};
 use serde::Serialize;
 
 use crate::Error;
-use crate::model::{FRAMES, MERGE, PATCH};
+use crate::model::{MERGE, PATCH};
 
 pub const IMAGE: Preprocessing = Preprocessing {
     patch: PATCH,
@@ -39,18 +40,6 @@ pub const MAX_VIDEO_TOKENS: usize = 16_384;
 /// Values of one frame of one channel of a patch.
 const PLANE: usize = PATCH * PATCH;
 
-/// A video's sampled frames, each with its time in seconds.
-pub struct Video {
-    pub frames: Vec<Pixels>,
-    pub times: Vec<f64>,
-}
-
-/// Two consecutive frames of a video, as patches, and their time.
-pub struct Group {
-    pub patches: Patches,
-    pub time: f64,
-}
-
 /// A request's images and videos, every one as two-frame patches.
 pub struct Media {
     pub images: Vec<Patches>,
@@ -75,7 +64,7 @@ impl Media {
             .map(|image| {
                 IMAGE
                     .centered_patches(image, MAX_ASPECT)
-                    .map(|patches| doubled(&patches))
+                    .map(|patches| patches.doubled(PLANE))
             })
             .collect::<Result<Vec<_>, _>>()?;
         let videos = videos.iter().map(groups).collect::<Result<Vec<_>, _>>()?;
@@ -112,22 +101,6 @@ impl Media {
     }
 }
 
-/// An image's patches with its frame repeated: each channel's plane twice.
-fn doubled(patches: &Patches) -> Patches {
-    let values = patches
-        .values
-        .as_chunks::<PLANE>()
-        .0
-        .iter()
-        .flat_map(|plane| plane.iter().chain(plane))
-        .copied()
-        .collect();
-    Patches {
-        grid: patches.grid,
-        values,
-    }
-}
-
 /// A video's frames, two by two, as patches.
 fn groups(video: &Video) -> Result<Vec<Group>, Error> {
     let Video { frames, times } = video;
@@ -149,28 +122,5 @@ fn groups(video: &Video) -> Result<Vec<Group>, Error> {
         )));
     }
     let size = VIDEO.whole_blocks(height as f64, width as f64);
-    let frame = |index: usize| {
-        let at = index.min(frames.len() - 1);
-        (VIDEO.patches(&frames[at], size, centered), times[at])
-    };
-    let groups = (0..frames.len().div_ceil(FRAMES)).map(|group| {
-        let ((first, start), (second, end)) = (frame(FRAMES * group), frame(FRAMES * group + 1));
-        Group {
-            patches: paired(&first, &second),
-            time: (start + end) / 2.0,
-        }
-    });
-    Ok(groups.collect())
-}
-
-/// Two frames' patches as one patch each: per channel, the first frame's plane, then the
-/// second's.
-fn paired(first: &Patches, second: &Patches) -> Patches {
-    let planes = first.values.as_chunks::<PLANE>().0.iter();
-    let planes = planes.zip(second.values.as_chunks::<PLANE>().0);
-    let values = planes.flat_map(|(one, two)| one.iter().chain(two)).copied();
-    Patches {
-        grid: first.grid,
-        values: values.collect(),
-    }
+    Ok(VIDEO.frame_pairs(video, size))
 }

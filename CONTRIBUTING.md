@@ -19,7 +19,8 @@ live in its own repository ([ming-wasm](https://github.com/fusor-rs/ming-wasm),
 [intern-decision-wasm](https://github.com/fusor-rs/intern-decision-wasm),
 [indra-ocr-wasm](https://github.com/fusor-rs/indra-ocr-wasm),
 [kronos-wasm](https://github.com/andreespirela/kronos-wasm),
-[d3-wasm](https://github.com/fusor-rs/d3-wasm)), checked out beside this one. `just integrate
+[d3-wasm](https://github.com/fusor-rs/d3-wasm),
+[qwen3-5-wasm](https://github.com/fusor-rs/qwen3-5-wasm)), checked out beside this one. `just integrate
 <model>…` (or `--all`) fetches the model's goldens from the
 [fusorlabs/fusor-ai-goldens](https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens)
 dataset, pinned by revision and sha256, links its product's `vendor/fusor-ai` to this working

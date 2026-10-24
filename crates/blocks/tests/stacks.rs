@@ -197,7 +197,7 @@ fn read(lm: &Lm, shape: &lm::Shape, ids: &[u32], positions: &[Position]) -> Vec<
         };
         reader.read(&team, lm, &rows);
     }
-    reader.logits.read().to_vec()
+    reader.prediction.logits.read().to_vec()
 }
 
 struct Stream {
@@ -435,23 +435,34 @@ const HYBRID: HybridDims = HybridDims {
 };
 const HYBRID_SECTIONS: [usize; 3] = [2, 1, 1];
 
-/// Each mask the hybrid stack reads under, and the rows per call: a sequence read with every row
-/// seeing every other is read in one call.
-const HYBRID_CALLS: [(transformer::Mask, usize); 2] = [
-    (transformer::Mask::Causal, CALL),
-    (transformer::Mask::Full, ROWS),
+/// Whether each call is first read on other rows, the state saved before and restored after.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Detour {
+    None,
+    EveryCall,
+}
+
+/// Each mask the hybrid stack reads under, the rows per call and the detours: a sequence read with
+/// every row seeing every other is read in one call.
+const HYBRID_CALLS: [(transformer::Mask, usize, Detour); 3] = [
+    (transformer::Mask::Causal, CALL, Detour::None),
+    (transformer::Mask::Causal, CALL, Detour::EveryCall),
+    (transformer::Mask::Full, ROWS, Detour::None),
 ];
 
 #[test]
 fn hybrid_stack_carries_its_state_across_calls_like_the_reference() {
-    for (mask, call) in HYBRID_CALLS {
-        let error = hybrid_error(mask, call);
-        assert!(error < tolerance(DType::F32), "{mask:?}: error {error:.2e}");
+    for reading in HYBRID_CALLS {
+        let error = hybrid_error(reading);
+        assert!(
+            error < tolerance(DType::F32),
+            "{reading:?}: error {error:.2e}"
+        );
     }
 }
 
 /// The error of the output of `ROWS` rows through the hybrid stack in calls of `call` rows.
-fn hybrid_error(mask: transformer::Mask, call: usize) -> f64 {
+fn hybrid_error(reading: (transformer::Mask, usize, Detour)) -> f64 {
     let mut weights = Weights::new("hybrid", 5);
     let input = weights.floats(ROWS * DECODER.hidden, 0.0, 1.0);
     let stack = weights.hybrid("hybrid.layers", &HYBRID);
@@ -465,7 +476,7 @@ fn hybrid_error(mask: transformer::Mask, call: usize) -> f64 {
             width: row * 3 % 7,
         })
         .collect();
-    let output = read_hybrid(&hybrid, &shape, &input, &positions, (mask, call));
+    let output = read_hybrid(&hybrid, &shape, &input, &positions, reading);
 
     let mut x = widen(&input);
     let angles = |row: usize| {
@@ -477,7 +488,7 @@ fn hybrid_error(mask: transformer::Mask, call: usize) -> f64 {
         let axes = [temporal, height, width, temporal];
         angles(&axes, ROPE_BASE.into(), HYBRID.rotary_dim)
     };
-    stack.apply(&mut x, &HYBRID, &angles, reference_mask(mask));
+    stack.apply(&mut x, &HYBRID, &angles, reference_mask(reading.0));
     relative_error(&output, &x)
 }
 
@@ -513,29 +524,40 @@ fn hybrid_shape() -> hybrid::Shape {
     }
 }
 
-/// The output of `input`'s rows through the stack in calls of `call` rows under `mask`.
+/// The output of `input`'s rows through the stack in calls of `call` rows under `mask`, each call
+/// read first on the rows of the input reversed when it takes a detour.
 fn read_hybrid(
     hybrid: &Hybrid,
     shape: &hybrid::Shape,
     input: &[f32],
     positions: &[Position],
-    (mask, call): (transformer::Mask, usize),
+    (mask, call, detour): (transformer::Mask, usize, Detour),
 ) -> Vec<f32> {
     let hidden = DECODER.hidden;
     let team = Team::global();
-    let state = hybrid::State::new(shape, ROWS);
+    let mut state = hybrid::State::new(shape, ROWS);
+    let mut saved = hybrid::Saved::new(shape);
     let mut buffers = shape.buffers(call, team.threads());
+    let reversed: Vec<f32> = input.rchunks(hidden).flatten().copied().collect();
     let mut output = Vec::new();
     for first in (0..ROWS).step_by(call) {
         let rows = first..ROWS.min(first + call);
-        buffers.stack.hidden.get_mut()[..rows.len() * hidden]
-            .copy_from_slice(&input[rows.start * hidden..rows.end * hidden]);
         let rows_call = hybrid::Rows {
             first,
             positions: &positions[rows.clone()],
             mask,
         };
-        team.run(|ctx| hybrid.forward(ctx, &state, &buffers, &rows_call));
+        let mut read = |state: &hybrid::State, from: &[f32]| {
+            buffers.stack.hidden.get_mut()[..rows.len() * hidden]
+                .copy_from_slice(&from[rows.start * hidden..rows.end * hidden]);
+            team.run(|ctx| hybrid.forward(ctx, state, &buffers, &rows_call));
+        };
+        if detour == Detour::EveryCall {
+            state.save(&mut saved);
+            read(&state, &reversed);
+            state.restore(&saved);
+        }
+        read(&state, input);
         output.extend_from_slice(&buffers.stack.hidden.read()[..rows.len() * hidden]);
     }
     output

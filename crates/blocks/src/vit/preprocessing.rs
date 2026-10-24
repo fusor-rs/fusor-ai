@@ -1,5 +1,6 @@
 //! An image as a vision-language model's processor gives it to the encoder: resized to whole
-//! merged blocks within a pixel budget, and cut into patches.
+//! merged blocks within a pixel budget, and cut into patches; and a video's frames, two by two,
+//! as two-frame patches (Qwen3-VL's, Qwen3.5's), with an image as two frames of itself.
 
 use media::image::{Filter, Pixels, Size};
 use serde::Serialize;
@@ -14,6 +15,37 @@ const CENTER: f32 = 127.5;
 pub struct Patches {
     pub grid: Grid,
     pub values: Vec<f32>,
+}
+
+impl Patches {
+    /// An image's patches as two-frame patches of the image twice (`plane`: a channel's values
+    /// of one patch).
+    pub fn doubled(&self, plane: usize) -> Patches {
+        self.paired(self, plane)
+    }
+
+    /// Two frames' patches as one patch each: per channel, this frame's plane, then `second`'s.
+    fn paired(&self, second: &Patches, plane: usize) -> Patches {
+        let planes = self.values.chunks_exact(plane);
+        let planes = planes.zip(second.values.chunks_exact(plane));
+        let values = planes.flat_map(|(one, two)| one.iter().chain(two)).copied();
+        Patches {
+            grid: self.grid,
+            values: values.collect(),
+        }
+    }
+}
+
+/// A video's sampled frames, each with its time in seconds.
+pub struct Video {
+    pub frames: Vec<Pixels>,
+    pub times: Vec<f64>,
+}
+
+/// Two consecutive frames of a video, as patches of both, and their time: the mean of theirs.
+pub struct Group {
+    pub patches: Patches,
+    pub time: f64,
 }
 
 /// How an image is read: its size, the size it was resized to and its patch grid.
@@ -64,16 +96,30 @@ impl Preprocessing {
     /// whole merged blocks, then scaled into the pixel budget, with Python's rounding (half to
     /// even).
     pub fn whole_blocks(&self, height: f64, width: f64) -> Size {
+        self.fitted(1.0, 1.0, height, width)
+    }
+
+    /// Qwen3-VL's video `smart_resize` (Qwen3.5's too): `frames` frames of `height × width`
+    /// rounded to whole merged blocks, then scaled so that the frames, padded to whole pairs, are
+    /// within the budget, the budget counting every frame's pixels.
+    pub fn whole_video_blocks(&self, frames: usize, height: f64, width: f64) -> Size {
+        let padded = (frames as f64 / 2.0).round_ties_even() * 2.0;
+        self.fitted(frames as f64, padded, height, width)
+    }
+
+    /// `smart_resize` over `frames` frames, the budget's check over `padded` frames.
+    fn fitted(&self, frames: f64, padded: f64, height: f64, width: f64) -> Size {
         let factor = self.factor() as f64;
         let whole = |side: f64| (side / factor).round_ties_even() * factor;
         let (mut resized_height, mut resized_width) = (whole(height), whole(width));
-        let area = height * width;
-        if resized_height * resized_width > self.max_pixels as f64 {
-            let beta = (area / self.max_pixels as f64).sqrt();
+        let pixels = frames * height * width;
+        let resized = padded * resized_height * resized_width;
+        if resized > self.max_pixels as f64 {
+            let beta = (pixels / self.max_pixels as f64).sqrt();
             let shrunk = |side: f64| factor.max((side / beta / factor).floor() * factor);
             (resized_height, resized_width) = (shrunk(height), shrunk(width));
-        } else if resized_height * resized_width < self.min_pixels as f64 {
-            let beta = (self.min_pixels as f64 / area).sqrt();
+        } else if resized < self.min_pixels as f64 {
+            let beta = (self.min_pixels as f64 / pixels).sqrt();
             let grown = |side: f64| (side * beta / factor).ceil() * factor;
             (resized_height, resized_width) = (grown(height), grown(width));
         }
@@ -129,6 +175,25 @@ impl Preprocessing {
         }
         let size = self.whole_blocks(height as f64, width as f64);
         Ok(self.patches(image, size, centered))
+    }
+
+    /// `video`'s frames resized to `size` (whole patches) and scaled to [−1, 1], two by two as
+    /// two-frame patches, an odd last frame repeated.
+    pub fn frame_pairs(&self, video: &Video, size: Size) -> Vec<Group> {
+        let Video { frames, times } = video;
+        let plane = self.patch * self.patch;
+        let frame = |index: usize| {
+            let at = index.min(frames.len() - 1);
+            (self.patches(&frames[at], size, centered), times[at])
+        };
+        let pairs = (0..frames.len().div_ceil(2)).map(|pair| {
+            let ((first, start), (second, end)) = (frame(2 * pair), frame(2 * pair + 1));
+            Group {
+                patches: first.paired(&second, plane),
+                time: (start + end) / 2.0,
+            }
+        });
+        pairs.collect()
     }
 
     /// How `image` is read as patches of `grid`.
