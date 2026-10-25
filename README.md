@@ -74,7 +74,7 @@ impl LanguageModel {
 
 ## Get started
 
-You need Rust 1.99 or newer, installed with [rustup](https://rustup.rs), Node.js 20 or newer and [`just`](https://github.com/casey/just). Threaded WebAssembly builds also need the `nightly-2025-11-15` toolchain with `rust-src`; `scripts/install-tools.sh` installs the pinned wasm-bindgen and binaryen beside it. Each release publishes the crates to crates.io (`fusor-ai-kernels`, `fusor-ai-blocks`, …); a model's app also needs this repository as a submodule for the browser host and scripts.
+You need Rust 1.99 or newer, installed with [rustup](https://rustup.rs), Node.js 20 or newer and [`just`](https://github.com/casey/just). Threaded WebAssembly builds also need the `nightly-2026-10-20` toolchain with `rust-src`; `scripts/install-tools.sh` installs the pinned wasm-bindgen and binaryen beside it. Each release publishes the crates to crates.io (`fusor-ai-kernels`, `fusor-ai-blocks`, …); a model's app also needs this repository as a submodule for the browser host and scripts.
 
 ### Run a model
 

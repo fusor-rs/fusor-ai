@@ -239,6 +239,13 @@ impl Load for Hybrid {
                 "{prefix}: the mixers' outputs differ in width, and share one buffer"
             )));
         }
+        if !shape.delta.value_dim.is_multiple_of(kernels::DOTS) {
+            return Err(bundle::Error::Format(format!(
+                "{prefix}: the delta rule's value width {} is not a multiple of {}",
+                shape.delta.value_dim,
+                kernels::DOTS
+            )));
+        }
         let mut index = 0;
         let layers = load_each(
             store,

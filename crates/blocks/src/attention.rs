@@ -13,7 +13,7 @@
 
 use std::ops::Range;
 
-use kernels::ops::exponentials;
+use kernels::ops::Exponentials;
 use kernels::{BLOCK, QUAD, QuantizedMatrix, QuantizedRows, matmul};
 use team::{Ctx, SharedBuf};
 
@@ -40,6 +40,7 @@ pub(crate) struct Call<'buf> {
     pub(crate) query: Operand<'buf>,
     pub(crate) key: Operand<'buf>,
     pub(crate) value: Operand<'buf>,
+    pub(crate) exponentials: Exponentials,
 }
 
 /// One thread's working set.
@@ -173,7 +174,7 @@ impl Scratch {
         });
         sums.clear();
         let rows = scores.chunks_exact_mut(columns);
-        sums.extend(rows.map(|row| exponentials(&mut row[..call.keys])));
+        sums.extend(rows.map(|row| call.exponentials.apply(&mut row[..call.keys])));
         let values_matrix = values.matrix();
         let input = quant.input(&values_matrix, scores);
         let stride = call.heads * head_dim;

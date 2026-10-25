@@ -14,9 +14,10 @@ use core::arch::wasm32::{
     i16x8_extmul_high_i8x16, i16x8_extmul_low_i8x16, i32x4_extadd_pairwise_i16x8, i32x4_shuffle,
 };
 
-use super::{CHUNKS, DOTS, EXP_RUN, LANES};
+use super::{Backend, CHUNKS, DOTS, EXP_RUN, LANES};
 use crate::ops::{
-    EXP_BIAS, EXP_MAX, EXP_MIN, EXP_POLYNOMIAL, GELU_TANH_CUBIC, GELU_TANH_SCALE, LN2_HIGH, LN2_LOW,
+    EXP_BIAS, EXP_MAX, EXP_MIN, EXP_POLYNOMIAL, EXP_TAYLOR, GELU_TANH_CUBIC, GELU_TANH_SCALE,
+    LN2_HIGH, LN2_LOW,
 };
 
 pub(crate) struct Wasm;
@@ -185,24 +186,11 @@ impl super::Backend for Wasm {
     }
 
     fn exp_sweep(x: &mut [f32], shift: f32) -> [f32; EXP_RUN] {
-        let shift = f32x4_splat(shift);
-        let mut sums = [f32x4_splat(0.0); EXP_RUN / 4];
-        for run in x.as_chunks_mut::<EXP_RUN>().0 {
-            for (half, sum) in run.as_chunks_mut::<4>().0.iter_mut().zip(&mut sums) {
-                // SAFETY: four f32s of the run, read then written; v128 loads and stores are
-                // unaligned.
-                let exps = unsafe {
-                    let exps = exp(f32x4_sub(v128_load(half.as_ptr().cast()), shift));
-                    v128_store(half.as_mut_ptr().cast(), exps);
-                    exps
-                };
-                *sum = f32x4_add(*sum, exps);
-            }
-        }
-        let [low, high] = sums.map(Self::lanes);
-        [
-            low[0], low[1], low[2], low[3], high[0], high[1], high[2], high[3],
-        ]
+        sweep(x, shift, exp)
+    }
+
+    fn exp_sweep_fast(x: &mut [f32], shift: f32) -> [f32; EXP_RUN] {
+        sweep(x, shift, exp_fast)
     }
 
     fn gelu_tanh(x: [f32; LANES]) -> [f32; LANES] {
@@ -258,6 +246,33 @@ impl super::Backend for Wasm {
         }
     }
 
+    fn decay_rows(mut rows: [&mut [f32]; DOTS], decay: f32, deltas: [f32; DOTS], key: &[f32]) {
+        assert!(
+            rows.iter().all(|row| row.len() == key.len()),
+            "rows of the key's length"
+        );
+        let decay_lanes = f32x4_splat(decay);
+        let delta_lanes = deltas.map(|delta| f32x4_splat(delta));
+        let chunks = key.len() / 4;
+        for i in 0..chunks {
+            // SAFETY: i·4 + 4 ≤ len for every slice (asserted equal); v128 loads and stores are
+            // unaligned.
+            unsafe {
+                let keys = v128_load(key.as_ptr().add(i * 4).cast());
+                for (row, delta) in rows.iter_mut().zip(delta_lanes) {
+                    let at = row.as_mut_ptr().add(i * 4).cast();
+                    let decayed = f32x4_mul(decay_lanes, v128_load(at));
+                    v128_store(at, f32x4_add(decayed, f32x4_mul(delta, keys)));
+                }
+            }
+        }
+        for (row, delta) in rows.into_iter().zip(deltas) {
+            for (value, key) in row[chunks * 4..].iter_mut().zip(&key[chunks * 4..]) {
+                *value = decay * *value + delta * key;
+            }
+        }
+    }
+
     fn dot_f32_many(left: &[f32], rights: [&[f32]; DOTS]) -> [f32; DOTS] {
         assert!(
             rights.iter().all(|right| right.len() == left.len()),
@@ -290,6 +305,46 @@ fn horizontal(sums: v128) -> f32 {
         + f32x4_extract_lane::<3>(sums)
 }
 
+fn sweep(x: &mut [f32], shift: f32, exponential: impl Fn(v128) -> v128) -> [f32; EXP_RUN] {
+    let shift = f32x4_splat(shift);
+    let mut sums = [f32x4_splat(0.0); EXP_RUN / 4];
+    let (pairs, tail) = x.as_chunks_mut::<{ 2 * EXP_RUN }>();
+    for pair in pairs {
+        let [a_low, a_high, b_low, b_high] = exp_quads(pair, shift, &exponential);
+        sums[0] = f32x4_add(sums[0], a_low);
+        sums[1] = f32x4_add(sums[1], a_high);
+        sums[0] = f32x4_add(sums[0], b_low);
+        sums[1] = f32x4_add(sums[1], b_high);
+    }
+    if let Some(run) = tail.first_chunk_mut::<EXP_RUN>() {
+        let [low, high] = exp_quads(run, shift, &exponential);
+        sums[0] = f32x4_add(sums[0], low);
+        sums[1] = f32x4_add(sums[1], high);
+    }
+    let [low, high] = sums.map(Wasm::lanes);
+    [
+        low[0], low[1], low[2], low[3], high[0], high[1], high[2], high[3],
+    ]
+}
+
+fn exp_quads<const QUADS: usize>(
+    x: &mut [f32],
+    shift: v128,
+    exponential: impl Fn(v128) -> v128,
+) -> [v128; QUADS] {
+    let quads = x.as_chunks_mut::<4>().0;
+    std::array::from_fn(|index| {
+        let quad = &mut quads[index];
+        // SAFETY: the four f32s of `quad`, read then written; v128 loads and stores are
+        // unaligned.
+        unsafe {
+            let exps = exponential(f32x4_sub(v128_load(quad.as_ptr().cast()), shift));
+            v128_store(quad.as_mut_ptr().cast(), exps);
+            exps
+        }
+    })
+}
+
 /// `ops::exp` on four lanes, operation for operation.
 fn exp(x: v128) -> v128 {
     let x = f32x4_max(f32x4_min(x, f32x4_splat(EXP_MAX)), f32x4_splat(EXP_MIN));
@@ -302,9 +357,34 @@ fn exp(x: v128) -> v128 {
     }
     let poly = f32x4_mul(f32x4_mul(poly, remainder), remainder);
     let poly = f32x4_add(f32x4_add(poly, remainder), f32x4_splat(1.0));
-    let scale = i32x4_shl(
+    f32x4_mul(poly, power_of_two(exponent))
+}
+
+fn exp_fast(x: v128) -> v128 {
+    let x = f32x4_max(x, f32x4_splat(EXP_MIN));
+    let exponent = f32x4_nearest(f32x4_mul(x, f32x4_splat(std::f32::consts::LOG2_E)));
+    let remainder = multiply_add(exponent, f32x4_splat(-std::f32::consts::LN_2), x);
+    let mut poly = f32x4_splat(EXP_TAYLOR[0]);
+    for &coefficient in &EXP_TAYLOR[1..] {
+        poly = multiply_add(poly, remainder, f32x4_splat(coefficient));
+    }
+    f32x4_mul(poly, power_of_two(exponent))
+}
+
+#[cfg(target_feature = "relaxed-simd")]
+fn multiply_add(left: v128, right: v128, addend: v128) -> v128 {
+    f32x4_relaxed_madd(left, right, addend)
+}
+
+#[cfg(not(target_feature = "relaxed-simd"))]
+fn multiply_add(left: v128, right: v128, addend: v128) -> v128 {
+    f32x4_add(f32x4_mul(left, right), addend)
+}
+
+// The lanes of `exponent` are integral.
+fn power_of_two(exponent: v128) -> v128 {
+    i32x4_shl(
         i32x4_add(i32x4_trunc_sat_f32x4(exponent), i32x4_splat(EXP_BIAS)),
         23,
-    );
-    f32x4_mul(poly, scale)
+    )
 }

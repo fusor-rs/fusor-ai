@@ -60,7 +60,7 @@ pub fn rope_interleaved(head: &mut [f32], cos: &[f32], sin: &[f32]) {
     }
 }
 
-/// `exp`'s range: clamped outside `[EXP_MIN, EXP_MAX]`.
+/// `exp`'s range: clamped outside `[EXP_MIN, EXP_MAX]`; `exp_fast` clamps below at `EXP_MIN` too.
 pub(crate) const EXP_MIN: f32 = -87.0;
 pub(crate) const EXP_MAX: f32 = 88.0;
 /// `ln 2` in two parts, so that `x − n · ln 2` stays exact.
@@ -96,24 +96,64 @@ pub fn exp(x: f32) -> f32 {
     poly * f32::from_bits(((exponent as i32 + EXP_BIAS) << 23) as u32)
 }
 
-/// `scores` replaced by `exp(score − max)`: the backend over the whole runs of `EXP_RUN`
-/// values, `exp` over the rest; returns the backend's sums of its results at each offset in
-/// a run.
-fn exponentiate(scores: &mut [f32], max: f32) -> [f32; EXP_RUN] {
-    let sums = Active::exp_sweep(scores, max);
-    let (_, rest) = scores.as_chunks_mut::<EXP_RUN>();
-    for score in rest.iter_mut() {
-        *score = exp(*score - max);
+/// `exp_fast`'s Taylor polynomial of `eʳ`, degree 4, highest first; the last two are the linear
+/// and constant terms.
+pub(crate) const EXP_TAYLOR: [f32; 5] = [1.0 / 24.0, 1.0 / 6.0, 0.5, 1.0, 1.0];
+
+/// `eˣ` for `x ≤ 0` within 6e-5 relative (measured in the kernel harness), a hundred times under
+/// the 1/127 step of the int8 probabilities it feeds: `2ⁿ · p(r)` with `n = round(x / ln 2)`,
+/// `r = x − n · ln 2` in one fused operation, and `p` a degree-4 Taylor polynomial evaluated
+/// with fused multiply-adds. The backends' `exp_sweep_fast` is the same arithmetic on four lanes,
+/// its multiply-adds fused where the target fuses them (NEON, relaxed SIMD, the scalar
+/// `mul_add`); SIMD128 multiplies then adds. Both are within the 6e-5 bound.
+///
+/// On x86-64 the scalar `mul_add` and `round_ties_even` are library calls, so the scalar
+/// backend's fast sweep is slow there.
+#[inline(always)]
+pub(crate) fn exp_fast(x: f32) -> f32 {
+    // No upper clamp: its callers subtract the row's maximum first.
+    let x = x.max(EXP_MIN);
+    let exponent = (x * std::f32::consts::LOG2_E).round_ties_even();
+    let remainder = (-exponent).mul_add(std::f32::consts::LN_2, x);
+    let mut poly = EXP_TAYLOR[0];
+    for coefficient in &EXP_TAYLOR[1..] {
+        poly = poly.mul_add(remainder, *coefficient);
     }
-    sums
+    poly * f32::from_bits(((exponent as i32 + EXP_BIAS) << 23) as u32)
 }
 
-/// `scores` replaced by `exp(score − max)`; returns their sum.
-pub fn exponentials(scores: &mut [f32]) -> f32 {
-    let max = Active::maximum(scores);
-    let sums = exponentiate(scores, max);
-    let (_, rest) = scores.as_chunks::<EXP_RUN>();
-    rest.iter().chain(&sums).sum()
+/// The exponential of a row of scores less their maximum: `Exact` is `exp`, within 2 ulp;
+/// `Fast` is `exp_fast`, for scores whose exponentials are quantized to int8 next, where its
+/// error is far under the quantization's step.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Exponentials {
+    Exact,
+    Fast,
+}
+
+impl Exponentials {
+    /// `scores` replaced by the exponential of each score less their maximum; returns their sum.
+    pub fn apply(self, scores: &mut [f32]) -> f32 {
+        let max = Active::maximum(scores);
+        let sums = self.exponentiate(scores, max);
+        let (_, rest) = scores.as_chunks::<EXP_RUN>();
+        rest.iter().chain(&sums).sum()
+    }
+
+    /// `scores` replaced by the variant's exponential of `score − max`: the backend's sweep over
+    /// the whole runs of `EXP_RUN` values, its scalar twin over the rest; returns the sweep's
+    /// sums of its results at each offset in a run.
+    fn exponentiate(self, scores: &mut [f32], max: f32) -> [f32; EXP_RUN] {
+        let (sums, exponential): (_, fn(f32) -> f32) = match self {
+            Self::Exact => (Active::exp_sweep(scores, max), exp),
+            Self::Fast => (Active::exp_sweep_fast(scores, max), exp_fast),
+        };
+        let (_, rest) = scores.as_chunks_mut::<EXP_RUN>();
+        for score in rest.iter_mut() {
+            *score = exponential(*score - max);
+        }
+        sums
+    }
 }
 
 /// `gelu_tanh`'s `u = √(2/π) · (x + 0.044715 · x³)`.
@@ -203,7 +243,7 @@ pub fn sigmoid(x: f32) -> f32 {
 /// `scores` replaced by their softmax, the exponentials summed in their order.
 pub fn softmax(scores: &mut [f32]) {
     let max = Active::maximum(scores);
-    exponentiate(scores, max);
+    Exponentials::Exact.exponentiate(scores, max);
     let total: f32 = scores.iter().sum();
     scores.iter_mut().for_each(|score| *score /= total);
 }
@@ -241,7 +281,9 @@ pub fn attend<'cache>(
 
 #[cfg(test)]
 mod tests {
-    use super::{elu, exp, exponentials, gelu_erf, gelu_tanh, gelu_tanh_lanes, layer_norm};
+    use super::{
+        Exponentials, elu, exp, exp_fast, gelu_erf, gelu_tanh, gelu_tanh_lanes, layer_norm,
+    };
     use crate::arch::{Active, Backend, DOTS};
 
     #[test]
@@ -250,6 +292,10 @@ mod tests {
             let x = i as f32 / 100.0;
             let want = f64::from(x).exp();
             assert!(((f64::from(exp(x)) - want) / want).abs() < 4e-7, "exp({x})");
+            if x <= 0.0 {
+                let error = (f64::from(exp_fast(x)) - want) / want;
+                assert!(error.abs() < 6e-5, "exp_fast({x})");
+            }
             let elu_want = if x > 0.0 { f64::from(x) } else { want - 1.0 };
             assert!((f64::from(elu(x)) - elu_want).abs() < 1e-7, "elu({x})");
             let wide = f64::from(x);
@@ -299,6 +345,32 @@ mod tests {
     }
 
     #[test]
+    fn decay_rows_updates_the_rows_one_at_a_time_bit_for_bit() {
+        let mut want: [Vec<f32>; DOTS] = std::array::from_fn(|row| {
+            (0..37)
+                .map(|i| ((i * 7 + row * 3) % 11) as f32 / 3.0 - 1.5)
+                .collect()
+        });
+        let mut got = want.clone();
+        let key: Vec<f32> = (0..37).map(|i| ((i * 5) % 13) as f32 / 4.0 - 1.0).collect();
+        let decay = 0.93;
+        let deltas = [0.3, -1.25, 0.7, 2.0];
+        for (row, delta) in want.iter_mut().zip(deltas) {
+            for (value, key) in row.iter_mut().zip(&key) {
+                *value = decay * *value + delta * key;
+            }
+        }
+        Active::decay_rows(got.each_mut().map(Vec::as_mut_slice), decay, deltas, &key);
+        let bits = |rows: &[Vec<f32>]| {
+            rows.iter()
+                .flatten()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(bits(&got), bits(&want));
+    }
+
+    #[test]
     fn gelu_tanh_lanes_are_the_scalar_gelu_bit_for_bit() {
         for i in (-2000..=2000).step_by(4) {
             let x = [i, i + 1, i + 2, i + 3].map(|i| i as f32 / 100.0);
@@ -313,25 +385,35 @@ mod tests {
 
     #[test]
     fn exponentials_are_the_scalar_exp_of_every_score_less_their_maximum() {
-        let scores: Vec<f32> = (0..37).map(|i| (i * 7 % 11) as f32 - 5.0).collect();
-        let mut swept = scores.clone();
-        let sum = exponentials(&mut swept);
-        let max = 5.0;
-        for (score, value) in scores.iter().zip(&swept) {
-            assert_eq!(
-                value.to_bits(),
-                exp(score - max).to_bits(),
-                "exp({score} − {max})"
-            );
+        let variants = [
+            (Exponentials::Exact, exp as fn(f32) -> f32, 1e-6),
+            (Exponentials::Fast, exp_fast, 1e-4),
+        ];
+        for (exponentials, exponential, tolerance) in variants {
+            for length in [37, 45] {
+                let scores: Vec<f32> = (0..length)
+                    .map(|i| (i as f32).mul_add(-0.37, -1.5))
+                    .collect();
+                let mut swept = scores.clone();
+                let sum = exponentials.apply(&mut swept);
+                let max = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                for (score, value) in scores.iter().zip(&swept) {
+                    assert_eq!(
+                        value.to_bits(),
+                        exponential(score - max).to_bits(),
+                        "{exponentials:?}: exp({score} − {max})"
+                    );
+                }
+                let want: f64 = scores
+                    .iter()
+                    .map(|score| f64::from(score - max).exp())
+                    .sum();
+                assert!(
+                    (f64::from(sum) - want).abs() < tolerance * want,
+                    "{exponentials:?}: {sum} vs {want}"
+                );
+            }
         }
-        let want: f64 = scores
-            .iter()
-            .map(|score| f64::from(score - max).exp())
-            .sum();
-        assert!(
-            (f64::from(sum) - want).abs() < 1e-6 * want,
-            "{sum} vs {want}"
-        );
     }
 
     #[test]

@@ -14,7 +14,9 @@
 
 use bundle::{Scope, Store};
 use kernels::ops::{rms_norm, sigmoid, silu};
-use kernels::{COLUMN_ALIGN, Input, Linear, QUAD, Table, Vector, dot_f32};
+use kernels::{
+    COLUMN_ALIGN, DOTS, Input, Linear, QUAD, Table, Vector, decay_rows, dot_f32, dot_f32_many,
+};
 use team::{PerThread, SharedBuf};
 
 use crate::layer::Pass;
@@ -250,19 +252,31 @@ struct Rule {
 
 impl Rule {
     /// `memory`, decayed, corrected toward `value` by its recall of the key, then read by the
-    /// query into `scratch.reading`. Its own function: V8 optimizes a function on a later call,
-    /// never a loop already running (knowledge.md).
+    /// query into `scratch.reading`, `DOTS` rows at a time (`value_dim` is a multiple of `DOTS`,
+    /// checked on load). Its own function: V8 optimizes a function on a later call, never a loop
+    /// already running (knowledge.md).
     #[inline(never)]
     fn step(&self, memory: &mut [f32], value: &[f32], scratch: &mut Scratch) {
-        let (key, query) = (&scratch.key, &scratch.query);
-        let rows = memory.chunks_exact_mut(key.len()).zip(value);
-        for ((row, value), reading) in rows.zip(scratch.reading.iter_mut()) {
-            let recalled = self.decay * dot_f32(row, key);
-            let delta = (value - recalled) * self.correction;
-            for (remembered, key) in row.iter_mut().zip(key) {
-                *remembered = self.decay * *remembered + delta * key;
-            }
-            *reading = dot_f32(row, query);
+        let Scratch {
+            query,
+            key,
+            reading,
+        } = scratch;
+        let width = key.len();
+        let groups = memory
+            .chunks_exact_mut(DOTS * width)
+            .zip(value.as_chunks::<DOTS>().0);
+        for ((group, values), readings) in groups.zip(reading.as_chunks_mut::<DOTS>().0) {
+            let (r0, rest) = group.split_at_mut(width);
+            let (r1, rest) = rest.split_at_mut(width);
+            let (r2, r3) = rest.split_at_mut(width);
+            let dots = dot_f32_many(key, [r0, r1, r2, r3]);
+            let deltas = std::array::from_fn(|row| {
+                let recalled = self.decay * dots[row];
+                (values[row] - recalled) * self.correction
+            });
+            decay_rows([r0, r1, r2, r3], self.decay, deltas, key);
+            *readings = dot_f32_many(query, [r0, r1, r2, r3]);
         }
     }
 }

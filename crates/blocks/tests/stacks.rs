@@ -11,6 +11,7 @@ use blocks::transformer::{self, Architecture, KvCache, Span, Transformer};
 use blocks::vit::{self, Grid, Vit};
 use bundle::Load;
 use kernels::DType;
+use kernels::ops::Exponentials;
 use team::Team;
 
 use support::{
@@ -343,6 +344,7 @@ fn vision_encoder_attends_among_the_patches_like_the_reference() {
         feed_forward: ENCODER.feed_forward,
         rope_base: ROPE_BASE,
         norm_eps: EPS,
+        exponentials: Exponentials::Exact,
     };
     let vit = Vit::load(&mut weights.store(VIT_WEIGHTS), "vit", shape)
         .expect("the bundle holds every tensor the block loads");

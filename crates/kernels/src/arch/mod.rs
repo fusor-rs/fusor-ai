@@ -117,6 +117,9 @@ pub(crate) trait Backend {
     /// each offset in a run.
     fn exp_sweep(x: &mut [f32], shift: f32) -> [f32; EXP_RUN];
 
+    /// `exp_sweep` with `ops::exp_fast`'s arithmetic, for `x[i] − shift ≤ 0` at every `i`.
+    fn exp_sweep_fast(x: &mut [f32], shift: f32) -> [f32; EXP_RUN];
+
     /// `ops::gelu_tanh` of each value, with its arithmetic.
     fn gelu_tanh(x: [f32; LANES]) -> [f32; LANES];
 
@@ -136,6 +139,17 @@ pub(crate) trait Backend {
             }
         }
     }
+
+    /// `rows[r][i] = decay · rows[r][i] + deltas[r] · key[i]` for the `DOTS` rows, each
+    /// element as two multiplies and one add (no fused multiply-add), as updating the rows one
+    /// at a time would.
+    fn decay_rows(rows: [&mut [f32]; DOTS], decay: f32, deltas: [f32; DOTS], key: &[f32]) {
+        for (row, delta) in rows.into_iter().zip(deltas) {
+            for (value, key) in row.iter_mut().zip(key) {
+                *value = decay * *value + delta * key;
+            }
+        }
+    }
 }
 
 /// The dot product of two f32 slices with the target's SIMD.
@@ -149,6 +163,12 @@ pub const DOTS: usize = 4;
 /// `dot_f32(left, right)` for each of `rights`, reading `left` once.
 pub fn dot_f32_many(left: &[f32], rights: [&[f32]; DOTS]) -> [f32; DOTS] {
     <Active as Backend>::dot_f32_many(left, rights)
+}
+
+/// `rows[r][i] = decay · rows[r][i] + deltas[r] · key[i]` for the `DOTS` rows with the target's
+/// SIMD, each element as two multiplies and one add.
+pub fn decay_rows(rows: [&mut [f32]; DOTS], decay: f32, deltas: [f32; DOTS], key: &[f32]) {
+    <Active as Backend>::decay_rows(rows, decay, deltas, key);
 }
 
 /// `each(i, dot_f32(left, right(i)))` for `i < count`, `DOTS` dot products at a time, each

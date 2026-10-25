@@ -3,6 +3,7 @@
 use bundle::{Load, Scope, Store};
 use kernels::Linear;
 use kernels::conv::project_rows;
+use kernels::ops::Exponentials;
 
 use super::walk::Walk;
 use super::{Decoder, Shape};
@@ -55,6 +56,7 @@ impl Decoder {
             query: part(0),
             key: part(channels),
             value: part(2 * channels),
+            exponentials: Exponentials::Exact,
         };
         attend(ctx, &call, &buffers.attention, buffers.scratch.get(ctx));
         ctx.barrier();

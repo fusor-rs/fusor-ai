@@ -9,6 +9,7 @@ use blocks::vit;
 use blocks::vit::merger::{self, Merger};
 use blocks::vit::tower::{self, Ending, Resample, Tower};
 use bundle::{Load, Scope, Store, Tokenizer};
+use kernels::ops::Exponentials;
 use kernels::{Table, Vector};
 use serde::Deserialize;
 
@@ -73,6 +74,7 @@ impl Size {
                 feed_forward: 4096,
                 rope_base: 10_000.0,
                 norm_eps: NORM_EPS,
+                exponentials: Exponentials::Exact,
             },
             Size::Lite => vit::Shape {
                 hidden: 768,
@@ -81,6 +83,7 @@ impl Size {
                 feed_forward: 3072,
                 rope_base: 10_000.0,
                 norm_eps: NORM_EPS,
+                exponentials: Exponentials::Exact,
             },
         }
     }

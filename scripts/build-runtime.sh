@@ -18,7 +18,7 @@ VARIANT="$2"
 DIST="$3"
 TOOLS="${TOOLS:-.tools/bin}"
 PROFILE="${PROFILE:-wasm}"
-THREADS_TOOLCHAIN="${THREADS_TOOLCHAIN:-nightly-2025-11-15}"
+THREADS_TOOLCHAIN="${THREADS_TOOLCHAIN:-nightly-2026-10-20}"
 MAX_MEMORY="${MAX_MEMORY:-2147483648}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LIB="${PACKAGE//-/_}"
@@ -48,9 +48,9 @@ opt=(-O3 -ocimfs=20 --enable-simd --enable-bulk-memory --enable-sign-ext
   --enable-multivalue)
 if [[ "$threads" == true ]]; then
   cargo=(cargo "+$THREADS_TOOLCHAIN")
-  # The crates' rust-version (1.99) is what their aarch64 `sdot` kernels need; the wasm path
-  # builds with the pinned nightly, which predates it.
-  args+=(--features threads -Z build-std=std,panic_abort --ignore-rust-version)
+  # build-std (a std built with atomics) is an unstable Cargo feature, hence the pinned nightly;
+  # RUSTC_BOOTSTRAP would let stable build it but is unsupported.
+  args+=(--features threads -Z build-std=std,panic_abort)
   flags+=('"-C", "target-feature=+atomics,+bulk-memory"' '"-C", "link-arg=--shared-memory"'
     "\"-C\", \"link-arg=--max-memory=$MAX_MEMORY\"" '"-C", "link-arg=--import-memory"'
     '"-C", "link-arg=--export=__wasm_init_tls"' '"-C", "link-arg=--export=__tls_size"'

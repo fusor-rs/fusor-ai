@@ -4,7 +4,7 @@
 )]
 
 use super::{ACTIVATION_MAX, CHUNKS, EXP_RUN, LANES};
-use crate::ops::{exp, gelu_tanh};
+use crate::ops::{exp, exp_fast, gelu_tanh};
 use crate::quant::{BLOCK, CHUNK_INPUTS, QuantFormat, absmax, unpack_lane};
 
 pub(crate) struct Scalar;
@@ -95,14 +95,11 @@ impl super::Backend for Scalar {
     }
 
     fn exp_sweep(x: &mut [f32], shift: f32) -> [f32; EXP_RUN] {
-        let mut sums = [0.0; EXP_RUN];
-        for run in x.as_chunks_mut::<EXP_RUN>().0 {
-            for (value, sum) in run.iter_mut().zip(&mut sums) {
-                *value = exp(*value - shift);
-                *sum += *value;
-            }
-        }
-        sums
+        sweep(x, shift, exp)
+    }
+
+    fn exp_sweep_fast(x: &mut [f32], shift: f32) -> [f32; EXP_RUN] {
+        sweep(x, shift, exp_fast)
     }
 
     fn gelu_tanh(x: [f32; LANES]) -> [f32; LANES] {
@@ -112,6 +109,17 @@ impl super::Backend for Scalar {
     fn dot_f32(left: &[f32], right: &[f32]) -> f32 {
         left.iter().zip(right).map(|(x, y)| x * y).sum()
     }
+}
+
+fn sweep(x: &mut [f32], shift: f32, exponential: impl Fn(f32) -> f32) -> [f32; EXP_RUN] {
+    let mut sums = [0.0; EXP_RUN];
+    for run in x.as_chunks_mut::<EXP_RUN>().0 {
+        for (value, sum) in run.iter_mut().zip(&mut sums) {
+            *value = exponential(*value - shift);
+            *sum += *value;
+        }
+    }
+    sums
 }
 
 /// The chunks of one stored quad block of `format`, widened: chunk `c` holds inputs

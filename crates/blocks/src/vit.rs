@@ -16,6 +16,7 @@ pub mod tower;
 use std::ops::Range;
 
 use bundle::{Load, Store, load_each};
+use kernels::ops::Exponentials;
 use team::Ctx;
 
 use crate::attention::{self, Call, Operand};
@@ -24,7 +25,7 @@ use crate::layer::{Attention, Heads, Layer, LayerSpec, Pass, Stack, Widths};
 use crate::rotary::{Position, Rotary, Rotation};
 pub use preprocessing::Preprocessing;
 
-/// The dimensions of one encoder.
+/// The dimensions of one encoder, and the exponential its attention takes of the scores.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shape {
     pub hidden: usize,
@@ -33,6 +34,7 @@ pub struct Shape {
     pub feed_forward: usize,
     pub rope_base: f32,
     pub norm_eps: f32,
+    pub exponentials: Exponentials,
 }
 
 impl Shape {
@@ -108,6 +110,7 @@ pub fn positions(rows: usize, images: &[(Range<usize>, Grid)]) -> Vec<Position> 
 
 pub struct Vit {
     stack: Stack,
+    exponentials: Exponentials,
 }
 
 impl Vit {
@@ -116,6 +119,7 @@ impl Vit {
         let patches = grid.patches();
         let attention = Patches {
             columns: grid.columns,
+            exponentials: self.exponentials,
         };
         self.stack.forward(ctx, buffers, patches, &attention);
     }
@@ -124,6 +128,7 @@ impl Vit {
 /// Attention among all the patches of one image, rotated by each patch's row and column.
 struct Patches {
     columns: usize,
+    exponentials: Exponentials,
 }
 
 impl Attention for Patches {
@@ -162,6 +167,7 @@ impl Attention for Patches {
             query: operand(0),
             key: operand(1),
             value: operand(2),
+            exponentials: self.exponentials,
         };
         let scratch = &mut pass.buffers.scratch.get(pass.ctx).attention;
         attention::attend(pass.ctx, &call, &pass.buffers.attention, scratch);
@@ -196,6 +202,7 @@ impl Load for Vit {
         let rotary = Rotary::new(Rotation::Grid, shape.rope_base, head_dim);
         Ok(Self {
             stack: Stack::new(shape.heads(), LayerSpec::VIT.rope, rotary, layers),
+            exponentials: shape.exponentials,
         })
     }
 }

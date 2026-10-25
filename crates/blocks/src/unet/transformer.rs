@@ -12,7 +12,7 @@
 use bundle::{Load, Scope, Store, load_each};
 use kernels::Linear;
 use kernels::conv::{Grid, Patches, project_rows};
-use kernels::ops::gelu_erf;
+use kernels::ops::{Exponentials, gelu_erf};
 use team::{Ctx, PerThread, SharedBuf};
 
 use crate::attention::{self, Call, Operand, attend};
@@ -238,6 +238,7 @@ impl Step<'_> {
             query,
             key,
             value,
+            exponentials: Exponentials::Exact,
         };
         let scratch = self.planes.attention_scratch.get(self.ctx);
         attend(self.ctx, &call, self.planes.attention, scratch);

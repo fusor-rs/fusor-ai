@@ -102,16 +102,18 @@ mod tests {
     fn barrier_orders_phases() {
         let team = Team::global();
         let total = team.threads() * 16;
-        let values: SharedBuf = SharedBuf::new(total);
-        let sums: SharedBuf = SharedBuf::new(team.threads());
-        team.run(|ctx| {
-            for index in ctx.split(total, 16) {
-                values.set(index, 1.0);
-            }
-            ctx.barrier();
-            sums.set(ctx.index, values.read().iter().sum());
-        });
-        let expected = 16.0 * team.threads() as f32;
-        assert!(sums.read().iter().all(|&sum| sum == expected));
+        for count in [team.threads(), team.threads().div_ceil(2)] {
+            let values: SharedBuf = SharedBuf::new(total);
+            let sums: SharedBuf = SharedBuf::new(count);
+            team.run_on(count, |ctx| {
+                for index in ctx.split(total, 16) {
+                    values.set(index, 1.0);
+                }
+                ctx.barrier();
+                sums.set(ctx.index, values.read().iter().sum());
+            });
+            let expected = total as f32;
+            assert!(sums.read().iter().all(|&sum| sum == expected));
+        }
     }
 }

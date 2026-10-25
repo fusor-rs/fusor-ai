@@ -8,6 +8,7 @@ use blocks::vit;
 use blocks::vit::merger::{self, Merger};
 use blocks::vit::tower::{self, Ending, Resample, Tower};
 use bundle::{Load, Scope, Store, Tokenizer};
+use kernels::ops::Exponentials;
 use kernels::{Linear, Vector};
 
 use crate::Error;
@@ -34,6 +35,7 @@ const VISION: vit::Shape = vit::Shape {
     feed_forward: 4096,
     rope_base: 10_000.0,
     norm_eps: NORM_EPS,
+    exponentials: Exponentials::Fast,
 };
 
 /// The vision tower: the patch embedding, the learned positions (resampled with the grid's
