@@ -40,8 +40,8 @@ the pull request.
 Each model's repository runs its `just check` and `just runtimes` on GitHub through this
 repository's reusable [Product workflow](.github/workflows/product.yml).
 
-The threaded runtimes need `nightly-2025-11-15` with `rust-src`
-(`rustup toolchain install nightly-2025-11-15 --component rust-src --target
+The threaded runtimes need `nightly-2026-10-20` with `rust-src`
+(`rustup toolchain install nightly-2026-10-20 --component rust-src --target
 wasm32-unknown-unknown`); `scripts/install-tools.sh` installs the pinned wasm-bindgen and
 binaryen into the model repository's `.tools/`.
 

@@ -18,7 +18,7 @@
       "# fixtures/goldens/golden_f32_receipt.safetensors",
       "preprocess 0: 5332992 values, rel 1.18e-4, max abs 1.57e-2",
       "embed 0: 3555328 values, rel 5.55e-7, max abs 6.68e-6",
-      "encode 0: 3555328 values, rel 1.37e-1, max abs 4.72e3",
+      "encode 0: 3555328 values, rel 1.35e-1, max abs 4.59e3",
       "merge 0: 1777664 values, rel 1.05e-2, max abs 2.28e-2",
       "prefill 0: 896 ids identical",
       "prefill 0 hidden: 2048 values, rel 6.09e-2, max abs 8.16e-1",
@@ -33,10 +33,10 @@
       "embed 1: 901120 values, rel 5.19e-7, max abs 3.34e-6",
       "embed 2: 901120 values, rel 5.21e-7, max abs 3.10e-6",
       "embed 3: 901120 values, rel 5.22e-7, max abs 2.98e-6",
-      "encode 0: 901120 values, rel 1.88e-1, max abs 3.92e3",
-      "encode 1: 901120 values, rel 1.68e-1, max abs 5.34e3",
-      "encode 2: 901120 values, rel 1.87e-1, max abs 4.32e3",
-      "encode 3: 901120 values, rel 2.09e-1, max abs 4.66e3",
+      "encode 0: 901120 values, rel 2.08e-1, max abs 4.11e3",
+      "encode 1: 901120 values, rel 1.62e-1, max abs 5.39e3",
+      "encode 2: 901120 values, rel 1.81e-1, max abs 4.34e3",
+      "encode 3: 901120 values, rel 2.21e-1, max abs 4.68e3",
       "merge 0: 450560 values, rel 1.09e-2, max abs 1.77e-2",
       "merge 1: 450560 values, rel 1.07e-2, max abs 1.86e-2",
       "merge 2: 450560 values, rel 1.10e-2, max abs 1.78e-2",
@@ -79,58 +79,58 @@
   },
   "timings": {
     "bench/preprocess": {
-      "value": 32.14,
+      "value": 31.52,
       "unit": "ms",
-      "spread": 0.1449906658369633
+      "spread": 0.004441624365482252
     },
     "bench/embed": {
-      "value": 51.66,
+      "value": 51.24,
       "unit": "ms",
-      "spread": 0.05555555555555565
+      "spread": 0.08430913348946135
     },
     "bench/encode": {
-      "value": 4112.55,
+      "value": 3710.92,
       "unit": "ms",
-      "spread": 0.07200398779346155
+      "spread": 0.04219438845353711
     },
     "bench/merge": {
-      "value": 46.16,
+      "value": 42.46,
       "unit": "ms",
-      "spread": 0.08687175043327552
+      "spread": 0.039802166745171876
     },
     "bench/prefill": {
-      "value": 2997.39,
+      "value": 2782.04,
       "unit": "ms",
-      "spread": 0.1581042173357488
+      "spread": 0.1145777918362066
     },
     "bench/decode": {
-      "value": 11.02,
+      "value": 10.14,
       "unit": "ms",
-      "spread": 0.5480943738656987
+      "spread": 0.014792899408283882
     },
     "bench/reply whole": {
-      "value": 8807.2,
+      "value": 6911.4,
       "unit": "ms",
-      "spread": 0.26989281496957035
+      "spread": 0.054475214862401256
     },
     "web-threaded-relaxed/cases.colors.first": {
-      "value": 4510,
+      "value": 4730,
       "unit": "ms"
     },
     "web-threaded-relaxed/cases.receipt.first": {
-      "value": 6960,
+      "value": 4790,
       "unit": "ms"
     },
     "web-threaded-relaxed/cases.receipt.speed": {
-      "value": 84.2,
+      "value": 88.9,
       "unit": "/s"
     },
     "web-threaded-relaxed/cases.clip.first": {
-      "value": 5140,
+      "value": 3870,
       "unit": "ms"
     },
     "web-threaded-relaxed/revisitMs": {
-      "value": 2802,
+      "value": 3034,
       "unit": "ms"
     }
   }

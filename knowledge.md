@@ -19,8 +19,12 @@ paddle-ocr-wasm's optimization ledger.
   That made a session's first read cost what a warm one does (10.1 → 8.7 s).
 - `wasm-opt -O3` undoes `#[inline(never)]`: its one-caller inlining is unbounded by default
   and folds the kernel back into its caller. `build-runtime.sh` passes `-ocimfs=20`.
-- Shared memory (the threaded builds) costs the same code 12–15 % against a single-threaded
-  module; nothing in the kernels changes that.
+- The threaded builds' toolchain sets the kernels' speed: `nightly-2025-11-15` generated the
+  quad kernel at 88–94 GMAC/s per core on shared memory, where Rust 1.99 and
+  `nightly-2026-10-20` give 108–118, the same as a single-threaded module (kernel harness,
+  four builds back to back). What looked like a 12–15 % cost of shared memory was the
+  compiler; shared memory itself costs the matmul nothing measurable. Measure the kernel
+  before moving `THREADS_TOOLCHAIN`.
 
 ## The kernel is op-bound, not dot-bound
 
@@ -36,6 +40,17 @@ paddle-ocr-wasm's optimization ledger.
 - One row (decode) reads its weights once from memory: stream one quad per pass; four
   interleaved streams run at half the bandwidth.
 
+- The quad kernel's non-dot operations are the format's: per group of 32 inputs and pass
+  of 4 rows × 4 quads, 32 loads, 32 broadcasts, 16 seeds and 48 scaling operations for 128
+  dots (1.0 per dot). One scale per 128 values (`Q7b128`, the weights and the activations
+  alike) cuts it to 0.625 and ran the real kernel 15–22 % faster in the harness and the
+  prefill linears at 226–243 GOPS per worker on the page (203–215 at 32): the receipt read
+  −9 % traced. It is not free: int8 activations per 128 values lose the language model's
+  outlier channels (parity's hidden-state errors +50 %, a next-token count down), and on
+  the vision tower alone the merged tokens' error grows 27 % and a reply drifts from the
+  reference's. Parked with its patch in qwen3-5's ledger; a cheaper scaling needs a format
+  that keeps the activations' resolution.
+
 ## The store is part of the kernel
 
 - Hand the store a whole quad (`[f32; 4]`) and let the caller copy it; a per-value closure
@@ -47,6 +62,11 @@ paddle-ocr-wasm's optimization ledger.
   applied four lanes at a time (`gelu_tanh_lanes`) and chosen by an enum matched inside an
   always-inlined method (`layer::Activation::apply`).
 - Scale in the store as a map over the quad (one vector multiply), not per value.
+
+- The vision ffn_up with the GELU store runs at 160 GOPS per worker against 205 for the
+  other linears of the same depth; the harness puts the GELU's arithmetic at 6 % of the
+  product and does not reproduce the rest. Unexplained; the next bit-exact lead on that
+  shape.
 
 ## Plain Rust vectorizes only with constant lengths
 
@@ -71,6 +91,16 @@ paddle-ocr-wasm's optimization ledger.
 - Fusing the softmax's maximum, exponentials and int8 quantization into one sweep gained
   nothing: the row sits in L1 and the exp polynomial is the cost. Fewer passes over L1 data
   is not a win by itself.
+
+- Where the exponentials feed an int8 quantization (the vision attention's probabilities,
+  7-bit levels per block), an exp within 6e-5 (degree-4 Taylor on `|r| ≤ ln 2 / 2` with
+  fused multiply-adds, no upper clamp since `score − max ≤ 0`) is a hundred times under the
+  quantization step: the page's replies stayed byte-identical, the encoder's parity errors
+  moved within ±10 % in both directions, and the softmax's exp self time fell 42 % (0.42 →
+  0.24 s per worker on the receipt; harness 0.68 → 0.41 ns per value). It is the model's
+  choice (`Exponentials::Fast` on its tower's shape), backed by that model's evidence; the
+  f32 softmaxes keep the exact exp. SIMD128 has no fused form and lands up to 64 ulp away,
+  within the same bound; on x86-64 the scalar backend's fused multiply-add is a library call.
 
 ## Shared preparation, split by group
 
@@ -97,6 +127,26 @@ paddle-ocr-wasm's optimization ledger.
   accepted build's, character for character.
 - Barrier waits summed over threads are the load indicator: they tripled with other work on
   the machine while no kernel changed.
+- The traced build's barrier waits are not the page's. Its clock worker spins on a core
+  beside the eight workers and the engine thread, so on ten performance cores a worker is
+  displaced at every phase: 0.9 s of waits per worker on an 8.3 s traced read of Qwen3.5,
+  1.9 ms per decode token. The uninstrumented page keeps a core per worker and its static
+  shares finish together: claiming the shares dynamically (a static three quarters, the last
+  quarter in chunks from one atomic counter) gained nothing on the page and cost 1–4 % of
+  decode; guided chunks down to one unit cost 13 %. Read the dump's barrier column as the
+  trace's load, and balance nothing without a page measurement.
+- A chain of dependent f32 dots runs at latency, not throughput. The gated delta rule's step
+  (per memory row: a dot, an update, a dot) halved with four rows in flight through
+  `dot_f32_many` and a four-row update (`decay_rows`), each row's arithmetic in its own
+  order (4.45 → 2.23 µs per 128 rows of 128; the rule's self time −36 % in the page), and the
+  softmax's `exp_sweep` gained 8 % from two runs per iteration into the same accumulators in
+  the same order. Both bit-identical: only the interleaving changed.
+
+- The machine's other work (a VM, another session's rustc, macOS daemons on 2–3 cores)
+  moved the receipt's first token by 10–20 % and its spread to 0.3–0.8 s within one session.
+  Interleaved rounds and the dump's self time per op, which the load barely moves, resolved
+  4 % changes that the medians could not. When a format changes, each A/B site keeps its
+  own bundle.
 
 ## Tiles and shapes
 
@@ -108,23 +158,47 @@ paddle-ocr-wasm's optimization ledger.
 - Liftoff is not uniformly slow: a register-only dot loop runs 3.4× slower under it, the
   tile kernels at full speed. What suffers is specific; trace per phase in a cold run
   (cold/warm ratio per layer) rather than assume.
+- Four quads per pass beside four rows is the register optimum too: six quads run 2 %
+  slower, eight at half the rate (32 accumulators spill). The pass's op mix, 32 loads, 32
+  broadcasts and 48 scaling operations per 128 dots, bounds the kernel at 108–122 GMAC/s per
+  core, and the page runs the prefill linears at 93 % of that. What is left is the format's
+  per-block scaling, not the loop.
 
 ## What did not matter
 
 - Cache locality of the activations (which core quantized them), streaming outputs through
   64 MB buffers, fusing sweeps over an L1-resident row, and `wasm-opt`'s passes on the
   kernel code: each ≤ 2 % or nothing. Measure before reorganizing for any of them.
+- The residual store's form (a zip loop over a range slice, a `[f32; 4]`, or one v128 add),
+  the number of activation rows per matmul call (64 to 512, same rate), and a straight-line
+  depthwise convolution over transposed taps (1.3× plain, nothing on shared memory): none
+  moved the page.
+
+- The prefill's chunking (512 + 384 rows for a 896-row prompt): the per-row cost is the same
+  in both chunks; one call of 896 rows would save ≤ 10 ms of fixed costs for 50 MB of
+  buffers.
 
 ## This machine (M4 Pro, Chrome 156), for scaling expectations
 
 - `relaxed_dot_i8x16_i7x16_add_s`: 170 GMAC/s per core, 3 per cycle. f32 multiply and add
   without fused ops: ~28 GMAC/s per core. The vector `exp`: ~14 cycles per four lanes (30
-  operations, two dependent chains). Eight workers get 85–96 GMAC/s each on the real
-  kernels in a shared-memory module.
+  operations, two dependent chains). Built with the pinned `nightly-2026-10-20`, the page
+  runs Qwen3.5's prefill linears at 203–215 GOPS (100–108 GMAC/s) per worker and the vision
+  QK/PV at 178/220 GOPS; 85–96 GMAC/s per worker was `nightly-2025-11-15`'s code.
 - Decode is bound by the 361 MB of weights per token; the layer matmuls stream at 25–30 GB/s
   per worker, the language model head at ~3 GB/s per worker, unexplained and the next lead
   if tokens per second ever matters.
 
+- Workers against cores (10 performance and 4 efficiency, 14 reported; the page's default is
+  8): a pool of 10 cuts the receipt's warm first token 10–12 % (the vision and the prefill
+  scale with the cores) but plain 10 workers lose 10 % of decode, which streams the weights
+  at the memory's bandwidth that eight workers already reach and pays every extra thread at
+  each of its 234 barriers per token. `Team::run_on` keeps the one-row calls on 8 threads
+  of the 10 (the others sleep in Rayon's pool): first token −10 to −12 %, decode at the
+  8-worker rate, bit-exact. 12 workers put shares on efficiency cores: +24 % first token,
+  −32 % decode. The session's first image gains nothing at 10: each worker's isolate
+  compiles its optimized code during that read, and ten compile at once. The default count
+  is the host's: the web reports 14 cores without saying which are performance cores.
 ## Keep the harness in the repository
 
 - A page that replays `kernels::matmul` and `ops::attend` with the page's exact store

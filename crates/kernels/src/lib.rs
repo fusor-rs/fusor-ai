@@ -19,7 +19,7 @@ mod quant;
 pub mod rng;
 mod tensor;
 
-pub use arch::{DOTS, dot_f32, dot_f32_many};
+pub use arch::{DOTS, decay_rows, dot_f32, dot_f32_many};
 pub use linear::{
     COLUMN_ALIGN, Linear, NARROW_COLUMN_ALIGN, SharedRows, project, project_input,
     project_residual, project_residual_input,

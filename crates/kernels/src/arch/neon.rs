@@ -3,15 +3,16 @@
 use std::arch::aarch64::{
     float32x4_t, int8x16_t, int32x4_t, uint8x16_t, vabsq_f32, vaddq_f32, vaddq_s32, vaddvq_f32,
     vaddvq_s32, vandq_u8, vcombine_s8, vcombine_s16, vcvtq_f32_s32, vcvtq_s32_f32, vdivq_f32,
-    vdotq_s32, vdupq_n_f32, vdupq_n_s32, vdupq_n_u8, vfmaq_f32, vgetq_lane_f32, vld1q_dup_s32,
-    vld1q_f32, vld1q_s8, vld1q_u8, vmaxq_f32, vmaxvq_f32, vminq_f32, vmulq_f32, vmulq_n_f32,
-    vqmovn_s16, vqmovn_s32, vreinterpretq_f32_s32, vreinterpretq_s8_s32, vreinterpretq_s8_u8,
-    vrndnq_f32, vshlq_n_s32, vshrq_n_u8, vst1q_f32, vst1q_s8, vsubq_f32,
+    vdotq_s32, vdupq_n_f32, vdupq_n_s32, vdupq_n_u8, vfmaq_f32, vfmsq_f32, vgetq_lane_f32,
+    vld1q_dup_s32, vld1q_f32, vld1q_s8, vld1q_u8, vmaxq_f32, vmaxvq_f32, vminq_f32, vmulq_f32,
+    vmulq_n_f32, vqmovn_s16, vqmovn_s32, vreinterpretq_f32_s32, vreinterpretq_s8_s32,
+    vreinterpretq_s8_u8, vrndnq_f32, vshlq_n_s32, vshrq_n_u8, vst1q_f32, vst1q_s8, vsubq_f32,
 };
 
-use super::{CHUNKS, DOTS, EXP_RUN, LANES};
+use super::{Backend, CHUNKS, DOTS, EXP_RUN, LANES};
 use crate::ops::{
-    EXP_BIAS, EXP_MAX, EXP_MIN, EXP_POLYNOMIAL, GELU_TANH_CUBIC, GELU_TANH_SCALE, LN2_HIGH, LN2_LOW,
+    EXP_BIAS, EXP_MAX, EXP_MIN, EXP_POLYNOMIAL, EXP_TAYLOR, GELU_TANH_CUBIC, GELU_TANH_SCALE,
+    LN2_HIGH, LN2_LOW,
 };
 
 pub(crate) struct Neon;
@@ -179,22 +180,13 @@ impl super::Backend for Neon {
     }
 
     fn exp_sweep(x: &mut [f32], shift: f32) -> [f32; EXP_RUN] {
-        // SAFETY: whole runs of f32s, read then written; NEON loads and stores are unaligned.
-        unsafe {
-            let shift = vdupq_n_f32(shift);
-            let mut sums = [vdupq_n_f32(0.0); EXP_RUN / 4];
-            for run in x.as_chunks_mut::<EXP_RUN>().0 {
-                for (half, sum) in run.as_chunks_mut::<4>().0.iter_mut().zip(&mut sums) {
-                    let exps = exp(vsubq_f32(vld1q_f32(half.as_ptr()), shift));
-                    vst1q_f32(half.as_mut_ptr(), exps);
-                    *sum = vaddq_f32(*sum, exps);
-                }
-            }
-            let [low, high] = sums.map(Self::lanes);
-            [
-                low[0], low[1], low[2], low[3], high[0], high[1], high[2], high[3],
-            ]
-        }
+        // SAFETY: NEON is always available on aarch64; `exp` accesses no memory.
+        sweep(x, shift, |lanes| unsafe { exp(lanes) })
+    }
+
+    fn exp_sweep_fast(x: &mut [f32], shift: f32) -> [f32; EXP_RUN] {
+        // SAFETY: NEON is always available on aarch64; `exp_fast` accesses no memory.
+        sweep(x, shift, |lanes| unsafe { exp_fast(lanes) })
     }
 
     fn gelu_tanh(x: [f32; LANES]) -> [f32; LANES] {
@@ -231,6 +223,31 @@ impl super::Backend for Neon {
         for i in chunks * 4..out.len() {
             for (weight, right) in weights.iter().zip(rights) {
                 out[i] += weight * right[i];
+            }
+        }
+    }
+
+    fn decay_rows(mut rows: [&mut [f32]; DOTS], decay: f32, deltas: [f32; DOTS], key: &[f32]) {
+        assert!(
+            rows.iter().all(|row| row.len() == key.len()),
+            "rows of the key's length"
+        );
+        let chunks = key.len() / 4;
+        for i in 0..chunks {
+            // SAFETY: i·4 + 4 ≤ len for every slice (asserted equal); NEON loads and stores are
+            // unaligned. No fused multiply-add, so the rounding is the scalar's.
+            unsafe {
+                let keys = vld1q_f32(key.as_ptr().add(i * 4));
+                for (row, delta) in rows.iter_mut().zip(deltas) {
+                    let at = row.as_mut_ptr().add(i * 4);
+                    let decayed = vmulq_n_f32(vld1q_f32(at), decay);
+                    vst1q_f32(at, vaddq_f32(decayed, vmulq_n_f32(keys, delta)));
+                }
+            }
+        }
+        for (row, delta) in rows.into_iter().zip(deltas) {
+            for (value, key) in row[chunks * 4..].iter_mut().zip(&key[chunks * 4..]) {
+                *value = decay * *value + delta * key;
             }
         }
     }
@@ -278,6 +295,29 @@ impl super::Backend for Neon {
     }
 }
 
+fn sweep(
+    x: &mut [f32],
+    shift: f32,
+    exponential: impl Fn(float32x4_t) -> float32x4_t,
+) -> [f32; EXP_RUN] {
+    // SAFETY: whole runs of f32s, read then written; NEON loads and stores are unaligned.
+    unsafe {
+        let shift = vdupq_n_f32(shift);
+        let mut sums = [vdupq_n_f32(0.0); EXP_RUN / 4];
+        for run in x.as_chunks_mut::<EXP_RUN>().0 {
+            for (half, sum) in run.as_chunks_mut::<4>().0.iter_mut().zip(&mut sums) {
+                let exps = exponential(vsubq_f32(vld1q_f32(half.as_ptr()), shift));
+                vst1q_f32(half.as_mut_ptr(), exps);
+                *sum = vaddq_f32(*sum, exps);
+            }
+        }
+        let [low, high] = sums.map(Neon::lanes);
+        [
+            low[0], low[1], low[2], low[3], high[0], high[1], high[2], high[3],
+        ]
+    }
+}
+
 /// `ops::exp` on four lanes, operation for operation (no fused multiply-adds).
 ///
 /// # Safety
@@ -295,7 +335,34 @@ unsafe fn exp(x: float32x4_t) -> float32x4_t {
         }
         let poly = vmulq_f32(vmulq_f32(poly, remainder), remainder);
         let poly = vaddq_f32(vaddq_f32(poly, remainder), vdupq_n_f32(1.0));
-        let scale = vshlq_n_s32::<23>(vaddq_s32(vcvtq_s32_f32(exponent), vdupq_n_s32(EXP_BIAS)));
-        vmulq_f32(poly, vreinterpretq_f32_s32(scale))
+        vmulq_f32(poly, power_of_two(exponent))
+    }
+}
+
+/// `ops::exp_fast` on four lanes, operation for operation (its multiply-adds fused, as the
+/// scalar `mul_add` is).
+///
+/// # Safety
+/// NEON is always available on aarch64; no memory is accessed.
+unsafe fn exp_fast(x: float32x4_t) -> float32x4_t {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        let x = vmaxq_f32(x, vdupq_n_f32(EXP_MIN));
+        let exponent = vrndnq_f32(vmulq_n_f32(x, std::f32::consts::LOG2_E));
+        let remainder = vfmsq_f32(x, exponent, vdupq_n_f32(std::f32::consts::LN_2));
+        let mut poly = vdupq_n_f32(EXP_TAYLOR[0]);
+        for &coefficient in &EXP_TAYLOR[1..] {
+            poly = vfmaq_f32(vdupq_n_f32(coefficient), poly, remainder);
+        }
+        vmulq_f32(poly, power_of_two(exponent))
+    }
+}
+
+// The lanes of `exponent` are integral.
+unsafe fn power_of_two(exponent: float32x4_t) -> float32x4_t {
+    // SAFETY: forwarded from the caller.
+    unsafe {
+        let bits = vshlq_n_s32::<23>(vaddq_s32(vcvtq_s32_f32(exponent), vdupq_n_s32(EXP_BIAS)));
+        vreinterpretq_f32_s32(bits)
     }
 }

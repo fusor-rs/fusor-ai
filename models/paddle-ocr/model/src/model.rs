@@ -9,6 +9,7 @@ use blocks::vit;
 use blocks::vit::merger::{self, Merger};
 use blocks::vit::tower::{self, Ending, Resample, Tower};
 use bundle::{Load, Store, Tokenizer};
+use kernels::ops::Exponentials;
 use media::image::Filter;
 
 use crate::Error;
@@ -40,6 +41,7 @@ pub const VISION_SHAPE: vit::Shape = vit::Shape {
     feed_forward: VISION_FEED_FORWARD,
     rope_base: 10_000.0,
     norm_eps: 1e-6,
+    exponentials: Exponentials::Exact,
 };
 /// SigLIP's 4304 MLP units, padded with zero units to whole quantization blocks
 /// (`gelu(0) = 0`, so they add nothing).

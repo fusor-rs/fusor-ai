@@ -31,6 +31,9 @@ pub const MAX_ROWS: usize = 16_384;
 pub const MAX_TOKENS: usize = 8_192;
 /// Prompt rows per call of the language model's stack.
 const PREFILL_ROWS: usize = 512;
+// Decode streams the weights at the memory's bandwidth, which eight workers reach, and more
+// threads only slow it (measured on the page; knowledge.md).
+const DECODE_THREADS: usize = 8;
 
 /// The user's next message, and how to reply to it.
 #[derive(Debug, Clone, Deserialize)]
@@ -412,7 +415,12 @@ impl Engine {
         let language = &self.model.language;
         let (state, buffers, prediction) = (&self.state, &self.buffers, &self.prediction);
         let last = rows.positions.len() - 1;
-        self.team.run(|ctx| {
+        let threads = if rows.positions.len() == 1 {
+            self.team.threads().min(DECODE_THREADS)
+        } else {
+            self.team.threads()
+        };
+        self.team.run_on(threads, |ctx| {
             language.stack.forward(ctx, state, buffers, rows);
             let hidden = &buffers.stack.hidden.read()[last * HIDDEN..(last + 1) * HIDDEN];
             let norm = (&language.norm, NORM_EPS);
