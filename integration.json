@@ -522,7 +522,7 @@
       {
         "file": "fixtures/goldens/golden_f32_trip.safetensors",
         "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/spark-x2-6/golden_f32_trip.safetensors",
-        "sha256": "sha256:7c41b28376b3b7d3d449c2054b99a77877f2cdc22e76395d9f00ef60ae535365"
+        "sha256": "sha256:4f1e8c635b9487df5eaf4458a51ec66beeeedbb94dfe174e22d453557276c7ba"
       }
     ],
     "build": [

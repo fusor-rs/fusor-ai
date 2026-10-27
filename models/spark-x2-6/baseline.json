@@ -1,0 +1,86 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model": "sha256:e0b4e743dfbe50b0b78aa02d4d0e15eb8139465f5eff030d9a2ddd81361a64da"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "# fixtures/goldens/golden_f32_colors.safetensors",
+      "prefill 0: 28 ids identical",
+      "prefill 0 hidden: 2048 values, rel 5.76e-2, max abs 4.48e-1",
+      "prefill 0 logits: 131072 values, rel 1.04e-2, max abs 8.80e-1",
+      "decode 0 hidden: 30720 values, rel 5.37e-2, max abs 1.31e0 (14 of 15 next tokens the reference's)",
+      "prefill 1: 113 ids identical",
+      "prefill 1 hidden: 2048 values, rel 9.17e-2, max abs 8.41e-1",
+      "prefill 1 logits: 131072 values, rel 8.16e-3, max abs 9.99e-1",
+      "decode 1 hidden: 194560 values, rel 5.07e-2, max abs 1.74e0 (93 of 95 next tokens the reference's)",
+      "# fixtures/goldens/golden_f32_trip.safetensors",
+      "prefill 0: 97 ids identical",
+      "prefill 0 hidden: 2048 values, rel 1.14e-1, max abs 1.05e0",
+      "prefill 0 logits: 131072 values, rel 1.36e-2, max abs 1.40e0",
+      "decode 0 hidden: 598016 values, rel 5.06e-2, max abs 1.46e0 (288 of 292 next tokens the reference's)"
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      1
+    ],
+    "outputs": {
+      "web-single/colors.txt": "sha256:083e07bbdccd0fa11a72483c7733213b642e571fd70e9a161b6b1afc00d19cbf",
+      "web-single/trip.txt": "sha256:ecf22d546acaecf6d896c7ecaa92934bac892c2c66fbc43e0134bf8c8cf69139"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      0
+    ],
+    "outputs": {
+      "web-threaded-relaxed/colors.txt": "sha256:8758dda6fd610dd093bec332817c895f76325c105c50140de528dcdbfb7a2124",
+      "web-threaded-relaxed/trip.txt": "sha256:d1e5c8b9a3c301bcf529dd95bc8ca247914d91704ce642e54e59f4f05b29dd51"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "timings": {
+    "bench/prefill": {
+      "value": 104.34,
+      "unit": "ms",
+      "spread": 0.3686026451983899
+    },
+    "bench/decode": {
+      "value": 14.54,
+      "unit": "ms",
+      "spread": 0.2916093535075654
+    },
+    "bench/reply whole": {
+      "value": 368.1,
+      "unit": "ms",
+      "spread": 0.2969301820157566
+    },
+    "web-threaded-relaxed/cases.colors.first": {
+      "value": 3450,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/cases.colors.speed": {
+      "value": 88.4,
+      "unit": "/s"
+    },
+    "web-threaded-relaxed/cases.trip.first": {
+      "value": 250,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/revisitMs": {
+      "value": 2815,
+      "unit": "ms"
+    }
+  }
+}
