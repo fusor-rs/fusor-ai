@@ -135,6 +135,7 @@ ming-wasm is a complete worked example, and [AGENTS.md](AGENTS.md#repository) sa
 | | `indra-ocr`, `indra-ocr-compile` | Datalab's Indra OCR and the compiler that writes its bundles from its ONNX networks and language models |
 | | `d3`, `d3-compile` | vLLM Semantic Router's d3-nano and d3-lite (Decision 3.0), and the compiler that writes either's bundles |
 | | `qwen3-5`, `qwen3-5-compile` | Qwen's Qwen3.5-2B and the compiler that writes its bundles |
+| | `spark-x2-6`, `spark-x2-6-compile` | XHToken's Spark-X2.6-1.7B and the compiler that writes its bundles |
 | Browser | `packages/host` | `loader.js` (build choice, part streaming, OPFS cache), `worker.js` (the shared half of a model's engine worker: loading with stale-part eviction, the clamp-free yield, error routing, the request count), `compute.js` (the compute-worker pool), `thread-host.js` and the `protocol.js` they share |
 | | `packages/e2e` | `kit.mjs`: the shared half of a product's headless Chrome run (its flags, the local server, a fresh profile with every request recorded, the revisit check, the results file and exit status) |
 | | `packages/ui` | `base.css`: the palette, layout, masthead, cards, controls and footer every product's page shares, linked before its own `app.css` |

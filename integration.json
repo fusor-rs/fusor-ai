@@ -510,5 +510,46 @@
     "outputs": [
       ".txt"
     ]
+  },
+  "spark-x2-6": {
+    "product": "spark-x2-6-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/golden_f32_colors.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/spark-x2-6/golden_f32_colors.safetensors",
+        "sha256": "sha256:605c9b5273a23f8189e517e6d92a4cf298d144c730bad0db8090ad7be5979ffc"
+      },
+      {
+        "file": "fixtures/goldens/golden_f32_trip.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/spark-x2-6/golden_f32_trip.safetensors",
+        "sha256": "sha256:7c41b28376b3b7d3d449c2054b99a77877f2cdc22e76395d9f00ef60ae535365"
+      }
+    ],
+    "build": [
+      "just model",
+      "just runtimes",
+      "just page",
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model"
+    ],
+    "parity": "target/release/spark-x2-6 parity dist/model fixtures/goldens/golden_f32_colors.safetensors fixtures/goldens/golden_f32_trip.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single"
+    ],
+    "e2e": [
+      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "bench": "target/release/spark-x2-6 bench dist/model fixtures/conversations.json colors --threads 8",
+    "page": [
+      "cases.colors.first",
+      "cases.colors.speed",
+      "cases.trip.first",
+      "revisitMs"
+    ],
+    "outputs": [
+      ".txt"
+    ]
   }
 }
