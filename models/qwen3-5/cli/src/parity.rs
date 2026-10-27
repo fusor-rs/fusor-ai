@@ -203,7 +203,7 @@ fn conversation(engine: &mut Engine, media: &[Media], goldens: &Goldens) -> Resu
             text: said.message.text.clone(),
             media: media.kept(),
         };
-        let prompt = engine.prompt(&history, &turn, said.message.thinking)?;
+        let prompt = engine.prompt(&said.message.system, &history, &turn, said.message.thinking)?;
         let ids = prompt.ids.iter().map(|&id| i64::from(id));
         ensure!(
             ids.eq(golden.ids.iter().copied()),

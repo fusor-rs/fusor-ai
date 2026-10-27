@@ -1,5 +1,6 @@
-//! A conversation's prompt, byte for byte as the reference renders it (the chat template, without
-//! a system prompt or tools, and the processor's placeholder expansion): each turn's user message
+//! A conversation's prompt, byte for byte as the reference renders it (the chat template and the
+//! processor's placeholder expansion): its system block, with its tools, when it has one; each
+//! turn's user message
 //! with its images' tokens, then its videos' groups, each after its time, then its text; each
 //! earlier reply as the template writes it back (its reasoning dropped); and the reply's opener,
 //! its thinking block empty unless the turn thinks.
@@ -9,6 +10,7 @@ use std::ops::Range;
 use blocks::rotary::Position;
 use blocks::vit::{self, Grid};
 use bundle::{Tokenizer, python};
+use serde::Deserialize;
 
 use crate::Error;
 use crate::media::Item;
@@ -25,6 +27,18 @@ pub const ENDS: [u32; 2] = [248_046, 248_044];
 /// What follows the assistant's role when a turn thinks, and when it does not.
 const THINKING: &str = "<think>\n";
 const NOT_THINKING: &str = "<think>\n\n</think>\n\n";
+/// What the template writes before a system block's tools, and after them.
+const TOOLS_START: &str = "# Tools\n\nYou have access to the following functions:\n\n<tools>";
+const TOOLS_END: &str = include_str!("tools_end.txt");
+
+/// What a conversation begins with, before its first turn: the template's system block.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct System {
+    pub text: String,
+    /// Each tool as the template's `tojson` writes it, one JSON object a line.
+    #[serde(default)]
+    pub tools: Vec<String>,
+}
 
 /// A user's message: its text and media.
 #[derive(Debug, Clone)]
@@ -59,11 +73,12 @@ impl Prompt {
     /// When a message holds an image or video placeholder of its own.
     pub fn new(
         tokenizer: &Tokenizer,
+        system: &System,
         history: &[Replied],
         next: &Turn,
         thinking: bool,
     ) -> Result<Self, Error> {
-        let mut text = String::new();
+        let mut text = system.written();
         let mut grids = Vec::new();
         for Replied { turn, reply } in history {
             text.push_str(&user(turn, &mut grids)?);
@@ -90,6 +105,29 @@ impl Prompt {
     pub fn reply_position(&self, index: usize) -> Position {
         let last = self.positions.last().expect("a prompt has rows");
         Position::uniform(last.temporal + 1 + index)
+    }
+}
+
+impl System {
+    /// The block as the template writes it: its tools, then its text; nothing when it has
+    /// neither.
+    fn written(&self) -> String {
+        let text = python::strip(&self.text);
+        let content = if self.tools.is_empty() {
+            if text.is_empty() {
+                return String::new();
+            }
+            text.to_owned()
+        } else {
+            let tools: String = self.tools.iter().map(|tool| format!("\n{tool}")).collect();
+            let text = if text.is_empty() {
+                String::new()
+            } else {
+                format!("\n\n{text}")
+            };
+            format!("{TOOLS_START}{tools}{TOOLS_END}{text}")
+        };
+        format!("<|im_start|>system\n{content}<|im_end|>\n")
     }
 }
 

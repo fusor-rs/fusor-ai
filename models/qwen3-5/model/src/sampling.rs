@@ -16,6 +16,16 @@ use crate::session::Message;
 /// The model card's `top_k`, in every mode.
 const PRESET_TOP_K: usize = 20;
 
+/// What a reply must keep to, held by its host: a grammar or a JSON schema, token by token. A
+/// reply with none draws from every token.
+pub trait Constraint: Send {
+    /// Leaves the tokens the reply may take next, setting every other one's logit to negative
+    /// infinity.
+    fn mask(&mut self, logits: &mut [f32]);
+    /// The token the reply took.
+    fn take(&mut self, token: u32);
+}
+
 /// What a conversation holds: text only, or images or videos too.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Content {

@@ -20,6 +20,8 @@
 //!
 //! A final norm after the last layer, where a model has one, is the model's.
 
+use std::ops::Range;
+
 use bundle::{Load, Store, load_each};
 use kernels::ops::attend;
 use team::{Ctx, SharedBuf};
@@ -114,6 +116,13 @@ pub struct KvCache {
     values: SharedBuf,
 }
 
+/// A cache's first rows' keys and values, every layer's and head's, copied out to put back.
+pub(crate) struct KvRows {
+    rows: usize,
+    keys: Vec<f32>,
+    values: Vec<f32>,
+}
+
 impl KvCache {
     pub fn new(shape: Shape, capacity: usize) -> Self {
         Self::of(shape.layers, shape.heads(), capacity)
@@ -185,6 +194,48 @@ impl KvCache {
                 );
             }
         }
+    }
+
+    /// The first `rows` rows' keys and values, to put back with `put_rows`.
+    pub(crate) fn copy_rows(&self, rows: usize) -> KvRows {
+        assert!(
+            rows <= self.capacity,
+            "{rows} rows don't fit a cache of {}",
+            self.capacity
+        );
+        let (keys, values) = (self.keys.read(), self.values.read());
+        let mut copied = KvRows {
+            rows,
+            keys: Vec::new(),
+            values: Vec::new(),
+        };
+        for block in self.blocks(rows) {
+            copied.keys.extend_from_slice(&keys[block.clone()]);
+            copied.values.extend_from_slice(&values[block]);
+        }
+        copied
+    }
+
+    /// Puts back the rows `copy_rows` copied, as they were.
+    pub(crate) fn put_rows(&mut self, copied: &KvRows) {
+        let width = copied.rows * self.heads.head_dim;
+        let blocks = self.blocks(copied.rows);
+        let (keys, values) = (self.keys.get_mut(), self.values.get_mut());
+        for (index, block) in blocks.enumerate() {
+            let from = index * width..(index + 1) * width;
+            keys[block.clone()].copy_from_slice(&copied.keys[from.clone()]);
+            values[block].copy_from_slice(&copied.values[from]);
+        }
+    }
+
+    // Where the first `rows` rows lie in the cache, a block for each layer's key head, in order.
+    fn blocks(&self, rows: usize) -> impl Iterator<Item = Range<usize>> + use<> {
+        let (head_dim, capacity) = (self.heads.head_dim, self.capacity);
+        let heads = self.keys.read().len() / (capacity * head_dim);
+        (0..heads).map(move |head| {
+            let first = head * capacity * head_dim;
+            first..first + rows * head_dim
+        })
     }
 
     fn offset(&self, layer: usize, kv_head: usize, position: usize) -> usize {

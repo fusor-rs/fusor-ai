@@ -13,8 +13,9 @@
 //! layer is the model's.
 //!
 //! `Hybrid::forward` runs inside a team run. Calls read consecutive rows of one sequence from its
-//! first, or from a row whose state was saved (`State::save`, `State::restore`): the delta rule's
-//! state is the sum of every row before. The attention layers see keys under each call's mask;
+//! first, or from a row whose state was saved (`State::save`, `State::restore`), or from the end
+//! of a prefix kept with its attention rows, after other sequences were read (`State::keep_prefix`,
+//! `State::restore_prefix`): the delta rule's state is the sum of every row before. The attention layers see keys under each call's mask;
 //! under `Mask::Full` a row also sees the later rows of its own call, so a sequence read that way
 //! is read in one call.
 
@@ -29,7 +30,7 @@ use crate::layer::{
     input, prepare,
 };
 use crate::rotary::{Position, Rotary};
-use crate::transformer::{KvCache, Mask, Span};
+use crate::transformer::{KvCache, KvRows, Mask, Span};
 pub use attention::Shape as AttentionShape;
 pub use delta::Shape as DeltaShape;
 
@@ -123,6 +124,23 @@ impl State {
         saved.0.copy_from(&self.delta);
     }
 
+    /// The state after the first `rows` rows read, to read another sequence that begins with
+    /// them on from there, whatever was read in between.
+    pub fn keep_prefix(&self, shape: &Shape, rows: usize) -> Prefix {
+        let mut saved = Saved::new(shape);
+        self.save(&mut saved);
+        Prefix {
+            saved,
+            attention: self.cache.copy_rows(rows),
+        }
+    }
+
+    /// Goes back to the state after `prefix`'s rows, to read on from the row after them.
+    pub fn restore_prefix(&mut self, prefix: &Prefix) {
+        self.restore(&prefix.saved);
+        self.cache.put_rows(&prefix.attention);
+    }
+
     /// Goes back to the state `saved` kept, to read on from the row after the rows read then:
     /// the attention layers' keys of later rows are overwritten as those rows are read again.
     pub fn restore(&mut self, saved: &Saved) {
@@ -132,6 +150,13 @@ impl State {
 
 /// The delta rule's part of a `State`, kept to read a sequence on again from where it was.
 pub struct Saved(delta::State);
+
+/// The state after a sequence's first rows: the delta rule's, and the attention layers' keys
+/// and values of those rows, which a sequence read after them overwrites.
+pub struct Prefix {
+    saved: Saved,
+    attention: KvRows,
+}
 
 impl Saved {
     pub fn new(shape: &Shape) -> Self {

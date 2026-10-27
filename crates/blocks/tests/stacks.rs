@@ -3,6 +3,8 @@
 
 mod support;
 
+use std::ops::Range;
+
 use blocks::dit::{self, Dit, Sequences};
 use blocks::hybrid::{self, AttentionShape, DeltaShape, Hybrid};
 use blocks::lm::{self, Embedding, Lm, Positions, Reader, Rows};
@@ -437,18 +439,22 @@ const HYBRID: HybridDims = HybridDims {
 };
 const HYBRID_SECTIONS: [usize; 3] = [2, 1, 1];
 
-/// Whether each call is first read on other rows, the state saved before and restored after.
+/// Whether each call is first read on other rows, the state saved before and restored after; or
+/// the whole sequence reversed is read from its first row before each call, the prefix before
+/// the call kept with its attention rows and put back.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Detour {
     None,
     EveryCall,
+    Prefix,
 }
 
 /// Each mask the hybrid stack reads under, the rows per call and the detours: a sequence read with
 /// every row seeing every other is read in one call.
-const HYBRID_CALLS: [(transformer::Mask, usize, Detour); 3] = [
+const HYBRID_CALLS: [(transformer::Mask, usize, Detour); 4] = [
     (transformer::Mask::Causal, CALL, Detour::None),
     (transformer::Mask::Causal, CALL, Detour::EveryCall),
+    (transformer::Mask::Causal, CALL, Detour::Prefix),
     (transformer::Mask::Full, ROWS, Detour::None),
 ];
 
@@ -541,26 +547,40 @@ fn read_hybrid(
     let mut saved = hybrid::Saved::new(shape);
     let mut buffers = shape.buffers(call, team.threads());
     let reversed: Vec<f32> = input.rchunks(hidden).flatten().copied().collect();
-    let mut output = Vec::new();
-    for first in (0..ROWS).step_by(call) {
-        let rows = first..ROWS.min(first + call);
+    let calls: Vec<Range<usize>> = (0..ROWS)
+        .step_by(call)
+        .map(|first| first..ROWS.min(first + call))
+        .collect();
+    let mut read = |state: &hybrid::State, from: &[f32], rows: &Range<usize>| {
+        buffers.stack.hidden.get_mut()[..rows.len() * hidden]
+            .copy_from_slice(&from[rows.start * hidden..rows.end * hidden]);
         let rows_call = hybrid::Rows {
-            first,
+            first: rows.start,
             positions: &positions[rows.clone()],
             mask,
         };
-        let mut read = |state: &hybrid::State, from: &[f32]| {
-            buffers.stack.hidden.get_mut()[..rows.len() * hidden]
-                .copy_from_slice(&from[rows.start * hidden..rows.end * hidden]);
-            team.run(|ctx| hybrid.forward(ctx, state, &buffers, &rows_call));
-        };
-        if detour == Detour::EveryCall {
-            state.save(&mut saved);
-            read(&state, &reversed);
-            state.restore(&saved);
+        team.run(|ctx| hybrid.forward(ctx, state, &buffers, &rows_call));
+        buffers.stack.hidden.read()[..rows.len() * hidden].to_vec()
+    };
+    let mut output = Vec::new();
+    for rows in &calls {
+        match detour {
+            Detour::None => {}
+            Detour::EveryCall => {
+                state.save(&mut saved);
+                read(&state, &reversed, rows);
+                state.restore(&saved);
+            }
+            Detour::Prefix => {
+                let prefix = state.keep_prefix(shape, rows.start);
+                state.clear();
+                for other in &calls {
+                    read(&state, &reversed, other);
+                }
+                state.restore_prefix(&prefix);
+            }
         }
-        read(&state, input);
-        output.extend_from_slice(&buffers.stack.hidden.read()[..rows.len() * hidden]);
+        output.extend(read(&state, input, rows));
     }
     output
 }

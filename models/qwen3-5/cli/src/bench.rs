@@ -28,7 +28,7 @@ pub fn run(
         text: message.text.clone(),
         media: media.kept(),
     };
-    let prompt = engine.prompt(&[], &turn, message.thinking)?;
+    let prompt = engine.prompt(&message.system, &[], &turn, message.thinking)?;
     let item = media.items().next();
     let embedded = item.map(|patches| engine.embed(patches));
     let encoded = item

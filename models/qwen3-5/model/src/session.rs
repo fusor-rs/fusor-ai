@@ -22,13 +22,15 @@ use team::Team;
 use crate::media::{self, IMAGE, Media};
 use crate::model::{HIDDEN, LANGUAGE, MERGER, Model, NORM_EPS, TOWER, VOCABULARY};
 use crate::pipeline::Stage;
-use crate::prompt::{ENDS, Prompt, Replied, Turn, reasoned};
-use crate::sampling::{Content, Sampler, Sampling};
+use crate::prompt::{ENDS, Prompt, Replied, System, Turn, reasoned};
+use crate::sampling::{Constraint, Content, Sampler, Sampling};
 
 /// The longest conversation, in rows: every turn's text, media and reply.
 pub const MAX_ROWS: usize = 16_384;
 /// The longest reply, in tokens.
 pub const MAX_TOKENS: usize = 8_192;
+/// The most prompts' first rows kept at once, each with its attention layers' keys and values.
+const KEPT_PROMPTS: usize = 4;
 /// Prompt rows per call of the language model's stack.
 const PREFILL_ROWS: usize = 512;
 // Decode streams the weights at the memory's bandwidth, which eight workers reach, and more
@@ -39,6 +41,9 @@ const DECODE_THREADS: usize = 8;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Message {
     pub text: String,
+    /// The conversation's system block, the same on each of its turns.
+    #[serde(default)]
+    pub system: System,
     /// Whether the reply reasons first, in a thinking block.
     #[serde(default)]
     pub thinking: bool,
@@ -89,7 +94,16 @@ pub struct Engine {
     /// The row of the last reply's opener, the state before it in `saved`; none in a new
     /// conversation.
     resume: Option<usize>,
+    /// Prompts' first rows, kept for new conversations whose prompts begin with them, the last
+    /// used first.
+    kept: Vec<Kept>,
     job: Option<Job>,
+}
+
+/// A prompt's first rows, and the state after them.
+struct Kept {
+    ids: Vec<u32>,
+    prefix: hybrid::Prefix,
 }
 
 struct Job {
@@ -99,8 +113,12 @@ struct Job {
     tokens: Vec<f32>,
     seen: usize,
     prompt: Prompt,
+    system: System,
+    /// The prompt's first rows to keep, from `Engine::keep`.
+    keep: Option<usize>,
     thinking: bool,
     sampler: Sampler,
+    constraint: Option<Box<dyn Constraint>>,
     reply: Vec<u32>,
     /// The reply's text so far, its end excluded.
     text: String,
@@ -124,6 +142,7 @@ impl bundle::Engine for Engine {
             team,
             history: Vec::new(),
             resume: None,
+            kept: Vec::new(),
             job: None,
         })
     }
@@ -188,14 +207,15 @@ impl Engine {
         self.merger.tokens.read()[..len].to_vec()
     }
 
-    /// The prompt asking for the reply to `next`, after `history`.
+    /// The prompt asking for the reply to `next`, after `system` and `history`.
     pub fn prompt(
         &self,
+        system: &System,
         history: &[Replied],
         next: &Turn,
         thinking: bool,
     ) -> Result<Prompt, Error> {
-        Prompt::new(&self.model.tokenizer, history, next, thinking)
+        Prompt::new(&self.model.tokenizer, system, history, next, thinking)
     }
 
     /// The text of reply tokens.
@@ -203,18 +223,19 @@ impl Engine {
         self.model.tokenizer.decode(ids)
     }
 
-    /// Forgets the conversation, to start a new one.
+    /// Forgets the conversation, to start a new one; the rows `keep` kept stay.
     pub fn reset(&mut self) {
         self.job = None;
         self.history.clear();
         self.resume = None;
     }
 
-    /// The prompt through the language model from the last reply's opener (from its first row
-    /// in a new conversation), the media rows from there on `tokens`, in order: the state saved
-    /// at the prompt's opener, and the last row's prediction.
+    /// The prompt through the language model from the last reply's opener (in a new
+    /// conversation, from the end of the longest kept prompt it begins with, or its first row),
+    /// the media rows from there on `tokens`, in order: the state saved at the prompt's opener,
+    /// and the last row's prediction.
     pub fn prefill(&mut self, prompt: &Prompt, tokens: &[f32]) -> Prediction {
-        self.read_prompt(prompt, tokens);
+        self.read_prompt(prompt, tokens, None);
         self.prediction()
     }
 
@@ -252,7 +273,7 @@ impl Engine {
         let plan = Plan {
             media: job.media.plan(),
             prompt_tokens: job.prompt.ids.len(),
-            read_tokens: job.prompt.ids.len() - self.resume.unwrap_or(0),
+            read_tokens: job.prompt.ids.len() - self.first_unread(&job.prompt),
             max_tokens: job.max_tokens,
             sampling: job.sampler.sampling(),
         };
@@ -262,7 +283,7 @@ impl Engine {
 
     /// The job replying to `turn`, from `message`, its media `media`.
     fn job(&self, message: &Message, turn: Turn, media: Media) -> Result<Job, Error> {
-        let prompt = self.prompt(&self.history, &turn, message.thinking)?;
+        let prompt = self.prompt(&message.system, &self.history, &turn, message.thinking)?;
         let rows = prompt.ids.len();
         if rows >= MAX_ROWS {
             return Err(Error::Request(format!(
@@ -287,8 +308,11 @@ impl Engine {
             tokens: Vec::new(),
             seen: 0,
             prompt,
+            system: message.system.clone(),
+            keep: None,
             thinking: message.thinking,
             sampler: Sampler::new(sampling, message.seed),
+            constraint: None,
             reply: Vec::new(),
             text: String::new(),
             max_tokens: max_tokens.clamp(1, MAX_TOKENS).min(MAX_ROWS - rows),
@@ -307,7 +331,7 @@ impl Engine {
             job.seen += 1;
             Stage::Merge
         } else if job.reply.is_empty() {
-            self.read_prompt(&job.prompt, &job.tokens);
+            self.read_prompt(&job.prompt, &job.tokens, job.keep);
             self.draw(&mut job);
             Stage::Prefill
         } else {
@@ -326,8 +350,60 @@ impl Engine {
         Ok(progress)
     }
 
+    /// Holds the reply `start` began to `constraint`, from its first token.
+    ///
+    /// # Errors
+    /// When no reply is in progress.
+    pub fn constrain(&mut self, constraint: Box<dyn Constraint>) -> Result<(), Error> {
+        let job = self
+            .job
+            .as_mut()
+            .ok_or_else(|| Error::Request("no reply in progress".into()))?;
+        job.constraint = Some(constraint);
+        Ok(())
+    }
+
+    /// Keeps the state after the rows of the prompt `start` began that its system block and
+    /// `prefix`, the start of its message's text, read as, for every new conversation after it
+    /// whose prompt begins with the same rows: such a prompt is read on from there. A text-only conversation's first
+    /// turn is kept; any other is read as it was.
+    ///
+    /// # Errors
+    /// When no reply is in progress, or `prefix` doesn't read.
+    pub fn keep(&mut self, prefix: &str) -> Result<(), Error> {
+        let alone = Turn {
+            text: prefix.to_owned(),
+            media: Vec::new(),
+        };
+        let job = self
+            .job
+            .as_ref()
+            .ok_or_else(|| Error::Request("no reply in progress".into()))?;
+        let read_alone = self.prompt(&job.system, &[], &alone, job.thinking)?;
+        let rows = read_alone
+            .ids
+            .iter()
+            .zip(&job.prompt.ids)
+            .take_while(|(alone, read)| alone == read)
+            .count();
+        let first_turn = self.resume.is_none() && job.prompt.media.is_empty();
+        let job = self
+            .job
+            .as_mut()
+            .expect("a reply is in progress, as checked above");
+        job.keep = (first_turn && rows < job.prompt.opener).then_some(rows);
+        Ok(())
+    }
+
     fn draw(&mut self, job: &mut Job) {
-        let token = job.sampler.draw(self.prediction.logits.get_mut());
+        let logits = self.prediction.logits.get_mut();
+        if let Some(constraint) = &mut job.constraint {
+            constraint.mask(logits);
+        }
+        let token = job.sampler.draw(logits);
+        if let Some(constraint) = &mut job.constraint {
+            constraint.take(token);
+        }
         job.reply.push(token);
     }
 
@@ -341,16 +417,24 @@ impl Engine {
         }
     }
 
-    /// The prompt's rows from the last reply's opener (its first in a new conversation), in calls
-    /// of up to `PREFILL_ROWS` rows, the last before the prompt's opener ending there and
-    /// saving the state; the media rows read are `tokens`, in order.
-    fn read_prompt(&mut self, prompt: &Prompt, tokens: &[f32]) {
-        let mut first = match self.resume {
-            Some(row) => {
+    /// The prompt's rows from the last reply's opener (in a new conversation, from the end of
+    /// the kept rows it begins with, or its first), in calls of up to `PREFILL_ROWS` rows, the
+    /// last before the prompt's opener ending there and saving the state, and the last of the
+    /// first `keep` rows ending there and keeping it; the media rows read are `tokens`, in order.
+    fn read_prompt(&mut self, prompt: &Prompt, tokens: &[f32], keep: Option<usize>) {
+        let longest = self.longest_kept(prompt);
+        let mut first = match (self.resume, longest) {
+            (Some(row), _) => {
                 self.state.restore(&self.saved);
                 row
             }
-            None => {
+            (None, Some(index)) => {
+                self.kept[..=index].rotate_right(1);
+                let used = &self.kept[0];
+                self.state.restore_prefix(&used.prefix);
+                used.ids.len()
+            }
+            (None, None) => {
                 self.state.clear();
                 0
             }
@@ -358,7 +442,13 @@ impl Engine {
         let (opener, end) = (prompt.opener, prompt.ids.len());
         let mut media_tokens = tokens.as_chunks::<HIDDEN>().0.iter();
         while first < end {
-            let last = (first + PREFILL_ROWS).min(if first < opener { opener } else { end });
+            let stop = [Some(opener), keep]
+                .into_iter()
+                .flatten()
+                .filter(|row| *row > first)
+                .min()
+                .unwrap_or(end);
+            let last = (first + PREFILL_ROWS).min(stop);
             self.embed_rows(prompt, first..last, &mut media_tokens);
             let rows = Rows {
                 first,
@@ -369,9 +459,46 @@ impl Engine {
             if last == opener {
                 self.state.save(&mut self.saved);
             }
+            if Some(last) == keep {
+                self.keep_rows(&prompt.ids[..last]);
+            }
             first = last;
         }
         self.resume = Some(opener);
+    }
+
+    // The first of `prompt`'s rows that reading it reads: after the last reply's opener, or
+    // after the longest kept prompt it begins with.
+    fn first_unread(&self, prompt: &Prompt) -> usize {
+        let kept = self
+            .longest_kept(prompt)
+            .map(|index| self.kept[index].ids.len());
+        self.resume.or(kept).unwrap_or(0)
+    }
+
+    // Which of the kept prompts `prompt` begins with, the longest; none for a prompt with media,
+    // whose rows' positions aren't its tokens'.
+    fn longest_kept(&self, prompt: &Prompt) -> Option<usize> {
+        if !prompt.media.is_empty() {
+            return None;
+        }
+        let begun = self.kept.iter().enumerate();
+        begun
+            .filter(|(_, kept)| prompt.ids.starts_with(&kept.ids))
+            .max_by_key(|(_, kept)| kept.ids.len())
+            .map(|(index, _)| index)
+    }
+
+    // Keeps the state after `ids`, the prompt's first rows, as the last used; the least
+    // recently used goes once `KEPT_PROMPTS` are kept.
+    fn keep_rows(&mut self, ids: &[u32]) {
+        let prefix = self.state.keep_prefix(&LANGUAGE, ids.len());
+        let kept = Kept {
+            ids: ids.to_vec(),
+            prefix,
+        };
+        self.kept.insert(0, kept);
+        self.kept.truncate(KEPT_PROMPTS);
     }
 
     /// The input of `rows`: each one's token embedding, or the next of `media_tokens` in the
