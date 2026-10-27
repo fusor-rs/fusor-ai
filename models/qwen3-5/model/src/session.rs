@@ -23,7 +23,7 @@ use crate::media::{self, IMAGE, Media};
 use crate::model::{HIDDEN, LANGUAGE, MERGER, Model, NORM_EPS, TOWER, VOCABULARY};
 use crate::pipeline::Stage;
 use crate::prompt::{ENDS, Prompt, Replied, System, Turn, reasoned};
-use crate::sampling::{Constraint, Content, Sampler, Sampling};
+use crate::sampling::{self, Constraint, Content, Sampler, Sampling};
 
 /// The longest conversation, in rows: every turn's text, media and reply.
 pub const MAX_ROWS: usize = 16_384;
@@ -49,7 +49,7 @@ pub struct Message {
     pub thinking: bool,
     /// At most `MAX_TOKENS`, its default, and the rows the conversation has left.
     pub max_tokens: Option<usize>,
-    /// The model card's settings for the turn when absent (`Sampling::preset`).
+    /// The model card's settings for the turn when absent (`sampling::preset`).
     pub sampling: Option<Sampling>,
     pub seed: u64,
 }
@@ -299,7 +299,7 @@ impl Engine {
         };
         let sampling = message
             .sampling
-            .unwrap_or_else(|| Sampling::preset(message, content));
+            .unwrap_or_else(|| sampling::preset(message, content));
         sampling.check()?;
         let max_tokens = message.max_tokens.unwrap_or(MAX_TOKENS);
         Ok(Job {

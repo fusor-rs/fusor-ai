@@ -3,7 +3,7 @@
 //! `readout` and the checkpoint's `decision_config.json`, which names the size; the compiler
 //! (`d3-compile`) writes exactly these names.
 
-use blocks::hybrid::{self, AttentionShape, DeltaShape, Hybrid};
+use blocks::hybrid::{self, AttentionShape, DeltaShape, Gate, HeadNorm, Hybrid};
 use blocks::rotary::Rotation;
 use blocks::vit;
 use blocks::vit::merger::{self, Merger};
@@ -124,6 +124,8 @@ impl Size {
                 rotary_dim: 64,
                 rope_base: 10_000_000.0,
                 rotation: Rotation::MultimodalInterleaved([11, 11, 10]),
+                head_norm: HeadNorm::Rms,
+                gate: Gate::Elementwise,
             },
             delta: DeltaShape {
                 key_heads: 16,

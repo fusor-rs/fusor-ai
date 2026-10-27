@@ -12,6 +12,7 @@ pub mod dit;
 pub mod dpm;
 pub mod flow;
 pub mod hybrid;
+pub mod interleaved;
 pub mod istft;
 mod layer;
 pub mod lm;

@@ -3,8 +3,8 @@
 //! for the others; each followed by a SiLU-gated MLP.
 //!
 //! - `attention`: grouped-query attention over a KV cache, each query and key head
-//!   RMS-normalized, the first `rotary_dim` elements of each rotated, and the output gated by a
-//!   sigmoid of the query's own gate head.
+//!   RMS-normalized (`HeadNorm`), the first `rotary_dim` elements of each rotated, and the output
+//!   gated by a sigmoid (`Gate`); `interleaved`'s layers attend with it too.
 //! - `delta`: the gated delta rule, a linear attention whose state carries from call to call.
 //!
 //! Tensors under a prefix `p`: `p.layers.{i}.{input_norm, post_norm, gate, up, down}`, and each
@@ -19,19 +19,20 @@
 //! under `Mask::Full` a row also sees the later rows of its own call, so a sequence read that way
 //! is read in one call.
 
-mod attention;
+pub(crate) mod attention;
 mod delta;
 
 use bundle::{Load, Scope, Store, load_each};
 use team::{Ctx, PerThread, SharedBuf};
 
+pub use crate::layer::HeadNorm;
 use crate::layer::{
-    self, FeedForward, Heads, Norm, Pass, Source, Widths, attended_residual, feed_forward_residual,
-    input, prepare,
+    self, Activation, FeedForward, Heads, Norm, Pass, Source, Widths, attended_residual,
+    feed_forward_residual, input, prepare,
 };
-use crate::rotary::{Position, Rotary};
+use crate::rotary::Position;
 use crate::transformer::{KvCache, KvRows, Mask, Span};
-pub use attention::Shape as AttentionShape;
+pub use attention::{Gate, Shape as AttentionShape};
 pub use delta::Shape as DeltaShape;
 
 /// The dimensions of one stack.
@@ -187,7 +188,6 @@ struct HybridLayer {
 
 pub struct Hybrid {
     shape: Shape,
-    rotary: Rotary,
     layers: Vec<HybridLayer>,
 }
 
@@ -229,7 +229,7 @@ impl Hybrid {
                         span,
                         positions,
                     };
-                    weights.mix(&pass, &normed, &self.rotary, &call);
+                    weights.mix(&pass, &normed, &call);
                 }
                 Mixer::Delta(weights) => {
                     let call = delta::Call {
@@ -282,16 +282,7 @@ impl Load for Hybrid {
                 layer
             },
         )?;
-        let attention = shape.attention;
-        Ok(Self {
-            shape,
-            rotary: Rotary::new(
-                attention.rotation,
-                attention.rope_base,
-                attention.rotary_dim,
-            ),
-            layers,
-        })
+        Ok(Self { shape, layers })
     }
 }
 
@@ -321,11 +312,8 @@ fn load_layer(
         )?)
     };
     let mut scope = Scope::new(store, prefix);
-    let feed_forward = FeedForward::Gated {
-        gate: scope.load("gate", [shape.feed_forward, hidden])?,
-        up: scope.load("up", [shape.feed_forward, hidden])?,
-        down: scope.load("down", [hidden, shape.feed_forward])?,
-    };
+    let feed_forward =
+        FeedForward::gated(&mut scope, hidden, shape.feed_forward, Activation::Silu)?;
     Ok(HybridLayer {
         norm1: Norm::Rms {
             weight: scope.load("input_norm", hidden)?,

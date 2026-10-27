@@ -1,0 +1,29 @@
+[package]
+name = "spark-x2-6-cli"
+description = "The native Spark-X2.6-1.7B host: compile the checkpoint, chat over conversations, benchmark, and check parity with the reference goldens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "spark-x2-6"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+spark-x2-6 = { workspace = true, features = ["threads"] }
+spark-x2-6-compile.workspace = true
+harness.workspace = true
+bundle.workspace = true
+compile.workspace = true
+kernels.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+
+[lints]
+workspace = true

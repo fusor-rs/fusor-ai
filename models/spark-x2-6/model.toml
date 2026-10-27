@@ -1,0 +1,2 @@
+product = "https://github.com/fusor-rs/spark-x2-6-wasm"
+formats = ["Q7b32"]

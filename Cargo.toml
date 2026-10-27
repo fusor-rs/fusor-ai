@@ -52,6 +52,10 @@ members = [
     "models/qwen3-5/compile",
     "models/qwen3-5/runtime",
     "models/qwen3-5/cli",
+    "models/spark-x2-6/model",
+    "models/spark-x2-6/compile",
+    "models/spark-x2-6/runtime",
+    "models/spark-x2-6/cli",
 ]
 resolver = "2"
 
@@ -118,6 +122,8 @@ d3 = { package = "fusor-ai-d3", path = "models/d3/model", version = "=0.1.2" }
 d3-compile = { package = "fusor-ai-d3-compile", path = "models/d3/compile", version = "=0.1.2" }
 qwen3-5 = { package = "fusor-ai-qwen3-5", path = "models/qwen3-5/model", version = "=0.1.2" }
 qwen3-5-compile = { package = "fusor-ai-qwen3-5-compile", path = "models/qwen3-5/compile", version = "=0.1.2" }
+spark-x2-6 = { package = "fusor-ai-spark-x2-6", path = "models/spark-x2-6/model", version = "=0.1.2" }
+spark-x2-6-compile = { package = "fusor-ai-spark-x2-6-compile", path = "models/spark-x2-6/compile", version = "=0.1.2" }
 rayon = "=1.12.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"

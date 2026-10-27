@@ -2,7 +2,7 @@
 //! its prefix — `vision`, `merger`, `llm` — so this is the table of contents; the compiler
 //! (`intern-decision-compile`) writes exactly these names.
 
-use blocks::hybrid::{self, AttentionShape, DeltaShape, Hybrid};
+use blocks::hybrid::{self, AttentionShape, DeltaShape, Gate, HeadNorm, Hybrid};
 use blocks::rotary::Rotation;
 use blocks::vit;
 use blocks::vit::merger::{self, Merger};
@@ -70,6 +70,8 @@ pub const LANGUAGE_SHAPE: hybrid::Shape = hybrid::Shape {
         rotary_dim: 64,
         rope_base: 10_000_000.0,
         rotation: Rotation::MultimodalInterleaved([11, 11, 10]),
+        head_norm: HeadNorm::Rms,
+        gate: Gate::Elementwise,
     },
     delta: DeltaShape {
         key_heads: 16,

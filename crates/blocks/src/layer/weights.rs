@@ -1,7 +1,7 @@
 //! A layer's weights, loaded as its spec names and builds them.
 
 use bundle::{Scope, Store};
-use kernels::ops::{gelu_erf, gelu_tanh_lanes, quick_gelu, rms_norm};
+use kernels::ops::{gelu_erf, gelu_tanh_lanes, quick_gelu, rms_norm, silu};
 use kernels::{Linear, QUAD, Vector};
 
 use super::{FeedForwardSpec, HeadNorm, LayerSpec, Widths};
@@ -22,11 +22,12 @@ impl Norm {
 }
 
 pub(crate) enum FeedForward {
-    /// `down(silu(gate(x)) · up(x))`.
+    /// `down(activation(gate(x)) · up(x))`.
     Gated {
         gate: Linear,
         up: Linear,
         down: Linear,
+        activation: Activation,
     },
     /// `down(activation(up(x)))`.
     Plain {
@@ -39,6 +40,7 @@ pub(crate) enum FeedForward {
 /// A feed-forward's pointwise activation.
 #[derive(Clone, Copy)]
 pub(crate) enum Activation {
+    Silu,
     GeluTanh,
     GeluErf,
     QuickGelu,
@@ -50,6 +52,7 @@ impl Activation {
     #[inline(always)]
     pub(super) fn apply(self, values: [f32; QUAD]) -> [f32; QUAD] {
         match self {
+            Activation::Silu => values.map(silu),
             Activation::GeluTanh => gelu_tanh_lanes(values),
             Activation::GeluErf => values.map(gelu_erf),
             Activation::QuickGelu => values.map(quick_gelu),
@@ -58,6 +61,21 @@ impl Activation {
 }
 
 impl FeedForward {
+    /// The gated feed-forward under `scope`: `gate`, `up` and `down`, `width` wide inside.
+    pub(crate) fn gated(
+        scope: &mut Scope,
+        hidden: usize,
+        width: usize,
+        activation: Activation,
+    ) -> Result<Self, bundle::Error> {
+        Ok(FeedForward::Gated {
+            gate: scope.load("gate", [width, hidden])?,
+            up: scope.load("up", [width, hidden])?,
+            down: scope.load("down", [hidden, width])?,
+            activation,
+        })
+    }
+
     /// The projection that reads `norm2(hidden)` (the gate's input is the up's too).
     pub(super) fn first(&self) -> &Linear {
         match self {
@@ -104,11 +122,9 @@ impl Layer {
         let out = scope.load(spec.out, [hidden, heads.width()])?;
         let norm2 = spec.norm.load(&mut scope, norm2, hidden, eps)?;
         let feed_forward = match spec.feed_forward {
-            FeedForwardSpec::Gated => FeedForward::Gated {
-                gate: scope.load("gate", [feed_forward, hidden])?,
-                up: scope.load("up", [feed_forward, hidden])?,
-                down: scope.load("down", [hidden, feed_forward])?,
-            },
+            FeedForwardSpec::Gated => {
+                FeedForward::gated(&mut scope, hidden, feed_forward, Activation::Silu)?
+            }
             FeedForwardSpec::Plain(activation) => FeedForward::Plain {
                 up: scope.load("ff1", [feed_forward, hidden])?,
                 down: scope.load("ff2", [hidden, feed_forward])?,

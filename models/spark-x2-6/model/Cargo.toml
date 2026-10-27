@@ -1,0 +1,26 @@
+[package]
+name = "fusor-ai-spark-x2-6"
+description = "Spark-X2.6-1.7B: the model. No I/O; builds for native and wasm32."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "spark_x2_6"
+
+[dependencies]
+team.workspace = true
+kernels.workspace = true
+blocks.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
+serde.workspace = true
+
+[features]
+# Run the thread team on Rayon's pool (native, and the threaded browser runtimes).
+threads = ["team/threads"]
+
+[lints]
+workspace = true

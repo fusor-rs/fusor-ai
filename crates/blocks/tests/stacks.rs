@@ -6,7 +6,7 @@ mod support;
 use std::ops::Range;
 
 use blocks::dit::{self, Dit, Sequences};
-use blocks::hybrid::{self, AttentionShape, DeltaShape, Hybrid};
+use blocks::hybrid::{self, AttentionShape, DeltaShape, Gate, HeadNorm, Hybrid};
 use blocks::lm::{self, Embedding, Lm, Positions, Reader, Rows};
 use blocks::rotary::{Position, Rotation};
 use blocks::transformer::{self, Architecture, KvCache, Span, Transformer};
@@ -519,6 +519,8 @@ fn hybrid_shape() -> hybrid::Shape {
             rotary_dim: HYBRID.rotary_dim,
             rope_base: ROPE_BASE,
             rotation: Rotation::MultimodalInterleaved(HYBRID_SECTIONS),
+            head_norm: HeadNorm::Rms,
+            gate: Gate::Elementwise,
         },
         delta: DeltaShape {
             key_heads,

@@ -806,6 +806,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "fusor-ai-spark-x2-6"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-blocks",
+ "fusor-ai-bundle",
+ "fusor-ai-kernels",
+ "fusor-ai-team",
+ "serde",
+]
+
+[[package]]
+name = "fusor-ai-spark-x2-6-compile"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-kernels",
+ "fusor-ai-spark-x2-6",
+]
+
+[[package]]
 name = "fusor-ai-team"
 version = "0.1.2"
 dependencies = [
@@ -1581,6 +1602,32 @@ name = "smallvec"
 version = "1.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
+
+[[package]]
+name = "spark-x2-6-cli"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "clap",
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-harness",
+ "fusor-ai-kernels",
+ "fusor-ai-spark-x2-6",
+ "fusor-ai-spark-x2-6-compile",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "spark-x2-6-runtime"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-runtime",
+ "fusor-ai-spark-x2-6",
+ "serde_json",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "spm_precompiled"

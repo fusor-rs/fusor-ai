@@ -1,0 +1,3 @@
+
+`thinking_effort` guides on how much to think in your thinking channel (not including the response channel), supported values include `low` and `high`.
+Now the system is invoked with `thinking_effort=high`.

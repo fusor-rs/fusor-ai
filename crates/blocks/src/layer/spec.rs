@@ -93,8 +93,8 @@ pub(crate) enum FeedForwardSpec {
 }
 
 /// Whether a layer RMS-normalizes each query and key head before the rotary embeddings.
-#[derive(Clone, Copy)]
-pub(crate) enum HeadNorm {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadNorm {
     None,
     Rms,
 }

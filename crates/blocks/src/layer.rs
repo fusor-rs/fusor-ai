@@ -15,7 +15,7 @@ mod input;
 mod spec;
 mod weights;
 
-use kernels::ops::{rms_norm, rope_half, rope_interleaved, silu};
+use kernels::ops::{rms_norm, rope_half, rope_interleaved};
 use kernels::{COLUMN_ALIGN, Linear, QUAD, project_residual_input};
 use team::Ctx;
 
@@ -23,7 +23,8 @@ use crate::rotary::{Position, Rotary};
 pub use buffers::Buffers;
 pub(crate) use buffers::{Scratch, Widths};
 pub(crate) use input::{Source, input, prepare};
-pub(crate) use spec::{FeedForwardSpec, HeadNorm, LayerSpec, Rope};
+pub use spec::HeadNorm;
+pub(crate) use spec::{FeedForwardSpec, LayerSpec, Rope};
 pub(crate) use weights::{Activation, FeedForward, HeadNorms, Layer, Norm};
 
 /// The attention heads of a stack: `heads` query heads over `kv_heads` key and value heads, all
@@ -231,13 +232,20 @@ fn inner(pass: &Pass, norm: &Norm, feed_forward: &FeedForward) {
                     .copy_from_slice(&activation.apply(values));
             });
         }
-        FeedForward::Gated { gate, up, .. } => {
+        FeedForward::Gated {
+            gate,
+            up,
+            activation,
+            ..
+        } => {
             let width = gate.matrix().rows;
             let cols = pass.ctx.split(width, COLUMN_ALIGN);
             let share = cols.len();
             gate.project_quads(&input, cols.clone(), |row, first, values| {
                 let at = row * width + first;
-                inner.part(at..at + QUAD).copy_from_slice(&values);
+                inner
+                    .part(at..at + QUAD)
+                    .copy_from_slice(&activation.apply(values));
             });
             up_share.resize(pass.rows * share, 0.0);
             up.project_quads(&input, cols.clone(), |row, first, values| {
@@ -248,7 +256,7 @@ fn inner(pass: &Pass, norm: &Norm, feed_forward: &FeedForward) {
                 let gated = inner.part(row * width + cols.start..row * width + cols.end);
                 let ups = &up_share[row * share..(row + 1) * share];
                 for (gated, up) in gated.iter_mut().zip(ups) {
-                    *gated = silu(*gated) * up;
+                    *gated *= up;
                 }
             }
         }

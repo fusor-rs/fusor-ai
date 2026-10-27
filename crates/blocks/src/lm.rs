@@ -8,6 +8,8 @@
 //! `p.head` and, unless the input embeddings are the head's rows (`Embedding::Tied`), their table
 //! `p.embed`.
 
+pub mod sampling;
+
 use bundle::{Load, Scope, Store};
 use kernels::ops::rms_norm;
 use kernels::{Linear, NARROW_COLUMN_ALIGN, QuantizedRows, Table, Vector};
