@@ -47,7 +47,7 @@ export async function run({ root, name, values, fields, args = [], init }, body)
   const runDir = values.out ?? join(root, 'e2e/results');
   const up = async () => {
     try {
-      return (await fetch(`${base}/model/manifest.json`)).ok;
+      return (await fetch(`${base}/`)).ok;
     } catch {
       return false;
     }

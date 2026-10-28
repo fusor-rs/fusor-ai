@@ -1,0 +1,178 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model/lfm3-1.7b": "sha256:97448366860b93f1202d9f74b6cd28fe4f9df9b2348d2dfbd7759df0a75e348c",
+    "dist/model/lfm3-vl-2b": "sha256:f5ce3eab65e5ea5059e2b3395e2f24300d09729f995deffae78fa058b374ba7d",
+    "dist/model/lfm3-audio-2b": "sha256:4ce6e4f02525c77efedc2783da55c6568d28260c9c992576b2c8fe494c2b4461",
+    "dist/model/lfm3-omni-2b": "sha256:77e5aa9799115661ccf5dceca55c127d0059ec73c7f80d70c05b6654095135c4"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "# fixtures/goldens/lfm3-1.7b/golden_f32_colors.safetensors",
+      "prefill 0: 23 ids identical",
+      "prefill 0 hidden: 2048 values, rel 1.63e-1, max abs 1.45e0",
+      "prefill 0 logits: 128000 values, rel 8.38e-2, max abs 2.58e0",
+      "decode 0 hidden: 28672 values, rel 5.25e-2, max abs 5.21e-1 (14 of 14 next tokens the reference's)",
+      "prefill 1: 60 ids identical",
+      "prefill 1 hidden: 2048 values, rel 8.11e-2, max abs 5.40e-1",
+      "prefill 1 logits: 128000 values, rel 3.58e-2, max abs 8.23e-1",
+      "decode 1 hidden: 194560 values, rel 4.70e-2, max abs 8.28e-1 (95 of 95 next tokens the reference's)",
+      "# fixtures/goldens/lfm3-1.7b/golden_f32_trip.safetensors",
+      "prefill 0: 37 ids identical",
+      "prefill 0 hidden: 2048 values, rel 5.56e-2, max abs 3.75e-1",
+      "prefill 0 logits: 128000 values, rel 2.44e-2, max abs 5.10e-1",
+      "decode 0 hidden: 1251328 values, rel 4.62e-2, max abs 8.33e-1 (603 of 611 next tokens the reference's)",
+      "# fixtures/goldens/lfm3-vl-2b/golden_f32_receipt.safetensors",
+      "image 0 patches: 5332992 values, rel 1.18e-4, max abs 1.57e-2",
+      "image 0 embedded: 3555328 values, rel 3.33e-6, max abs 6.50e-8",
+      "image 0 encoded: 3555328 values, rel 3.33e-2, max abs 3.96e0",
+      "image 0 tokens: 1777664 values, rel 4.91e-2, max abs 5.81e-3",
+      "prefill 0: 894 ids identical",
+      "prefill 0 hidden: 2048 values, rel 4.81e-2, max abs 8.49e-1",
+      "prefill 0 logits: 128000 values, rel 2.18e-2, max abs 5.98e-1",
+      "decode 0 hidden: 20480 values, rel 4.23e-2, max abs 9.03e-1 (10 of 10 next tokens the reference's)",
+      "prefill 1: 924 ids identical",
+      "prefill 1 hidden: 2048 values, rel 4.47e-2, max abs 9.36e-1",
+      "prefill 1 logits: 128000 values, rel 1.80e-2, max abs 4.31e-1",
+      "decode 1 hidden: 38912 values, rel 3.62e-2, max abs 1.36e0 (19 of 19 next tokens the reference's)",
+      "# fixtures/goldens/lfm3-audio-2b/golden_f32_chat.safetensors",
+      "prefill 0: 23 ids identical",
+      "prefill 0 hidden: 2048 values, rel 3.22e-2, max abs 7.99e-1",
+      "prefill 0 logits: 128000 values, rel 1.36e-2, max abs 7.25e-1",
+      "decode 0 hidden: 30720 values, rel 1.97e-2, max abs 1.04e0 (15 of 15 next tokens the reference's)",
+      "# fixtures/goldens/lfm3-audio-2b/golden_f32_interleaved.safetensors",
+      "prefill 0: 34 ids identical",
+      "prefill 0 hidden: 2048 values, rel 3.21e-2, max abs 9.14e-1",
+      "speak 0 depth: 24204 values, rel 6.38e-2, max abs 7.84e-1",
+      "speak 0 samples: 78720 values, rel 3.01e-2, max abs 9.39e-3",
+      "# fixtures/goldens/lfm3-audio-2b/golden_f32_speech.safetensors",
+      "prefill 0: 36 ids identical",
+      "prefill 0 hidden: 2048 values, rel 2.76e-2, max abs 7.76e-2",
+      "speak 0 depth: 24204 values, rel 2.75e-2, max abs 4.61e-1",
+      "speak 0 samples: 76800 values, rel 5.98e-2, max abs 1.07e-1",
+      "# fixtures/goldens/lfm3-audio-2b/golden_f32_transcribe.safetensors",
+      "clip 0 features: 118528 values, rel 1.59e-5, max abs 8.00e-4",
+      "clip 0 encoded: 89088 values, rel 2.51e-3, max abs 7.16e-2",
+      "clip 0 tokens: 237568 values, rel 3.66e-2, max abs 1.72e-2",
+      "prefill 0: 136 ids identical",
+      "prefill 0 hidden: 2048 values, rel 1.55e-2, max abs 5.50e-1",
+      "prefill 0 logits: 128000 values, rel 8.77e-3, max abs 3.85e-1",
+      "decode 0 hidden: 71680 values, rel 1.62e-2, max abs 9.07e-1 (35 of 35 next tokens the reference's)",
+      "# fixtures/goldens/lfm3-omni-2b/golden_f32_interleaved.safetensors",
+      "prefill 0: 36 ids identical",
+      "prefill 0 hidden: 2048 values, rel 2.86e-2, max abs 5.11e-1",
+      "speak 0 depth: 24204 values, rel 5.75e-2, max abs 9.90e-1",
+      "speak 0 samples: 72960 values, rel 3.76e-2, max abs 1.35e-2",
+      "# fixtures/goldens/lfm3-omni-2b/golden_f32_receipt.safetensors",
+      "image 0 patches: 5332992 values, rel 1.18e-4, max abs 1.57e-2",
+      "image 0 embedded: 3555328 values, rel 3.34e-6, max abs 1.53e-7",
+      "image 0 encoded: 3555328 values, rel 6.40e-2, max abs 1.61e2",
+      "image 0 tokens: 1777664 values, rel 2.10e-2, max abs 1.06e-2",
+      "prefill 0: 894 ids identical",
+      "prefill 0 hidden: 2048 values, rel 1.67e-2, max abs 2.52e-1",
+      "prefill 0 logits: 128000 values, rel 6.06e-3, max abs 3.55e-1",
+      "decode 0 hidden: 22528 values, rel 1.75e-2, max abs 4.56e-1 (11 of 11 next tokens the reference's)",
+      "# fixtures/goldens/lfm3-omni-2b/golden_f32_speech.safetensors",
+      "prefill 0: 38 ids identical",
+      "prefill 0 hidden: 2048 values, rel 2.91e-2, max abs 7.46e-2",
+      "speak 0 depth: 24204 values, rel 3.53e-2, max abs 4.71e-1",
+      "speak 0 samples: 84480 values, rel 4.03e-2, max abs 3.54e-2",
+      "# fixtures/goldens/lfm3-omni-2b/golden_f32_transcribe.safetensors",
+      "clip 0 features: 118528 values, rel 1.59e-5, max abs 8.00e-4",
+      "clip 0 encoded: 89088 values, rel 2.64e-3, max abs 9.58e-2",
+      "clip 0 tokens: 237568 values, rel 4.13e-2, max abs 1.32e-2",
+      "prefill 0: 140 ids identical",
+      "prefill 0 hidden: 2048 values, rel 1.49e-2, max abs 3.17e-1",
+      "prefill 0 logits: 128000 values, rel 5.48e-3, max abs 3.88e-1",
+      "decode 0 hidden: 71680 values, rel 1.77e-2, max abs 7.05e-1 (34 of 35 next tokens the reference's)"
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      0
+    ],
+    "outputs": {
+      "web-single/lfm3-1.7b-colors.txt": "sha256:c050f924d9c0202a993f9fcc86de8258b96c89033f30498a50f85b648daf7df6",
+      "web-single/lfm3-1.7b-trip.txt": "sha256:823695689374ab2c12a869bf92a70c8335ffc6dc32f2b54ca08e1247b560ba89",
+      "web-single/lfm3-audio-2b-chat.txt": "sha256:878814359e04dcfc24a489f64402d6320546f020d68331fe53fa117970360166",
+      "web-single/lfm3-audio-2b-interleaved.0.wav": "sha256:19902a4e9f17e092b64e387a2d800a7db3aea81347f63d53bcd418ed316d998f",
+      "web-single/lfm3-audio-2b-interleaved.txt": "sha256:c9ba5557ea09feef90011604657255a11621c036b482e8c85fe966f2cf20d0b7",
+      "web-single/lfm3-audio-2b-speech.0.wav": "sha256:6f93fd332ab1403428d83a78ec7c1f3de03b7388227c346a3b1420c24bcfd63d",
+      "web-single/lfm3-audio-2b-speech.txt": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "web-single/lfm3-audio-2b-transcribe.txt": "sha256:912d087e07beb7132f4bc03ce4fe8b643e0024d4e593639244ab5d454925918d",
+      "web-single/lfm3-omni-2b-interleaved.0.wav": "sha256:83a5a642042c17553d1f2bc3f82aaabb2c843db1edfdcc2f7a9d66ee148cd953",
+      "web-single/lfm3-omni-2b-interleaved.txt": "sha256:c9ba5557ea09feef90011604657255a11621c036b482e8c85fe966f2cf20d0b7",
+      "web-single/lfm3-omni-2b-receipt.txt": "sha256:9264660170895f5ac82eb3c47b06adda0e66e9a7bc8cdd95a0c5fda29d4d5fa5",
+      "web-single/lfm3-omni-2b-speech.0.wav": "sha256:3449176148b220d19c1738579944c070ead00d94c778e788b4caccf8d1bb8e73",
+      "web-single/lfm3-omni-2b-speech.txt": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "web-single/lfm3-omni-2b-transcribe.txt": "sha256:912d087e07beb7132f4bc03ce4fe8b643e0024d4e593639244ab5d454925918d",
+      "web-single/lfm3-vl-2b-receipt.txt": "sha256:9725999c4176f1c1c4d6fe120bf972c8e3b9a07b44541dad74573e7a72276b86"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      0
+    ],
+    "outputs": {
+      "web-threaded-relaxed/lfm3-1.7b-colors.txt": "sha256:c050f924d9c0202a993f9fcc86de8258b96c89033f30498a50f85b648daf7df6",
+      "web-threaded-relaxed/lfm3-1.7b-trip.txt": "sha256:6583d488ac1c2a6cabceb764ad49de750fe0b86a96fe652a3eb312583f30cc06",
+      "web-threaded-relaxed/lfm3-audio-2b-chat.txt": "sha256:878814359e04dcfc24a489f64402d6320546f020d68331fe53fa117970360166",
+      "web-threaded-relaxed/lfm3-audio-2b-interleaved.txt": "sha256:c9ba5557ea09feef90011604657255a11621c036b482e8c85fe966f2cf20d0b7",
+      "web-threaded-relaxed/lfm3-audio-2b-speech.txt": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "web-threaded-relaxed/lfm3-audio-2b-transcribe.txt": "sha256:912d087e07beb7132f4bc03ce4fe8b643e0024d4e593639244ab5d454925918d",
+      "web-threaded-relaxed/lfm3-omni-2b-interleaved.txt": "sha256:c9ba5557ea09feef90011604657255a11621c036b482e8c85fe966f2cf20d0b7",
+      "web-threaded-relaxed/lfm3-omni-2b-receipt.txt": "sha256:9264660170895f5ac82eb3c47b06adda0e66e9a7bc8cdd95a0c5fda29d4d5fa5",
+      "web-threaded-relaxed/lfm3-omni-2b-speech.txt": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "web-threaded-relaxed/lfm3-omni-2b-transcribe.txt": "sha256:56dd4d80e2c37219e63ab09f17159130a9b23ca0b593eebe69456375b2dcab52",
+      "web-threaded-relaxed/lfm3-vl-2b-receipt.txt": "sha256:9725999c4176f1c1c4d6fe120bf972c8e3b9a07b44541dad74573e7a72276b86"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "timings": {
+    "bench/prefill": {
+      "value": 68.81,
+      "unit": "ms",
+      "spread": 0.006249091701787423
+    },
+    "bench/decode": {
+      "value": 8.92,
+      "unit": "ms",
+      "spread": 0.0448430493273543
+    },
+    "bench/reply whole": {
+      "value": 201,
+      "unit": "ms",
+      "spread": 0.11194029850746269
+    },
+    "web-threaded-relaxed/cases.lfm3-1.7b trip.first": {
+      "value": 80,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/cases.lfm3-1.7b trip.speed": {
+      "value": 102.8,
+      "unit": "/s"
+    },
+    "web-threaded-relaxed/cases.lfm3-audio-2b transcribe.first": {
+      "value": 320,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/cases.lfm3-omni-2b transcribe.first": {
+      "value": 320,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/revisitMs": {
+      "value": 2784,
+      "unit": "ms"
+    }
+  }
+}

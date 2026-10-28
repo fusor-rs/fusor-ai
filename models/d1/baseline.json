@@ -1,0 +1,100 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model/d1-2b": "sha256:919c3280398c6dd4288cb0560f3a78fe3bc8530643fca718e5b9c930d66967f0",
+    "dist/model/d1-omni-2b": "sha256:b151500ab5fa3edb5166425e487a9785463c8313cfe3bee792082a6ac10a162d"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "# fixtures/goldens/d1-2b/golden_f32_invoice.safetensors (d1-2B)",
+      "read 0: 366592 values, rel 5.26e-2, max abs 9.99e-1 (179 ids identical)",
+      "answers identical but for numbers, max |Δ| 5.56e-8",
+      "# fixtures/goldens/d1-2b/golden_f32_receipt.safetensors (d1-2B)",
+      "see patches 0: 5332992 values, rel 1.18e-4, max abs 1.57e-2",
+      "see embed 0: 3555328 values, rel 3.35e-6, max abs 6.41e-8",
+      "see encode 0: 3555328 values, rel 3.54e-2, max abs 4.51e0",
+      "see project 0: 1777664 values, rel 5.40e-2, max abs 6.94e-3",
+      "read 0: 2611200 values, rel 7.36e-2, max abs 3.95e0 (1275 ids identical)",
+      "answers identical but for numbers, max |Δ| 5.22e-3",
+      "# fixtures/goldens/d1-2b/golden_f32_ticket.safetensors (d1-2B)",
+      "read 0: 387072 values, rel 5.16e-2, max abs 1.01e0 (189 ids identical)",
+      "answers identical but for numbers, max |Δ| 7.30e-4",
+      "# fixtures/goldens/d1-omni-2b/golden_f32_receipt.safetensors (d1-Omni-2B)",
+      "see patches 0: 5332992 values, rel 1.18e-4, max abs 1.57e-2",
+      "see embed 0: 3555328 values, rel 3.81e-6, max abs 1.53e-7",
+      "see encode 0: 3555328 values, rel 5.98e-2, max abs 1.28e2",
+      "see project 0: 1777664 values, rel 2.62e-2, max abs 1.03e-2",
+      "read 0: 2611200 values, rel 5.39e-2, max abs 7.29e0 (1275 ids identical)",
+      "answers identical but for numbers, max |Δ| 1.00e-3",
+      "# fixtures/goldens/d1-omni-2b/golden_f32_ticket.safetensors (d1-Omni-2B)",
+      "read 0: 387072 values, rel 3.13e-2, max abs 6.17e-1 (189 ids identical)",
+      "answers identical but for numbers, max |Δ| 1.04e-3",
+      "# fixtures/goldens/d1-omni-2b/golden_f32_voice.safetensors (d1-Omni-2B)",
+      "hear features 0: 118528 values, rel 1.59e-5, max abs 8.00e-4",
+      "hear 0: 237568 values, rel 5.06e-2, max abs 2.14e-2",
+      "read 0: 376832 values, rel 4.17e-2, max abs 1.58e0 (184 ids identical)",
+      "answers identical but for numbers, max |Δ| 5.35e-4"
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      0
+    ],
+    "outputs": {
+      "web-single/d1-2b-invoice.txt": "sha256:8ec012986c2b3bcdd3e6c5e211c195d875c3e0b636fb76aa22f7c127384d8f04",
+      "web-single/d1-2b-receipt.txt": "sha256:000785f638f2e3607dd9ec634afbd6df3a7803f832bb3f9714239860b4050956",
+      "web-single/d1-2b-ticket.txt": "sha256:191173cffcce94bb48e16b52276ad5a1777a2c57ddb2c607115c48320039e6ca",
+      "web-single/d1-omni-2b-receipt.txt": "sha256:75f90088b74fce492c7876754255441ebfedc2a09fa7992e06c1eaef78d08003",
+      "web-single/d1-omni-2b-ticket.txt": "sha256:d33768e36108cc0f698eb615a6c537678577c7e8447b216cbc4bfd9cd04f9a61",
+      "web-single/d1-omni-2b-voice.txt": "sha256:ecb946d5a58c9dae69f8e9eb7f66df2181c0d66b15bea22921aee429ca4f86d9"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      0
+    ],
+    "outputs": {
+      "web-threaded-relaxed/d1-2b-invoice.txt": "sha256:d9e01719cf23cc644c84e21f887f2c046959c09cd71bd1e8187e1f616ec2d1b8",
+      "web-threaded-relaxed/d1-2b-receipt.txt": "sha256:3048320d97a378eb2f04d8675998370900c5db7fe9845042ad5f98cf25aadee3",
+      "web-threaded-relaxed/d1-2b-ticket.txt": "sha256:a19c48dbbdc73f77c97f906a22fb82db81c7d0cd6efff839e529e9456093bc25",
+      "web-threaded-relaxed/d1-omni-2b-receipt.txt": "sha256:8012056f47f3d048cb8f0228fce442ea43fc380d2e2e0c4d062ee027b7781ddf",
+      "web-threaded-relaxed/d1-omni-2b-ticket.txt": "sha256:286f21aa2245ccbea00567ddfc45c490bd70d9fa43328ecee5d1c22742a652af",
+      "web-threaded-relaxed/d1-omni-2b-voice.txt": "sha256:24177067efeb5b121add7332019980cb15f8600d5e2d3155110e419c48057258"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "timings": {
+    "bench/read": {
+      "value": 525.05,
+      "unit": "ms",
+      "spread": 0.012894010094276919
+    },
+    "bench/decide whole": {
+      "value": 524.7,
+      "unit": "ms",
+      "spread": 0.07108824089956156
+    },
+    "web-threaded-relaxed/cases.d1-2b invoice.answers": {
+      "value": 380,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/cases.d1-omni-2b voice.answers": {
+      "value": 490,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/revisitMs": {
+      "value": 2533,
+      "unit": "ms"
+    }
+  }
+}

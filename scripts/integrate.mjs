@@ -186,11 +186,21 @@ function pageTimings(model, fields) {
     results.flatMap((file) => {
       const shown = JSON.parse(readFileSync(join(runs, file), "utf8"));
       return fields.map((field) => {
-        const value = field.split(".").reduce((parent, key) => parent?.[key], shown);
+        const value = at(shown, field);
         return [`${dirname(file)}/${field}`, value === undefined ? null : figure(value)];
       });
     }),
   );
+}
+
+/** The value at `path` in `object`, its keys joined by dots; a key may hold dots of its own
+ * (`cases.lfm3-1.7b colors.first`). */
+function at(object, path) {
+  if (path === "") return object;
+  if (typeof object !== "object" || object === null) return undefined;
+  const keys = Object.keys(object).filter((key) => path === key || path.startsWith(`${key}.`));
+  const key = keys.sort((first, second) => second.length - first.length)[0];
+  return key === undefined ? undefined : at(object[key], path.slice(key.length + 1));
 }
 
 function figure(shown) {

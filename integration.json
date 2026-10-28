@@ -551,5 +551,159 @@
     "outputs": [
       ".txt"
     ]
+  },
+  "lfm3": {
+    "product": "liquidai-lmf3-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/lfm3-1.7b/golden_f32_colors.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/lfm3/lfm3-1.7b/golden_f32_colors.safetensors",
+        "sha256": "sha256:1a5c66c6b242834be1e5702bf7539920b8a66e0fa90057731a656e158b0d6994"
+      },
+      {
+        "file": "fixtures/goldens/lfm3-1.7b/golden_f32_trip.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/lfm3/lfm3-1.7b/golden_f32_trip.safetensors",
+        "sha256": "sha256:28d6dd57b95334ffd3c9f58e8fd9cf0cfcff5f24dc4db1787c1edaa0ae3e4ea3"
+      },
+      {
+        "file": "fixtures/goldens/lfm3-vl-2b/golden_f32_receipt.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/lfm3/lfm3-vl-2b/golden_f32_receipt.safetensors",
+        "sha256": "sha256:efd80d4a548cdbd688b9774ebf9b227e562069a35f76c21c34ad91cf126d94a9"
+      },
+      {
+        "file": "fixtures/goldens/lfm3-audio-2b/golden_f32_chat.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/lfm3/lfm3-audio-2b/golden_f32_chat.safetensors",
+        "sha256": "sha256:cc789cf2ce8b21daf66749d06c3c611aa787b4fa1f4851564abcf0db8b6c4a35"
+      },
+      {
+        "file": "fixtures/goldens/lfm3-audio-2b/golden_f32_interleaved.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/lfm3/lfm3-audio-2b/golden_f32_interleaved.safetensors",
+        "sha256": "sha256:3f7040293d179fa4b619ff3485fdb4cdac227cdcf84ff80fc5a53e3a5037b1c9"
+      },
+      {
+        "file": "fixtures/goldens/lfm3-audio-2b/golden_f32_speech.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/lfm3/lfm3-audio-2b/golden_f32_speech.safetensors",
+        "sha256": "sha256:3420fc640d10e6989c9fedd3847ca49ac50b48a54134eec63613895371c44692"
+      },
+      {
+        "file": "fixtures/goldens/lfm3-audio-2b/golden_f32_transcribe.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/lfm3/lfm3-audio-2b/golden_f32_transcribe.safetensors",
+        "sha256": "sha256:05dda8549cf0e020d833c528bc0f2a589b747a5c97fd03ea4247dd3a91159078"
+      },
+      {
+        "file": "fixtures/goldens/lfm3-omni-2b/golden_f32_interleaved.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/lfm3/lfm3-omni-2b/golden_f32_interleaved.safetensors",
+        "sha256": "sha256:7aed5b3e18450ea531a8bd766b1c9a38cd8a9d7a735503bd33d5a475d2b3486e"
+      },
+      {
+        "file": "fixtures/goldens/lfm3-omni-2b/golden_f32_receipt.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/lfm3/lfm3-omni-2b/golden_f32_receipt.safetensors",
+        "sha256": "sha256:edf01ae2d9286ce83b8f1e5d914407e8eabc62994b69735b83011ba688c30409"
+      },
+      {
+        "file": "fixtures/goldens/lfm3-omni-2b/golden_f32_speech.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/lfm3/lfm3-omni-2b/golden_f32_speech.safetensors",
+        "sha256": "sha256:773d43455615466fa3ea59bffac6e6b54d8a3e7136c8bfe7534b631bb78db14e"
+      },
+      {
+        "file": "fixtures/goldens/lfm3-omni-2b/golden_f32_transcribe.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/lfm3/lfm3-omni-2b/golden_f32_transcribe.safetensors",
+        "sha256": "sha256:a4395d63f4adb802b4d8c2f7896923b4919027b9917b5532ffbeaa93244aef94"
+      }
+    ],
+    "build": [
+      "just models=\"lfm3-1.7b lfm3-vl-2b lfm3-audio-2b lfm3-omni-2b\" model",
+      "just fixtures",
+      "just runtimes",
+      "just page",
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model/lfm3-1.7b",
+      "dist/model/lfm3-vl-2b",
+      "dist/model/lfm3-audio-2b",
+      "dist/model/lfm3-omni-2b"
+    ],
+    "parity": "target/release/lfm3 parity dist/model/lfm3-1.7b fixtures/goldens/lfm3-1.7b/golden_f32_colors.safetensors fixtures/goldens/lfm3-1.7b/golden_f32_trip.safetensors --threads 8 && target/release/lfm3 parity dist/model/lfm3-vl-2b fixtures/goldens/lfm3-vl-2b/golden_f32_receipt.safetensors --threads 8 && target/release/lfm3 parity dist/model/lfm3-audio-2b fixtures/goldens/lfm3-audio-2b/golden_f32_chat.safetensors fixtures/goldens/lfm3-audio-2b/golden_f32_interleaved.safetensors fixtures/goldens/lfm3-audio-2b/golden_f32_speech.safetensors fixtures/goldens/lfm3-audio-2b/golden_f32_transcribe.safetensors --threads 8 && target/release/lfm3 parity dist/model/lfm3-omni-2b fixtures/goldens/lfm3-omni-2b/golden_f32_interleaved.safetensors fixtures/goldens/lfm3-omni-2b/golden_f32_receipt.safetensors fixtures/goldens/lfm3-omni-2b/golden_f32_speech.safetensors fixtures/goldens/lfm3-omni-2b/golden_f32_transcribe.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --models lfm3-1.7b,lfm3-vl-2b,lfm3-audio-2b,lfm3-omni-2b --build web-single --out {out}/web-single"
+    ],
+    "e2e": [
+      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --models lfm3-1.7b,lfm3-vl-2b,lfm3-audio-2b,lfm3-omni-2b --out {out}/web-threaded-relaxed"
+    ],
+    "bench": "target/release/lfm3 bench dist/model/lfm3-1.7b fixtures/conversations/lfm3-1.7b.json colors --threads 8",
+    "page": [
+      "cases.lfm3-1.7b trip.first",
+      "cases.lfm3-1.7b trip.speed",
+      "cases.lfm3-audio-2b transcribe.first",
+      "cases.lfm3-omni-2b transcribe.first",
+      "revisitMs"
+    ],
+    "outputs": [
+      ".txt",
+      ".wav"
+    ]
+  },
+  "d1": {
+    "product": "liquidai-lmf3-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/d1-2b/golden_f32_invoice.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/d1/d1-2b/golden_f32_invoice.safetensors",
+        "sha256": "sha256:5acfb2b13548dee716f2eaef61f74f3a24c9dd1f5b660ea5ba5b76db975f82d5"
+      },
+      {
+        "file": "fixtures/goldens/d1-2b/golden_f32_receipt.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/d1/d1-2b/golden_f32_receipt.safetensors",
+        "sha256": "sha256:74415fc0975f44c203d57d3de552e8cc88f7b1205830028e366ba3e7204ac51d"
+      },
+      {
+        "file": "fixtures/goldens/d1-2b/golden_f32_ticket.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/d1/d1-2b/golden_f32_ticket.safetensors",
+        "sha256": "sha256:4acca0e83157231409acf6e8fa22736f4d5e7ded350c3fd6e1723969d4a219fc"
+      },
+      {
+        "file": "fixtures/goldens/d1-omni-2b/golden_f32_receipt.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/d1/d1-omni-2b/golden_f32_receipt.safetensors",
+        "sha256": "sha256:f0a79da4378a44d981028980e4a754726ac47357614448f0d6e9a2644f93e516"
+      },
+      {
+        "file": "fixtures/goldens/d1-omni-2b/golden_f32_ticket.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/d1/d1-omni-2b/golden_f32_ticket.safetensors",
+        "sha256": "sha256:24897acb8b2fc2b3111d263bee726328564cb7d47e6157df7a869c286a81a431"
+      },
+      {
+        "file": "fixtures/goldens/d1-omni-2b/golden_f32_voice.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/main/d1/d1-omni-2b/golden_f32_voice.safetensors",
+        "sha256": "sha256:a5bf27b1025c3a59e1414c7fbe17db789a3e02adeb553ae158c70b7a2672b43d"
+      }
+    ],
+    "build": [
+      "just models=\"d1-2b d1-omni-2b\" model",
+      "just fixtures",
+      "just runtimes",
+      "just page",
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model/d1-2b",
+      "dist/model/d1-omni-2b"
+    ],
+    "parity": "target/release/d1 parity dist/model/d1-2b fixtures/goldens/d1-2b/golden_f32_invoice.safetensors fixtures/goldens/d1-2b/golden_f32_receipt.safetensors fixtures/goldens/d1-2b/golden_f32_ticket.safetensors --threads 8 && target/release/d1 parity dist/model/d1-omni-2b fixtures/goldens/d1-omni-2b/golden_f32_receipt.safetensors fixtures/goldens/d1-omni-2b/golden_f32_ticket.safetensors fixtures/goldens/d1-omni-2b/golden_f32_voice.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --models d1-2b,d1-omni-2b --build web-single --out {out}/web-single"
+    ],
+    "e2e": [
+      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --models d1-2b,d1-omni-2b --out {out}/web-threaded-relaxed"
+    ],
+    "bench": "target/release/d1 bench dist/model/d1-2b fixtures/requests/d1-2b.json ticket --media fixtures/media --threads 8",
+    "page": [
+      "cases.d1-2b invoice.answers",
+      "cases.d1-omni-2b voice.answers",
+      "revisitMs"
+    ],
+    "outputs": [
+      ".txt"
+    ]
   }
 }
