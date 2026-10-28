@@ -38,8 +38,8 @@ pub(crate) enum FeedForward {
 }
 
 /// A feed-forward's pointwise activation.
-#[derive(Clone, Copy)]
-pub(crate) enum Activation {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Activation {
     Silu,
     GeluTanh,
     GeluErf,

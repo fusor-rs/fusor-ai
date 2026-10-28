@@ -302,6 +302,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
 
 [[package]]
+name = "d1-cli"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "clap",
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-d1",
+ "fusor-ai-d1-compile",
+ "fusor-ai-harness",
+ "fusor-ai-media",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "d1-runtime"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-d1",
+ "fusor-ai-runtime",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "d3-cli"
 version = "0.1.2"
 dependencies = [
@@ -509,6 +536,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "fusor-ai-d1"
+version = "0.1.2"
+dependencies = [
+ "fancy-regex",
+ "fusor-ai-blocks",
+ "fusor-ai-bundle",
+ "fusor-ai-kernels",
+ "fusor-ai-media",
+ "fusor-ai-team",
+ "serde",
+ "serde_json",
+ "unicode-normalization",
+]
+
+[[package]]
+name = "fusor-ai-d1-compile"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-blocks",
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-d1",
+ "fusor-ai-kernels",
+]
+
+[[package]]
 name = "fusor-ai-d3"
 version = "0.1.2"
 dependencies = [
@@ -624,10 +677,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "fusor-ai-lfm3"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-blocks",
+ "fusor-ai-bundle",
+ "fusor-ai-kernels",
+ "fusor-ai-media",
+ "fusor-ai-team",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "fusor-ai-lfm3-compile"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-blocks",
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-kernels",
+ "fusor-ai-lfm3",
+]
+
+[[package]]
 name = "fusor-ai-media"
 version = "0.1.2"
 dependencies = [
  "fusor-ai-kernels",
+ "realfft",
 ]
 
 [[package]]
@@ -1019,6 +1097,34 @@ version = "0.1.2"
 dependencies = [
  "fusor-ai-kronos",
  "fusor-ai-runtime",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "lfm3-cli"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "clap",
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-harness",
+ "fusor-ai-kernels",
+ "fusor-ai-lfm3",
+ "fusor-ai-lfm3-compile",
+ "fusor-ai-media",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "lfm3-runtime"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-lfm3",
+ "fusor-ai-runtime",
+ "serde",
  "serde_json",
  "wasm-bindgen",
 ]

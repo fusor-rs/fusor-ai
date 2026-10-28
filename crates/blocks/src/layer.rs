@@ -16,7 +16,7 @@ mod spec;
 mod weights;
 
 use kernels::ops::{rms_norm, rope_half, rope_interleaved};
-use kernels::{COLUMN_ALIGN, Linear, QUAD, project_residual_input};
+use kernels::{COLUMN_ALIGN, Input, Linear, QUAD, project_input, project_residual_input};
 use team::Ctx;
 
 use crate::rotary::{Position, Rotary};
@@ -25,7 +25,8 @@ pub(crate) use buffers::{Scratch, Widths};
 pub(crate) use input::{Source, input, prepare};
 pub use spec::HeadNorm;
 pub(crate) use spec::{FeedForwardSpec, LayerSpec, Rope};
-pub(crate) use weights::{Activation, FeedForward, HeadNorms, Layer, Norm};
+pub use weights::Activation;
+pub(crate) use weights::{FeedForward, HeadNorms, Layer, Norm};
 
 /// The attention heads of a stack: `heads` query heads over `kv_heads` key and value heads, all
 /// `head_dim` wide.
@@ -112,16 +113,22 @@ impl Stack {
             rows,
             heads: self.heads,
         };
-        for (index, layer) in self.layers.iter().enumerate() {
-            prepare(&pass, Source::Normed(&layer.norm1), &layer.qkv);
-            ctx.barrier();
-            self.attention_input(&pass, index, layer, attention);
-            ctx.barrier();
-            attention.attend(&pass, index);
-            ctx.barrier();
-            attended_residual(&pass, &layer.out);
-            feed_forward_residual(&pass, &layer.norm2, &layer.feed_forward);
+        for index in 0..self.layers.len() {
+            self.forward_layer(&pass, index, attention);
         }
+    }
+
+    /// Runs layer `index` over the pass's rows of `buffers.hidden`.
+    pub(crate) fn forward_layer(&self, pass: &Pass, index: usize, attention: &impl Attention) {
+        let layer = &self.layers[index];
+        prepare(pass, Source::Normed(&layer.norm1), &layer.qkv);
+        pass.ctx.barrier();
+        self.attention_input(pass, index, layer, attention);
+        pass.ctx.barrier();
+        attention.attend(pass, index);
+        pass.ctx.barrier();
+        attended_residual(pass, &layer.out, None);
+        feed_forward_residual(pass, &layer.norm2, &layer.feed_forward, None);
     }
 
     /// QKV for this thread's heads, RoPE on its query and key heads, each head kept as the
@@ -191,18 +198,23 @@ impl Stack {
 }
 
 /// `hidden += out(attention)`, the token mixer's output (`buffers.attention`) projected back
-/// into the residual stream: two phases.
-pub(crate) fn attended_residual(pass: &Pass, out: &Linear) {
+/// into the residual stream, through `post` where the layer norms it: two phases, or three.
+pub(crate) fn attended_residual(pass: &Pass, out: &Linear, post: Option<&Norm>) {
     let attended = Source::Buffer(&pass.buffers.attention);
     prepare(pass, attended, out);
     pass.ctx.barrier();
     let attended = input(pass, attended, out);
-    project_residual_input(pass.ctx, out, &attended, &pass.buffers.hidden);
-    pass.ctx.barrier();
+    add_residual(pass, out, &attended, post);
 }
 
-/// `hidden += feed_forward(norm(hidden))`: four phases.
-pub(crate) fn feed_forward_residual(pass: &Pass, norm: &Norm, feed_forward: &FeedForward) {
+/// `hidden += feed_forward(norm(hidden))`, through `post` where the layer norms it: four phases,
+/// or five.
+pub(crate) fn feed_forward_residual(
+    pass: &Pass,
+    norm: &Norm,
+    feed_forward: &FeedForward,
+    post: Option<&Norm>,
+) {
     prepare(pass, Source::Normed(norm), feed_forward.first());
     pass.ctx.barrier();
     inner(pass, norm, feed_forward);
@@ -211,8 +223,34 @@ pub(crate) fn feed_forward_residual(pass: &Pass, norm: &Norm, feed_forward: &Fee
     prepare(pass, inner, down);
     pass.ctx.barrier();
     let inner = input(pass, inner, down);
-    project_residual_input(pass.ctx, down, &inner, &pass.buffers.hidden);
-    pass.ctx.barrier();
+    add_residual(pass, down, &inner, post);
+}
+
+/// `hidden += post(linear(input))`, or `hidden += linear(input)` without a norm: by columns, or
+/// into `buffers.normed` by columns and then by rows. `normed` is free here: the projection reads
+/// a buffer, and the next reads of `normed` follow the next `prepare`.
+fn add_residual(pass: &Pass, linear: &Linear, input: &Input, post: Option<&Norm>) {
+    let (ctx, buffers) = (pass.ctx, pass.buffers);
+    let Some(post) = post else {
+        project_residual_input(ctx, linear, input, &buffers.hidden);
+        ctx.barrier();
+        return;
+    };
+    project_input(ctx, linear, input, |at, value| {
+        buffers.normed.set(at, value)
+    });
+    ctx.barrier();
+    let width = linear.matrix().rows;
+    let normed = &mut buffers.scratch.get(ctx).normed;
+    normed.resize(width, 0.0);
+    for row in ctx.split(pass.rows, 1) {
+        let at = row * width..(row + 1) * width;
+        post.apply(&buffers.normed.read()[at.clone()], normed);
+        for (value, added) in buffers.hidden.part(at).iter_mut().zip(normed.iter()) {
+            *value += added;
+        }
+    }
+    ctx.barrier();
 }
 
 /// `inner[:, cols]`, the feed-forward of `norm(hidden)` before its last projection, for this

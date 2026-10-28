@@ -1,5 +1,6 @@
 //! Gated attention: grouped-query attention over the KV cache whose output is gated by a sigmoid,
-//! of a second head per query head (each element its own gate) or of one value per query head.
+//! of a second head per query head (each element its own gate) or of one value per query head, or
+//! left ungated.
 //! Each query and key head is RMS-normalized where the shape says so, then rotated in its first
 //! `rotary_dim` elements (a partial rotary embedding, rotated by halves).
 //!
@@ -25,6 +26,8 @@ pub enum Gate {
     Elementwise,
     /// One gate per query head, after the value heads (Spark).
     Headwise,
+    /// No gate (LFM2).
+    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -53,7 +56,7 @@ impl Shape {
     fn gate_heads(&self) -> usize {
         match self.gate {
             Gate::Elementwise => self.heads,
-            Gate::Headwise => 0,
+            Gate::Headwise | Gate::None => 0,
         }
     }
 
@@ -65,7 +68,7 @@ impl Shape {
     /// Columns of the fused projection.
     pub(crate) fn qkv(&self) -> usize {
         match self.gate {
-            Gate::Elementwise => self.head_columns(),
+            Gate::Elementwise | Gate::None => self.head_columns(),
             Gate::Headwise => self.head_columns() + self.heads,
         }
     }
@@ -84,7 +87,7 @@ pub(crate) struct Weights {
 pub(crate) struct Call<'call> {
     pub(crate) cache: &'call KvCache,
     pub(crate) slot: usize,
-    pub(crate) span: Span,
+    pub(crate) span: Span<'call>,
     pub(crate) positions: &'call [Position],
 }
 
@@ -235,8 +238,12 @@ impl Weights {
         );
     }
 
-    /// This thread's query heads of `buffers.attention` times their gates.
+    /// This thread's query heads of `buffers.attention` times their gates, where the shape has
+    /// them.
     fn gate(&self, pass: &Pass) {
+        if self.shape.gate == Gate::None {
+            return;
+        }
         let Shape {
             heads, head_dim, ..
         } = self.shape;
@@ -254,7 +261,8 @@ impl Weights {
         }
     }
 
-    /// Query head `head`'s gates in a row of the projection: one per element, or one for all.
+    /// Query head `head`'s gates in a row of the projection: one per element, one for all, or
+    /// none.
     fn gates<'row>(&self, row: &'row [f32], head: usize) -> &'row [f32] {
         let Shape {
             heads, head_dim, ..
@@ -262,6 +270,7 @@ impl Weights {
         match self.shape.gate {
             Gate::Elementwise => &row[(heads + head) * head_dim..][..head_dim],
             Gate::Headwise => std::slice::from_ref(&row[self.shape.head_columns() + head]),
+            Gate::None => &[],
         }
     }
 }

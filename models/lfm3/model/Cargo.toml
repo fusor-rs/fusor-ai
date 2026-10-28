@@ -1,0 +1,28 @@
+[package]
+name = "fusor-ai-lfm3"
+description = "LFM3-1.7B, LFM3-VL-2B, LFM3-Audio-2B and LFM3-Omni-2B: the model. No I/O; builds for native and wasm32."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "lfm3"
+
+[dependencies]
+team.workspace = true
+kernels.workspace = true
+media.workspace = true
+blocks.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[features]
+# Run the thread team on Rayon's pool (native, and the threaded browser runtimes).
+threads = ["team/threads"]
+
+[lints]
+workspace = true

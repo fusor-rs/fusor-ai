@@ -30,9 +30,11 @@ pub(crate) struct Operand<'buf> {
 }
 
 /// One attention: `images` images, each of `queries` query rows over `keys` key and value rows,
-/// in `heads` heads of `head_dim`.
+/// in `heads` query heads of `head_dim` over `kv_heads` key and value heads, each shared by
+/// consecutive query heads.
 pub(crate) struct Call<'buf> {
     pub(crate) heads: usize,
+    pub(crate) kv_heads: usize,
     pub(crate) head_dim: usize,
     pub(crate) images: usize,
     pub(crate) queries: usize,
@@ -46,7 +48,7 @@ pub(crate) struct Call<'buf> {
 /// One thread's working set.
 #[derive(Default)]
 pub(crate) struct Scratch {
-    /// The (image, head) whose keys and values are quantized.
+    /// The (image, key head) whose keys and values are quantized.
     head: Option<(usize, usize)>,
     keys: QuantizedMatrix,
     values: QuantizedMatrix,
@@ -80,18 +82,19 @@ pub(crate) fn attend(ctx: &Ctx, call: &Call, out: &SharedBuf, scratch: &mut Scra
     scratch.head = None;
     for unit in ctx.split(call.images * call.heads * blocks, 1) {
         let (pair, block) = (unit / blocks, unit % blocks);
-        let head = (pair / call.heads, pair % call.heads);
-        if scratch.head != Some(head) {
-            scratch.quantize(call, head);
+        let (image, head) = (pair / call.heads, pair % call.heads);
+        let key_head = (image, head / (call.heads / call.kv_heads));
+        if scratch.head != Some(key_head) {
+            scratch.quantize(call, key_head);
         }
         let first = block * QUERY_BLOCK;
         let queries = first..(first + QUERY_BLOCK).min(call.queries);
-        scratch.unit(call, head, queries, out);
+        scratch.unit(call, (image, head), queries, out);
     }
 }
 
 impl Scratch {
-    /// The keys and the transposed values of `(image, head)`, padded. Never inlined, as `unit`.
+    /// The keys and the transposed values of `(image, key head)`, padded. Never inlined, as `unit`.
     #[inline(never)]
     fn quantize(&mut self, call: &Call, (image, head): (usize, usize)) {
         let (head_dim, keys) = (call.head_dim, call.keys);

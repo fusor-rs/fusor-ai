@@ -1,15 +1,15 @@
-//! The FastConformer subsampler: `stages` convolutions over time and frequency, each a
-//! `kernel`-wide square window at stride `stride` with zero padding of half the window, a ReLU
-//! after each stage. The first maps the mel features to `channels`; the others are depthwise,
-//! each followed by a pointwise linear. A last linear maps each frame's remaining frequencies
-//! of `channels` to `hidden`.
+//! The FastConformer subsampler (and LFM2-Audio's): `stages` convolutions over time and
+//! frequency, each a `kernel`-wide square window at stride `stride` with zero padding of half the
+//! window, the shape's activation after each stage. The first maps the mel features to
+//! `channels`; the others are depthwise, each followed by a pointwise linear. A last linear maps
+//! each frame's remaining frequencies of `channels` to `hidden`.
 //!
 //! A stage of `n` input rows (or frequencies) has `(n + 2 · ⌊kernel / 2⌋ − kernel) / stride + 1`
-//! outputs. As in the reference, the features count one zero frame past the `mel_frames` real
-//! ones, and each stage zeroes its output rows past its valid length (the same count of its
-//! input's valid rows) before its pointwise linear and ReLU. So `forward` yields `Frames::all`
-//! rows, of which the first `Frames::valid` are the encoder's frames; the rows after them see the
-//! pointwise biases.
+//! outputs. As in the reference, the features count `padding_frames` zero frames past the
+//! `mel_frames` real ones, and each stage zeroes its output rows past its valid length (the same
+//! count of its input's valid rows) before its pointwise linear and activation. So `forward`
+//! yields `Frames::all` rows, of which the first `Frames::valid` are the encoder's frames; the
+//! rows after them see the pointwise biases.
 //!
 //! `forward` runs inside a team run: each thread computes blocks of output frames (the buffers'
 //! `block_frames` at a time) through every stage, from the rows each block needs of the stage
@@ -34,7 +34,7 @@ pub use buffers::Buffers;
 use buffers::Scratch;
 use kernel::{Kernel, Plane};
 use shape::lengths;
-pub use shape::{Frames, Shape};
+pub use shape::{Activation, Frames, Shape};
 
 /// A depthwise convolution and the pointwise linear after it.
 struct Stage {
@@ -120,7 +120,7 @@ impl Subsampling {
             (reads[0].clone(), valid),
             &mut stages[0],
         );
-        relu(&mut stages[0]);
+        self.shape.activation.apply(&mut stages[0]);
         for (index, stage) in self.stages.iter().enumerate() {
             let (done, rest) = stages.split_at_mut(index + 1);
             let input = Plane {
@@ -133,24 +133,30 @@ impl Subsampling {
             stage
                 .depthwise
                 .apply(&self.shape, &input, span, &mut rest[0]);
-            mix(&stage.pointwise, &mut rest[0], pointwise, quant);
+            mix(
+                &stage.pointwise,
+                self.shape.activation,
+                &mut rest[0],
+                pointwise,
+                quant,
+            );
         }
         stages.last().expect("a subsampler has stages")
     }
 }
 
-/// `relu(linear(values))` over every position (a row of the linear's inputs), in place.
-fn mix(linear: &Linear, values: &mut [f32], out: &mut Vec<f32>, quant: &mut QuantizedRows) {
+/// `activation(linear(values))` over every position (a row of the linear's inputs), in place.
+fn mix(
+    linear: &Linear,
+    activation: Activation,
+    values: &mut [f32],
+    out: &mut Vec<f32>,
+    quant: &mut QuantizedRows,
+) {
     out.resize(values.len(), 0.0);
     linear.apply(values, quant, out);
     values.copy_from_slice(out);
-    relu(values);
-}
-
-fn relu(values: &mut [f32]) {
-    for value in values {
-        *value = value.max(0.0);
-    }
+    activation.apply(values);
 }
 
 impl Load for Subsampling {

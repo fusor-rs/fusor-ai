@@ -9,7 +9,7 @@ use crate::attention;
 /// Activations of one forward call of up to `rows` positions.
 pub struct Buffers {
     pub(crate) rows: usize,
-    hidden_width: usize,
+    pub(crate) hidden_width: usize,
     /// The residual stream, `rows × hidden`: the input of `forward` and its output.
     pub hidden: SharedBuf,
     /// The token mixer's input projection (a fused QKV), `rows × mixer`.

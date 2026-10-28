@@ -22,7 +22,7 @@ pub use manifest::{FORMAT, Manifest, Part, Source, TensorEntry};
 pub use stages::Stages;
 pub use store::Store;
 #[cfg(feature = "tokenizer")]
-pub use tokenizer::{TOKENIZER_PART, Tokenizer};
+pub use tokenizer::{Encoded, TOKENIZER_PART, Tokenizer};
 
 /// What a bundle or a model runtime reports: its `kind()` names the variant for hosts.
 #[derive(Debug, thiserror::Error)]

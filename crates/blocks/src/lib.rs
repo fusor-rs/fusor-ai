@@ -7,7 +7,10 @@
 
 pub mod adaln_mlp;
 mod attention;
+pub mod audio;
+pub mod codec;
 pub mod conformer;
+pub mod depth;
 pub mod dit;
 pub mod dpm;
 pub mod flow;

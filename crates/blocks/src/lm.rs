@@ -154,7 +154,12 @@ impl Prediction {
         }
         let matrix = head.matrix();
         let input = quant.input(&matrix, normed);
-        let cols = ctx.split(matrix.rows, NARROW_COLUMN_ALIGN);
+        let vocabulary = matrix.rows;
+        let cols = ctx.split(
+            vocabulary.next_multiple_of(NARROW_COLUMN_ALIGN),
+            NARROW_COLUMN_ALIGN,
+        );
+        let cols = cols.start.min(vocabulary)..cols.end.min(vocabulary);
         head.project(&input, cols, |_, col, value| {
             self.logits.set(col, value);
         });
@@ -239,5 +244,29 @@ impl Reader {
         let hidden = &self.buffers.hidden.read()[row * lm.hidden..(row + 1) * lm.hidden];
         let norm = (&decoder.norm, decoder.eps);
         self.prediction.predict(ctx, hidden, norm, &lm.head);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use kernels::{DType, Linear, Table, Tensor, Vector};
+    use team::Team;
+
+    use super::Prediction;
+
+    /// Head row `i` is all `i`, the normed row all ones: logit `i` is `4i`, the last of 9 too.
+    #[test]
+    fn predicts_every_logit_of_a_vocabulary_of_no_whole_split_units() {
+        let (hidden, vocabulary) = (4, 9);
+        let rows: Vec<f32> = (0..vocabulary).flat_map(|row| [row as f32; 4]).collect();
+        let weight = Tensor::encode(DType::F32, vec![vocabulary, hidden], &rows).unwrap();
+        let head = Linear::new(Table::new(weight).unwrap(), None).unwrap();
+        let ones = Tensor::encode(DType::F32, vec![hidden], &[1.0; 4]).unwrap();
+        let norm = Vector::new(ones).unwrap();
+        let team = Team::global();
+        let prediction = Prediction::new(hidden, vocabulary, team.threads());
+        team.run(|ctx| prediction.predict(ctx, &[1.0; 4], (&norm, 0.0), &head));
+        let want: Vec<f32> = (0..vocabulary).map(|row| 4.0 * row as f32).collect();
+        assert_eq!(prediction.logits.read(), want);
     }
 }

@@ -56,6 +56,14 @@ members = [
     "models/spark-x2-6/compile",
     "models/spark-x2-6/runtime",
     "models/spark-x2-6/cli",
+    "models/lfm3/model",
+    "models/lfm3/compile",
+    "models/lfm3/runtime",
+    "models/lfm3/cli",
+    "models/d1/model",
+    "models/d1/compile",
+    "models/d1/runtime",
+    "models/d1/cli",
 ]
 resolver = "2"
 
@@ -124,6 +132,10 @@ qwen3-5 = { package = "fusor-ai-qwen3-5", path = "models/qwen3-5/model", version
 qwen3-5-compile = { package = "fusor-ai-qwen3-5-compile", path = "models/qwen3-5/compile", version = "=0.1.2" }
 spark-x2-6 = { package = "fusor-ai-spark-x2-6", path = "models/spark-x2-6/model", version = "=0.1.2" }
 spark-x2-6-compile = { package = "fusor-ai-spark-x2-6-compile", path = "models/spark-x2-6/compile", version = "=0.1.2" }
+lfm3 = { package = "fusor-ai-lfm3", path = "models/lfm3/model", version = "=0.1.2" }
+lfm3-compile = { package = "fusor-ai-lfm3-compile", path = "models/lfm3/compile", version = "=0.1.2" }
+d1 = { package = "fusor-ai-d1", path = "models/d1/model", version = "=0.1.2" }
+d1-compile = { package = "fusor-ai-d1-compile", path = "models/d1/compile", version = "=0.1.2" }
 rayon = "=1.12.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
@@ -133,6 +145,7 @@ tokenizers = { version = "=0.22.2", default-features = false, features = ["unsta
 realfft = "=3.5.0"
 miniz_oxide = "=0.8.9"
 regex = "=1.13.1"
+fancy-regex = "=0.14.0"
 unicode-bidi = "=0.3.18"
 unicode-normalization = "=0.1.25"
 unicode-properties = { version = "=0.1.4", default-features = false, features = ["general-category"] }

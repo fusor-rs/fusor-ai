@@ -53,12 +53,16 @@ pub fn text(value: &Value) -> Result<String, Error> {
     }
 }
 
-/// `text` without the leading and trailing characters Python's `str.isspace` matches: Unicode's
-/// whitespace and the information separators U+001C–U+001F (`str.strip()`, Jinja's `trim`).
+/// `text` without the leading and trailing characters `isspace` matches (`str.strip()`, Jinja's
+/// `trim`).
 pub fn strip(text: &str) -> &str {
-    text.trim_matches(|character: char| {
-        character.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&character)
-    })
+    text.trim_matches(isspace)
+}
+
+/// Python's `str.isspace` of one character: Unicode's whitespace and the information separators
+/// U+001C–U+001F.
+pub fn isspace(character: char) -> bool {
+    character.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&character)
 }
 
 fn write(out: &mut String, value: &Value, layout: Layout, depth: usize) {

@@ -72,7 +72,7 @@ fn rename_table(shard: &Checkpoint) -> Table {
         vec!["model.embedding.weight".into()],
     );
     add("llm.norm".into(), vec!["model.norm.weight".into()]);
-    for i in 0..LANGUAGE.layers {
+    for i in 0..LANGUAGE.mixers.len() {
         let (layer, from) = (format!("llm.layers.{i}"), format!("model.layers.{i}"));
         for (name, source) in LAYER_PARTS {
             add(format!("{layer}.{name}"), vec![format!("{from}.{source}")]);

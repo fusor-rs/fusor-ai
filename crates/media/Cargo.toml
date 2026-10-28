@@ -1,6 +1,6 @@
 [package]
 name = "fusor-ai-media"
-description = "WAV encoding and decoding, and image resampling as vision models' reference preprocessing does it (Pillow's bilinear and bicubic resizes, PyTorch's grid interpolation)."
+description = "WAV encoding and decoding, mel spectrograms, and image resampling as vision models' reference preprocessing does it (Pillow's bilinear and bicubic resizes, PyTorch's grid interpolation)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,6 +15,7 @@ name = "media"
 
 [dependencies]
 kernels.workspace = true
+realfft.workspace = true
 
 [lints]
 workspace = true

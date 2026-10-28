@@ -1,0 +1,2 @@
+product = "https://github.com/fusor-rs/liquidai-lmf3-wasm"
+formats = ["Q7b32"]

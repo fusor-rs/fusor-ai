@@ -96,7 +96,7 @@ pub struct Transformer {
 
 /// Which keys a query at position `p` sees.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mask {
+pub enum Mask<'rows> {
     /// Every position up to `p`.
     Causal,
     /// The last `n` positions up to and including `p`.
@@ -104,6 +104,28 @@ pub enum Mask {
     /// Every position of the call and of the calls before it: an encoder reads its whole
     /// sequence in one call.
     Full,
+    /// A state and the groups after it, read in one call: a position before `state` sees
+    /// every position of the call, a later one the state's and its own group's. Group `g` ends
+    /// before `ends[g]`, the first after `state`; the last ends with the call.
+    Groups { state: usize, ends: &'rows [usize] },
+}
+
+impl Mask<'_> {
+    /// The keys position `position` sees, in a call ending before `end`: two runs, the second
+    /// empty but under `Groups`.
+    fn keys(self, position: usize, end: usize) -> [Range<usize>; 2] {
+        match self {
+            Mask::Causal => [0..position + 1, 0..0],
+            Mask::Window(window) => [(position + 1).saturating_sub(window)..position + 1, 0..0],
+            Mask::Full => [0..end, 0..0],
+            Mask::Groups { state, .. } if position < state => [0..end, 0..0],
+            Mask::Groups { state, ends } => {
+                let group = ends.partition_point(|&group_end| group_end <= position);
+                let first = group.checked_sub(1).map_or(state, |before| ends[before]);
+                [0..state, first..ends[group]]
+            }
+        }
+    }
 }
 
 /// The KV cache: `capacity` slots per layer and KV head; position `p` lives in slot
@@ -175,18 +197,18 @@ impl KvCache {
             let kv_head = head / (heads / kv_heads);
             for row in 0..span.rows {
                 let position = span.first + row;
-                let (first_key, end_key) = match span.mask {
-                    Mask::Causal => (0, position + 1),
-                    Mask::Window(window) => ((position + 1).saturating_sub(window), position + 1),
-                    Mask::Full => (0, span.first + span.rows),
-                };
+                let [run, after] = span.mask.keys(position, span.first + span.rows);
                 let query = &qkv[row * stride + head * head_dim..][..head_dim];
                 let at = row * width + head * head_dim;
                 attend(
                     query,
-                    end_key - first_key,
+                    run.len() + after.len(),
                     |j| {
-                        let slot = self.offset(layer, kv_head, first_key + j);
+                        let key = match j.checked_sub(run.len()) {
+                            Some(past) => after.start + past,
+                            None => run.start + j,
+                        };
+                        let slot = self.offset(layer, kv_head, key);
                         (&keys[slot..slot + head_dim], &values[slot..slot + head_dim])
                     },
                     &mut scratch.scores,
@@ -250,16 +272,16 @@ impl KvCache {
 /// One call: `rows` consecutive positions starting at `first`, attending under `mask`. Their
 /// rotary angles turn by their sequence positions, unless `forward_at` gives them their own.
 #[derive(Debug, Clone, Copy)]
-pub struct Span {
+pub struct Span<'rows> {
     pub rows: usize,
     pub first: usize,
-    pub mask: Mask,
+    pub mask: Mask<'rows>,
 }
 
 /// A span whose row `r` turns its rotary angles by `positions[r]`.
 #[derive(Debug, Clone, Copy)]
 pub struct Positioned<'rows> {
-    pub span: Span,
+    pub span: Span<'rows>,
     pub positions: &'rows [Position],
 }
 
@@ -286,7 +308,7 @@ impl Transformer {
     fn run(&self, ctx: &Ctx, buffers: &Buffers, attention: &Cached) {
         let Cached { cache, span, .. } = attention;
         let reach = match span.mask {
-            Mask::Causal | Mask::Full => span.first + span.rows,
+            Mask::Causal | Mask::Full | Mask::Groups { .. } => span.first + span.rows,
             Mask::Window(window) => window + span.rows,
         };
         assert!(
@@ -300,12 +322,12 @@ impl Transformer {
 /// Attention over the KV cache.
 struct Cached<'call> {
     cache: &'call KvCache,
-    span: Span,
+    span: Span<'call>,
     positions: Option<&'call [Position]>,
 }
 
 impl<'call> Cached<'call> {
-    fn new(cache: &'call KvCache, span: Span, positions: Option<&'call [Position]>) -> Self {
+    fn new(cache: &'call KvCache, span: Span<'call>, positions: Option<&'call [Position]>) -> Self {
         Self {
             cache,
             span,

@@ -1,0 +1,22 @@
+[package]
+name = "fusor-ai-lfm3-compile"
+description = "Compiles an LFM3 checkpoint into a bundle: what to keep, renames and every dtype."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "lfm3_compile"
+
+[dependencies]
+lfm3.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
+compile.workspace = true
+kernels.workspace = true
+blocks.workspace = true
+
+[lints]
+workspace = true

@@ -46,6 +46,9 @@ enum Axis {
 pub enum Rotation {
     /// Every frequency `base^(−2i/head_dim)` by the sequence position.
     Sequence,
+    /// `Sequence`'s frequencies, only the first this many turning and the others 0: the tail of
+    /// each half of a head stays as it is (LFM3's partial rotary embedding).
+    Partial(usize),
     /// Qwen2-VL's multimodal RoPE: the frequencies of `Sequence` in three consecutive sections
     /// of these lengths, turned by the temporal, height and width positions.
     Multimodal([usize; 3]),
@@ -75,6 +78,11 @@ impl Rotary {
         let half = head_dim / 2;
         let (inv_freq, axes) = match rotation {
             Rotation::Sequence => (rope_inv_freq(base, head_dim), vec![Axis::Temporal; half]),
+            Rotation::Partial(turning) => {
+                let mut inv_freq = rope_inv_freq(base, head_dim);
+                inv_freq[turning..].fill(0.0);
+                (inv_freq, vec![Axis::Temporal; half])
+            }
             Rotation::Multimodal(sections) => {
                 assert_eq!(
                     sections.iter().sum::<usize>(),

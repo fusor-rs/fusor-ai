@@ -36,6 +36,8 @@ pub const SUBSAMPLING_SHAPE: subsampling::Shape = subsampling::Shape {
     kernel: 3,
     stride: 2,
     stages: 3,
+    activation: subsampling::Activation::Relu,
+    padding_frames: 1,
     hidden: ENCODER_SHAPE.hidden,
 };
 /// Seconds of audio per encoder frame.

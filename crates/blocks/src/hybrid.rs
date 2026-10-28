@@ -171,7 +171,7 @@ impl Saved {
 pub struct Rows<'rows> {
     pub first: usize,
     pub positions: &'rows [Position],
-    pub mask: Mask,
+    pub mask: Mask<'rows>,
 }
 
 enum Mixer {
@@ -241,8 +241,8 @@ impl Hybrid {
                     weights.mix(&pass, &normed, &call);
                 }
             }
-            attended_residual(&pass, out);
-            feed_forward_residual(&pass, &layer.norm2, &layer.feed_forward);
+            attended_residual(&pass, out, None);
+            feed_forward_residual(&pass, &layer.norm2, &layer.feed_forward, None);
         }
     }
 }

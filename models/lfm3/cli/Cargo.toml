@@ -1,0 +1,30 @@
+[package]
+name = "lfm3-cli"
+description = "The native LFM3 host: compile a checkpoint, chat, benchmark, check parity with the goldens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "lfm3"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+lfm3 = { workspace = true, features = ["threads"] }
+lfm3-compile.workspace = true
+harness.workspace = true
+bundle.workspace = true
+compile.workspace = true
+kernels.workspace = true
+media.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+
+[lints]
+workspace = true

@@ -49,6 +49,7 @@ impl Decoder {
         };
         let call = Call {
             heads: 1,
+            kv_heads: 1,
             head_dim: channels,
             images: grid.images,
             queries: grid.area(),

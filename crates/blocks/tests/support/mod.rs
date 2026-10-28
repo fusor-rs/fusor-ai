@@ -4,7 +4,7 @@
 
 use bundle::{Source, Store};
 use compile::BundleWriter;
-use kernels::{DType, Tensor};
+use kernels::{BLOCK, DType, Tensor};
 
 /// Bytes per write into the store, fewer than a part's: parts arrive in pieces.
 const CHUNK: usize = 4096;
@@ -158,7 +158,8 @@ impl Weights {
         }
     }
 
-    /// The bundle of every tensor added, its matrices as `matrices`, streamed into a store.
+    /// The bundle of every tensor added, its matrices of whole blocks of columns as `matrices`
+    /// (as a compiler's profile quantizes them), streamed into a store.
     pub fn store(self, matrices: DType) -> Store {
         let dir = std::env::temp_dir().join(format!(
             "fusor-ai-blocks-{}-{}",
@@ -167,7 +168,7 @@ impl Weights {
         ));
         let mut writer = BundleWriter::create(&dir).expect("the temporary directory is writable");
         for (name, shape, values) in &self.tensors {
-            let dtype = if shape.len() == 2 {
+            let dtype = if shape.len() == 2 && shape[1].is_multiple_of(BLOCK) {
                 matrices
             } else {
                 DType::F32
@@ -406,6 +407,12 @@ pub enum Mask {
     Window(usize),
     /// Every row.
     Full,
+    /// Every row before `state`; a later row the rows before `state` and those of its own group,
+    /// the groups ending before `ends`.
+    Groups {
+        state: usize,
+        ends: &'static [usize],
+    },
 }
 
 pub struct Stack(Vec<Layer>);
@@ -467,22 +474,28 @@ fn attend(heads: &[Vec<f64>], dims: &Dims, mask: Mask) -> Vec<f64> {
         |row: usize, head: usize| &heads[row * units + dims.heads + dims.kv_heads + head / group];
     let mut out = Vec::with_capacity(rows * dims.width());
     for row in 0..rows {
-        let seen = match mask {
-            Mask::Causal => 0..row + 1,
-            Mask::Window(n) => (row + 1).saturating_sub(n)..row + 1,
-            Mask::Full => 0..rows,
+        let seen: Vec<usize> = match mask {
+            Mask::Causal => (0..row + 1).collect(),
+            Mask::Window(n) => ((row + 1).saturating_sub(n)..row + 1).collect(),
+            Mask::Groups { state, ends } if row >= state => {
+                let end = ends.iter().find(|&&end| end > row).copied();
+                let end = end.expect("the last group ends with the rows");
+                let first = ends.iter().rev().find(|&&end| end <= row).copied();
+                (0..state).chain(first.unwrap_or(state)..end).collect()
+            }
+            Mask::Full | Mask::Groups { .. } => (0..rows).collect(),
         };
         for head in 0..dims.heads {
             let query = &heads[row * units + head];
             let scores: Vec<f64> = seen
-                .clone()
-                .map(|j| dot(query, key(j, head)) / (dims.head_dim as f64).sqrt())
+                .iter()
+                .map(|&j| dot(query, key(j, head)) / (dims.head_dim as f64).sqrt())
                 .collect();
             let max = scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             let weights: Vec<f64> = scores.iter().map(|score| (score - max).exp()).collect();
             let total: f64 = weights.iter().sum();
             let mut mixed = vec![0.0; dims.head_dim];
-            for (j, weight) in seen.clone().zip(&weights) {
+            for (&j, weight) in seen.iter().zip(&weights) {
                 for (mix, x) in mixed.iter_mut().zip(value(j, head)) {
                     *mix += weight / total * x;
                 }

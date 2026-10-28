@@ -9,6 +9,7 @@
 //! `forward` runs inside a team run over the rows of `Buffers::hidden`, one per patch, row-major
 //! over the image's patch grid.
 
+pub mod interleaved;
 pub mod merger;
 pub mod preprocessing;
 pub mod tower;
@@ -126,9 +127,9 @@ impl Vit {
 }
 
 /// Attention among all the patches of one image, rotated by each patch's row and column.
-struct Patches {
-    columns: usize,
-    exponentials: Exponentials,
+pub(crate) struct Patches {
+    pub(crate) columns: usize,
+    pub(crate) exponentials: Exponentials,
 }
 
 impl Attention for Patches {
@@ -149,24 +150,26 @@ impl Attention for Patches {
     /// On the int8 kernels (`attention`), split over (head, block of queries) units.
     fn attend(&self, pass: &Pass, _layer: usize) {
         let Heads {
-            heads, head_dim, ..
+            heads,
+            kv_heads,
+            head_dim,
         } = pass.heads;
-        let (qkv_width, width) = (pass.heads.qkv(), pass.heads.width());
         let qkv = pass.buffers.qkv.read();
-        let operand = |part: usize| Operand {
+        let operand = |heads_before: usize| Operand {
             values: qkv,
-            stride: qkv_width,
-            offset: part * width,
+            stride: pass.heads.qkv(),
+            offset: heads_before * head_dim,
         };
         let call = Call {
             heads,
+            kv_heads,
             head_dim,
             images: 1,
             queries: pass.rows,
             keys: pass.rows,
             query: operand(0),
-            key: operand(1),
-            value: operand(2),
+            key: operand(heads),
+            value: operand(heads + kv_heads),
             exponentials: self.exponentials,
         };
         let scratch = &mut pass.buffers.scratch.get(pass.ctx).attention;

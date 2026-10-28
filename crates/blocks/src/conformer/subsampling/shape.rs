@@ -2,6 +2,26 @@
 
 use std::ops::Range;
 
+use kernels::ops::silu;
+
+/// The activation after each stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Activation {
+    Relu,
+    Silu,
+}
+
+impl Activation {
+    pub(super) fn apply(self, values: &mut [f32]) {
+        for value in values {
+            *value = match self {
+                Activation::Relu => value.max(0.0),
+                Activation::Silu => silu(*value),
+            };
+        }
+    }
+}
+
 /// The dimensions of one subsampler.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shape {
@@ -13,6 +33,9 @@ pub struct Shape {
     pub kernel: usize,
     pub stride: usize,
     pub stages: usize,
+    pub activation: Activation,
+    /// Zero frames the reference appends past the features.
+    pub padding_frames: usize,
     /// The width of an encoder frame.
     pub hidden: usize,
 }
@@ -75,7 +98,7 @@ impl Frames {
 /// Every stage's output rows for `mel_frames` mel frames.
 pub(super) fn lengths(shape: &Shape, mel_frames: usize) -> Vec<Frames> {
     let mut length = Frames {
-        all: mel_frames + 1,
+        all: mel_frames + shape.padding_frames,
         valid: mel_frames,
     };
     let stages = (0..shape.stages).map(|_| {

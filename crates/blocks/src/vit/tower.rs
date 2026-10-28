@@ -63,11 +63,34 @@ pub struct Buffers {
 
 impl Buffers {
     pub fn new(shape: &Shape, patches: usize, threads: usize) -> Self {
+        Self::around(shape.encoder.buffers(patches, threads), threads)
+    }
+
+    /// The buffers of a tower whose encoder's activations are `encoder`.
+    pub(crate) fn around(encoder: super::Buffers, threads: usize) -> Self {
         Self {
-            encoder: shape.encoder.buffers(patches, threads),
+            encoder,
             quant: PerThread::new(threads, QuantizedRows::default),
             row: PerThread::new(threads, Vec::new),
         }
+    }
+
+    /// This thread's rows of the first `patches` of `encoder.hidden`, each through `norm`, in
+    /// place; then a barrier.
+    pub(crate) fn norm_rows(&self, ctx: &Ctx, patches: usize, norm: impl Fn(&[f32], &mut [f32])) {
+        let width = self.encoder.hidden_width;
+        let rows = ctx.split(patches, 1);
+        let hidden = self
+            .encoder
+            .hidden
+            .part(rows.start * width..rows.end * width);
+        let copy = self.row.get(ctx);
+        for row in hidden.chunks_exact_mut(width) {
+            copy.clear();
+            copy.extend_from_slice(row);
+            norm(copy, row);
+        }
+        ctx.barrier();
     }
 }
 
@@ -108,19 +131,8 @@ impl Tower {
         let Some(norm) = &self.norm else {
             return;
         };
-        let width = self.shape.encoder.hidden;
-        let rows = ctx.split(grid.patches(), 1);
-        let hidden = buffers
-            .encoder
-            .hidden
-            .part(rows.start * width..rows.end * width);
-        let copy = buffers.row.get(ctx);
-        for row in hidden.chunks_exact_mut(width) {
-            copy.clear();
-            copy.extend_from_slice(row);
-            norm.apply(copy, self.shape.encoder.norm_eps, row);
-        }
-        ctx.barrier();
+        let eps = self.shape.encoder.norm_eps;
+        buffers.norm_rows(ctx, grid.patches(), |row, out| norm.apply(row, eps, out));
     }
 }
 

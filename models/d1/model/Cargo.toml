@@ -1,0 +1,30 @@
+[package]
+name = "fusor-ai-d1"
+description = "d1-2B and d1-Omni-2B: the model. No I/O; builds for native and wasm32."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "d1"
+
+[dependencies]
+team.workspace = true
+kernels.workspace = true
+media.workspace = true
+blocks.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
+serde.workspace = true
+fancy-regex.workspace = true
+unicode-normalization.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+
+[features]
+# Run the thread team on Rayon's pool (native, and the threaded browser runtimes).
+threads = ["team/threads"]
+
+[lints]
+workspace = true

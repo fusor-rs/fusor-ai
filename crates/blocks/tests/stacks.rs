@@ -7,9 +7,11 @@ use std::ops::Range;
 
 use blocks::dit::{self, Dit, Sequences};
 use blocks::hybrid::{self, AttentionShape, DeltaShape, Gate, HeadNorm, Hybrid};
+use blocks::interleaved::{self, Activation, Interleaved, Mixer, Norms, Window};
 use blocks::lm::{self, Embedding, Lm, Positions, Reader, Rows};
 use blocks::rotary::{Position, Rotation};
 use blocks::transformer::{self, Architecture, KvCache, Span, Transformer};
+use blocks::vit::interleaved::{self as tower, Tower};
 use blocks::vit::{self, Grid, Vit};
 use bundle::Load;
 use kernels::DType;
@@ -17,9 +19,9 @@ use kernels::ops::Exponentials;
 use team::Team;
 
 use support::{
-    Bias, DeltaDims, Dims, HeadNorms, HybridDims, Kind, LAYERS, Llama, Mask, NormKind, Pairing,
-    Plain, Rotary, Weights, angles, gelu_erf, gelu_tanh, quick_gelu, relative_error, rms_norm,
-    widen,
+    Bias, DeltaDims, Dims, HeadNorms, HybridDims, Kind, LAYERS, Linear, Llama, Mask, NormKind,
+    Pairing, Plain, Rotary, Weights, angles, gelu_erf, gelu_tanh, quick_gelu, relative_error,
+    rms_norm, widen,
 };
 
 const EPS: f32 = 1e-6;
@@ -207,7 +209,7 @@ struct Stream {
     architecture: Architecture,
     plain: Plain,
     pairing: Option<Pairing>,
-    mask: transformer::Mask,
+    mask: transformer::Mask<'static>,
     capacity: usize,
     /// Rows per call.
     call: usize,
@@ -215,7 +217,9 @@ struct Stream {
 }
 
 const WINDOW: usize = 4;
-const STREAMS: [Stream; 3] = [
+/// Rows of the state, and where each group after it ends, for `Mask::Groups`.
+const GROUPED: (usize, &[usize]) = (3, &[5, 6, ROWS]);
+const STREAMS: [Stream; 4] = [
     Stream {
         architecture: Architecture::Kyutai,
         plain: Plain {
@@ -255,6 +259,22 @@ const STREAMS: [Stream; 3] = [
         call: ROWS,
         weights: DType::F32,
     },
+    Stream {
+        architecture: Architecture::Encoder,
+        plain: Plain {
+            norm: NormKind::Layer,
+            bias: Bias::With,
+            activation: gelu_erf,
+        },
+        pairing: None,
+        mask: transformer::Mask::Groups {
+            state: GROUPED.0,
+            ends: GROUPED.1,
+        },
+        capacity: ROWS,
+        call: ROWS,
+        weights: DType::F32,
+    },
 ];
 
 #[test]
@@ -290,11 +310,12 @@ fn stream_error(case: &Stream) -> f64 {
 }
 
 /// The reference's mask for a block's.
-fn reference_mask(mask: transformer::Mask) -> Mask {
+fn reference_mask(mask: transformer::Mask<'static>) -> Mask {
     match mask {
         transformer::Mask::Causal => Mask::Causal,
         transformer::Mask::Window(n) => Mask::Window(n),
         transformer::Mask::Full => Mask::Full,
+        transformer::Mask::Groups { state, ends } => Mask::Groups { state, ends },
     }
 }
 
@@ -357,19 +378,156 @@ fn vision_encoder_attends_among_the_patches_like_the_reference() {
     team.run(|ctx| vit.forward(ctx, &buffers, grid));
 
     let mut x = widen(&input);
-    let quarter = ENCODER.head_dim / 4;
-    let angles = |row: usize| {
-        let base = ROPE_BASE.into();
-        let along_rows = angles(&vec![row / grid.columns; quarter], base, 2 * quarter);
-        let along_columns = angles(&vec![row % grid.columns; quarter], base, 2 * quarter);
-        [along_rows, along_columns].concat()
-    };
+    let angles = |row: usize| grid_angles(grid, ENCODER.head_dim, row);
     let rotary = Rotary {
         pairing: Pairing::Half,
         angles: &angles,
     };
     stack.apply(&mut x, &ENCODER, Some(&rotary), Mask::Full);
     let error = relative_error(buffers.hidden.read(), &x);
+    assert!(error < tolerance(VIT_WEIGHTS), "error {error:.2e}");
+}
+
+/// A patch's rotary angles: the first half of a head's frequencies by its row in `grid`, the
+/// second by its column.
+fn grid_angles(grid: Grid, head_dim: usize, row: usize) -> Vec<f64> {
+    let (quarter, base) = (head_dim / 4, ROPE_BASE.into());
+    let along_rows = angles(&vec![row / grid.columns; quarter], base, 2 * quarter);
+    let along_columns = angles(&vec![row % grid.columns; quarter], base, 2 * quarter);
+    [along_rows, along_columns].concat()
+}
+
+const PATCH_VALUES: usize = 32;
+/// Side of the conv layer's square of taps.
+const KERNEL: usize = 3;
+
+/// The vision tower's attention layers (`LAYERS` of them, grouped-query), then a conv layer.
+const TOWER_MIXERS: [tower::Mixer; LAYERS + 1] = {
+    use tower::Mixer::{Attention, Conv};
+    [Attention, Attention, Conv]
+};
+
+/// A gated 2-D conv layer's weights, as the reference applies them.
+struct ConvLayer {
+    norm1: Vec<f64>,
+    input: Linear,
+    taps: Vec<f64>,
+    out: Linear,
+    norm2: Vec<f64>,
+    gate: Linear,
+    up: Linear,
+    down: Linear,
+}
+
+impl ConvLayer {
+    fn new(weights: &mut Weights, prefix: &str) -> Self {
+        let (hidden, inner) = (DECODER.hidden, DECODER.feed_forward);
+        let name = |part: &str| format!("{prefix}.{part}");
+        Self {
+            norm1: weights.tensor(&name("input_norm"), &[hidden], 1.0, 0.2),
+            input: weights.linear(&name("input"), [3 * hidden, hidden], Bias::Without),
+            taps: weights.tensor(&name("conv"), &[hidden, KERNEL * KERNEL], 0.0, 0.5),
+            out: weights.linear(&name("out"), [hidden, hidden], Bias::Without),
+            norm2: weights.tensor(&name("post_norm"), &[hidden], 1.0, 0.2),
+            gate: weights.linear(&name("gate"), [inner, hidden], Bias::Without),
+            up: weights.linear(&name("up"), [inner, hidden], Bias::Without),
+            down: weights.linear(&name("down"), [hidden, inner], Bias::Without),
+        }
+    }
+
+    /// `x += out(c · conv(b · x))` over the patches of `grid`, zero past its edges, then the
+    /// SiLU-gated MLP.
+    fn apply(&self, x: &mut [f64], grid: Grid) {
+        let (hidden, eps) = (DECODER.hidden, DECODER.eps);
+        let projected = self.input.apply(&rms_norm(x, &self.norm1, eps));
+        let part = |patch: usize, part: usize, channel: usize| {
+            projected[patch * 3 * hidden + part * hidden + channel]
+        };
+        let mut mixed = vec![0.0; x.len()];
+        for (at, value) in mixed.iter_mut().enumerate() {
+            let (patch, channel) = (at / hidden, at % hidden);
+            let (top, left) = (patch / grid.columns, patch % grid.columns);
+            let mut sum = 0.0;
+            for tap in 0..KERNEL * KERNEL {
+                let (y, x) = (top + tap / KERNEL, left + tap % KERNEL);
+                if (1..=grid.rows).contains(&y) && (1..=grid.columns).contains(&x) {
+                    let source = (y - 1) * grid.columns + x - 1;
+                    let gated = part(source, 0, channel) * part(source, 2, channel);
+                    sum += self.taps[channel * KERNEL * KERNEL + tap] * gated;
+                }
+            }
+            *value = part(patch, 1, channel) * sum;
+        }
+        for (value, added) in x.iter_mut().zip(self.out.apply(&mixed)) {
+            *value += added;
+        }
+        let normed = rms_norm(x, &self.norm2, eps);
+        let gates = self.gate.apply(&normed).into_iter();
+        let silu = |value: f64| value / (1.0 + (-value).exp());
+        let inner: Vec<f64> = gates
+            .zip(self.up.apply(&normed))
+            .map(|(gate, up)| silu(gate) * up)
+            .collect();
+        for (value, added) in x.iter_mut().zip(self.down.apply(&inner)) {
+            *value += added;
+        }
+    }
+}
+
+#[test]
+fn vision_tower_mixes_its_patches_like_the_reference() {
+    let grid = Grid {
+        rows: 3,
+        columns: 4,
+    };
+    let Dims {
+        hidden,
+        heads,
+        kv_heads,
+        ..
+    } = DECODER;
+    let mut weights = Weights::new("tower", 5);
+    let pixels = weights.floats(grid.patches() * PATCH_VALUES, 0.0, 1.0);
+    let patch = weights.linear("tower.patch", [hidden, PATCH_VALUES], Bias::Without);
+    let patch_norm = weights.tensor("tower.patch_norm", &[hidden], 1.0, 0.2);
+    let llama = Llama {
+        qkv_bias: Bias::Without,
+        head_norms: HeadNorms::With,
+    };
+    let stack = weights.stack("tower.layers", &DECODER, Kind::Llama(llama));
+    let conv = ConvLayer::new(&mut weights, &format!("tower.layers.{LAYERS}"));
+    let shape = tower::Shape {
+        hidden,
+        mixers: &TOWER_MIXERS,
+        heads,
+        kv_heads,
+        feed_forward: DECODER.feed_forward,
+        kernel: KERNEL,
+        rope_base: ROPE_BASE,
+        norm_eps: EPS,
+        patch_values: PATCH_VALUES,
+        exponentials: Exponentials::Exact,
+    };
+    let tower = Tower::load(&mut weights.store(VIT_WEIGHTS), "tower", shape)
+        .expect("the bundle holds every tensor the block loads");
+
+    let team = Team::global();
+    let buffers = shape.buffers(grid.patches(), team.threads());
+    team.run(|ctx| {
+        tower.embed(ctx, &buffers, &pixels);
+        tower.encode(ctx, &buffers, grid);
+    });
+
+    let mut x = rms_norm(&patch.apply(&widen(&pixels)), &patch_norm, DECODER.eps);
+    let angles = |row: usize| grid_angles(grid, DECODER.head_dim, row);
+    let rotary = Rotary {
+        pairing: Pairing::Half,
+        angles: &angles,
+    };
+    stack.apply(&mut x, &DECODER, Some(&rotary), Mask::Full);
+    conv.apply(&mut x, grid);
+    let encoded = &buffers.encoder.hidden.read()[..x.len()];
+    let error = relative_error(encoded, &x);
     assert!(error < tolerance(VIT_WEIGHTS), "error {error:.2e}");
 }
 
@@ -470,7 +628,7 @@ fn hybrid_stack_carries_its_state_across_calls_like_the_reference() {
 }
 
 /// The error of the output of `ROWS` rows through the hybrid stack in calls of `call` rows.
-fn hybrid_error(reading: (transformer::Mask, usize, Detour)) -> f64 {
+fn hybrid_error(reading: (transformer::Mask<'static>, usize, Detour)) -> f64 {
     let mut weights = Weights::new("hybrid", 5);
     let input = weights.floats(ROWS * DECODER.hidden, 0.0, 1.0);
     let stack = weights.hybrid("hybrid.layers", &HYBRID);
@@ -583,6 +741,120 @@ fn read_hybrid(
             }
         }
         output.extend(read(&state, input, rows));
+    }
+    output
+}
+
+/// LFM3's layers in small: gated short convolutions between full and window attention, every
+/// sublayer's output normed (a sandwich).
+const LFM: interleaved::Shape = interleaved::Shape {
+    hidden: DECODER.hidden,
+    mixers: &[Mixer::Conv, Mixer::Full, Mixer::Conv, Mixer::Window],
+    attention: AttentionShape {
+        heads: DECODER.heads,
+        kv_heads: DECODER.kv_heads,
+        head_dim: DECODER.head_dim,
+        rotary_dim: DECODER.head_dim,
+        rope_base: ROPE_BASE,
+        rotation: Rotation::Partial(DECODER.head_dim / 4),
+        head_norm: HeadNorm::Rms,
+        gate: Gate::Headwise,
+    },
+    window: Window {
+        rows: 2,
+        rotary_dim: DECODER.head_dim,
+        rope_base: ROPE_BASE,
+        rotation: Rotation::Sequence,
+    },
+    conv_kernel: 3,
+    feed_forward: DECODER.feed_forward,
+    activation: Activation::Silu,
+    norms: Norms::Sandwich,
+    norm_eps: EPS,
+};
+
+#[test]
+fn interleaved_stack_reads_on_across_calls_as_in_one() {
+    let (hidden, heads) = (DECODER.hidden, DECODER.heads);
+    let head_dim = DECODER.head_dim;
+    let mut weights = Weights::new("interleaved", 11);
+    let input = weights.floats(ROWS * hidden, 0.0, 1.0);
+    for (layer, mixer) in LFM.mixers.iter().enumerate() {
+        let prefix = format!("lfm.layers.{layer}");
+        let norms = [
+            "input_norm",
+            "post_norm",
+            "mixer_out_norm",
+            "feed_forward_out_norm",
+        ];
+        for norm in norms {
+            weights.tensor(&format!("{prefix}.{norm}"), &[hidden], 1.0, 0.1);
+        }
+        let matrices = match mixer {
+            Mixer::Conv => vec![
+                ("input.weight", 3 * hidden, hidden),
+                ("out.weight", hidden, hidden),
+            ],
+            Mixer::Full | Mixer::Window => {
+                let qkv = (heads + 2 * DECODER.kv_heads) * head_dim + heads;
+                vec![
+                    ("qkv.weight", qkv, hidden),
+                    ("o.weight", hidden, heads * head_dim),
+                ]
+            }
+        };
+        let feed_forward = DECODER.feed_forward;
+        let inner = [
+            ("gate.weight", feed_forward, hidden),
+            ("up.weight", feed_forward, hidden),
+        ];
+        let down = ("down.weight", hidden, feed_forward);
+        for (name, outputs, inputs) in matrices.into_iter().chain(inner).chain([down]) {
+            weights.tensor(&format!("{prefix}.{name}"), &[outputs, inputs], 0.0, 0.2);
+        }
+        match mixer {
+            Mixer::Conv => {
+                weights.tensor(
+                    &format!("{prefix}.conv"),
+                    &[hidden, LFM.conv_kernel],
+                    0.0,
+                    0.5,
+                );
+            }
+            Mixer::Full | Mixer::Window => {
+                for norm in ["q_norm", "k_norm"] {
+                    weights.tensor(&format!("{prefix}.{norm}"), &[head_dim], 1.0, 0.1);
+                }
+            }
+        }
+    }
+    let stack = Interleaved::load(&mut weights.store(DType::F32), "lfm", LFM)
+        .expect("the bundle holds every tensor the block loads");
+    let whole = read_interleaved(&stack, &input, ROWS);
+    let in_calls = read_interleaved(&stack, &input, CALL);
+    let error = relative_error(&in_calls, &widen(&whole));
+    assert!(error < tolerance(DType::F32), "error {error:.2e}");
+}
+
+/// The output of `input`'s rows through the stack in calls of `call` rows.
+fn read_interleaved(stack: &Interleaved, input: &[f32], call: usize) -> Vec<f32> {
+    let hidden = DECODER.hidden;
+    let team = Team::global();
+    let state = interleaved::State::new(&LFM, ROWS, call);
+    let mut buffers = LFM.buffers(call, team.threads());
+    let positions: Vec<Position> = (0..ROWS).map(Position::uniform).collect();
+    let mut output = Vec::new();
+    for first in (0..ROWS).step_by(call) {
+        let rows = first..ROWS.min(first + call);
+        buffers.hidden.get_mut()[..rows.len() * hidden]
+            .copy_from_slice(&input[rows.start * hidden..rows.end * hidden]);
+        let rows_call = hybrid::Rows {
+            first: rows.start,
+            positions: &positions[rows.clone()],
+            mask: transformer::Mask::Causal,
+        };
+        team.run(|ctx| stack.forward(ctx, &state, &buffers, &rows_call));
+        output.extend_from_slice(&buffers.hidden.read()[..rows.len() * hidden]);
     }
     output
 }

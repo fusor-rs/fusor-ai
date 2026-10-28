@@ -6,6 +6,13 @@ pub const TOKENIZER_PART: &str = "tokenizer.json";
 /// The tokenizer a bundle ships as its `TOKENIZER_PART` blob.
 pub struct Tokenizer(tokenizers::Tokenizer);
 
+/// A text's ids, and the characters of the text each one covers (Python's string indices, as
+/// `return_offsets_mapping` gives them).
+pub struct Encoded {
+    pub ids: Vec<u32>,
+    pub spans: Vec<(usize, usize)>,
+}
+
 impl Tokenizer {
     /// Takes the tokenizer out of a complete store.
     pub fn take(store: &mut Store) -> Result<Self, Error> {
@@ -25,6 +32,27 @@ impl Tokenizer {
             .encode(text, false)
             .map_err(|error| Error::Format(format!("tokenize: {error}")))?;
         Ok(encoding.get_ids().to_vec())
+    }
+
+    /// The ids of `text`, as `encode`, with their spans of it.
+    pub fn encode_spans(&self, text: &str) -> Result<Encoded, Error> {
+        let encoding = self
+            .0
+            .encode_char_offsets(text, false)
+            .map_err(|error| Error::Format(format!("tokenize: {error}")))?;
+        Ok(Encoded {
+            ids: encoding.get_ids().to_vec(),
+            spans: encoding.get_offsets().to_vec(),
+        })
+    }
+
+    /// The text of every special token.
+    pub fn specials(&self) -> Vec<String> {
+        let added = self.0.get_added_tokens_decoder().into_values();
+        added
+            .filter(|token| token.special)
+            .map(|token| token.content)
+            .collect()
     }
 
     /// The text of `ids`, special tokens included.

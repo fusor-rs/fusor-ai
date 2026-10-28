@@ -231,6 +231,7 @@ impl Step<'_> {
         } = self.shape;
         let call = Call {
             heads,
+            kv_heads: heads,
             head_dim: channels / heads,
             images: self.grid.images,
             queries: self.grid.area(),
