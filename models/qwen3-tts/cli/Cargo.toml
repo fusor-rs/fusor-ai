@@ -1,0 +1,29 @@
+[package]
+name = "qwen3-tts-cli"
+description = "The native qwen3-tts host: compile a checkpoint, speak with a cloned voice, benchmark, check parity with the goldens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "qwen3-tts"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+qwen3-tts = { workspace = true, features = ["threads"] }
+qwen3-tts-compile.workspace = true
+harness.workspace = true
+bundle.workspace = true
+compile.workspace = true
+kernels.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

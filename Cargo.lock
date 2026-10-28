@@ -847,6 +847,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "fusor-ai-qwen3-tts"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-blocks",
+ "fusor-ai-bundle",
+ "fusor-ai-kernels",
+ "fusor-ai-media",
+ "fusor-ai-team",
+ "serde",
+]
+
+[[package]]
+name = "fusor-ai-qwen3-tts-compile"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-kernels",
+ "fusor-ai-qwen3-tts",
+ "fusor-ai-team",
+ "serde_json",
+]
+
+[[package]]
 name = "fusor-ai-realistic-vision"
 version = "0.1.2"
 dependencies = [
@@ -1480,6 +1504,32 @@ dependencies = [
  "fusor-ai-qwen3-5",
  "fusor-ai-runtime",
  "serde",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "qwen3-tts-cli"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "clap",
+ "fusor-ai-bundle",
+ "fusor-ai-compile",
+ "fusor-ai-harness",
+ "fusor-ai-kernels",
+ "fusor-ai-qwen3-tts",
+ "fusor-ai-qwen3-tts-compile",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "qwen3-tts-runtime"
+version = "0.1.2"
+dependencies = [
+ "fusor-ai-qwen3-tts",
+ "fusor-ai-runtime",
  "serde_json",
  "wasm-bindgen",
 ]

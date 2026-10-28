@@ -5,7 +5,7 @@
 use blocks::adaln_mlp::{self, AdalnMlp};
 use blocks::norm::LayerNorm;
 use blocks::rotary::Rotation;
-use blocks::seanet::{self, Seanet};
+use blocks::seanet::{self, Direction, Seanet};
 use blocks::transformer::{self, Architecture, Transformer};
 use bundle::{Load, Store};
 use kernels::{Linear, Matrix, Table, Vector};
@@ -59,6 +59,7 @@ pub(crate) const MIMI_WINDOW: usize = 251;
 pub(crate) const UPSAMPLE: usize = 16;
 
 pub const SEANET_SHAPE: seanet::Shape = seanet::Shape {
+    direction: Direction::Decode,
     dimension: HIDDEN,
     filters: 64,
     ratios: &[6, 5, 4],

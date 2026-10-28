@@ -1,9 +1,9 @@
-//! Mel power spectrograms as audio models' reference preprocessing computes them (`torch.stft`
-//! with `center=False`, the Slaney filterbank of librosa and transformers): every `hop` samples,
-//! a periodic Hann window of `fft` samples, the power of its real FFT, through `mels` triangular
-//! filters spaced evenly on the Slaney mel scale from 0 Hz to the Nyquist frequency, each scaled
-//! to unit area (`2 / (high − low)`). The filterbank is computed in f64 and rounded to f32, as
-//! the references compute it.
+//! Mel power and magnitude spectrograms as audio models' reference preprocessing computes them
+//! (`torch.stft` with `center=False`, the Slaney filterbank of librosa and transformers): every
+//! `hop` samples, a periodic Hann window of `fft` samples, the power (or magnitude) of its real
+//! FFT, through `mels` triangular filters spaced evenly on the Slaney mel scale from 0 Hz to the
+//! Nyquist frequency, each scaled to unit area (`2 / (high − low)`). The filterbank is computed
+//! in f64 and rounded to f32, as the references compute it.
 
 use std::f64::consts::TAU;
 use std::sync::Arc;
@@ -68,6 +68,16 @@ impl MelSpectrogram {
     /// The mel powers of every whole window of `samples`, `frames × mels` row-major, into `out`.
     /// Returns the frames.
     pub fn power(&self, samples: &[f32], out: &mut Vec<f32>) -> usize {
+        self.spectrum(samples, out, |power| power)
+    }
+
+    /// The mel magnitudes `√(power + floor)` of every whole window of `samples`, `frames × mels`
+    /// row-major, into `out`. Returns the frames.
+    pub fn magnitude(&self, samples: &[f32], floor: f32, out: &mut Vec<f32>) -> usize {
+        self.spectrum(samples, out, |power| (power + floor).sqrt())
+    }
+
+    fn spectrum(&self, samples: &[f32], out: &mut Vec<f32>, bin: impl Fn(f32) -> f32) -> usize {
         let Shape { fft, hop, mels, .. } = self.shape;
         let frames = self.shape.frames(samples.len());
         out.clear();
@@ -75,7 +85,7 @@ impl MelSpectrogram {
         let mut input = self.fft.make_input_vec();
         let mut spectrum = self.fft.make_output_vec();
         let mut scratch = self.fft.make_scratch_vec();
-        let mut power = vec![0.0; self.shape.bins()];
+        let mut values = vec![0.0; self.shape.bins()];
         for (frame, row) in out.chunks_exact_mut(mels).enumerate() {
             let windowed = samples[frame * hop..][..fft].iter().zip(&self.window);
             for (slot, (sample, weight)) in input.iter_mut().zip(windowed) {
@@ -84,12 +94,12 @@ impl MelSpectrogram {
             self.fft
                 .process_with_scratch(&mut input, &mut spectrum, &mut scratch)
                 .expect("the buffers come from the plan");
-            for (bin_power, bin) in power.iter_mut().zip(&spectrum) {
-                *bin_power = bin.norm_sqr();
+            for (value, complex) in values.iter_mut().zip(&spectrum) {
+                *value = bin(complex.norm_sqr());
             }
-            let filters = self.filters.chunks_exact(power.len());
+            let filters = self.filters.chunks_exact(values.len());
             for (mel, filter) in row.iter_mut().zip(filters) {
-                *mel = dot_f32(filter, &power);
+                *mel = dot_f32(filter, &values);
             }
         }
         frames
@@ -153,7 +163,8 @@ mod tests {
     /// area weights `2 / 500`. A cosine on bin 2 (250 Hz) of a 16-point FFT has power
     /// `(16 / 4)² = 16` there through a periodic Hann window and `(16 / 8)² = 4` on bins 1 and 3
     /// (125 and 375 Hz), where the first filter weighs half its peak and the second half of
-    /// its own on bin 3: mels `0.002 · 4 + 0.004 · 16 + 0.002 · 4 = 0.08` and `0.002 · 4`.
+    /// its own on bin 3: mel powers `0.002 · 4 + 0.004 · 16 + 0.002 · 4 = 0.08` and `0.002 · 4`;
+    /// the magnitudes are 4 and 2: `0.002 · 2 + 0.004 · 4 + 0.002 · 2 = 0.024` and `0.002 · 2`.
     #[test]
     fn filters_a_bin_centred_cosine_through_slaney_triangles() {
         let shape = Shape {
@@ -165,11 +176,18 @@ mod tests {
         let samples: Vec<f32> = (0..16 + 2 * 4 + 3)
             .map(|index| (TAU * 2.0 * index as f32 / 16.0).cos())
             .collect();
-        let mut out = Vec::new();
-        let frames = MelSpectrogram::new(shape).power(&samples, &mut out);
-        assert_eq!(frames, 3);
-        for (got, want) in out.iter().zip([0.08, 0.008, 0.0].repeat(frames)) {
-            assert!((got - want).abs() < 1e-6, "{out:?}");
+        let spectrogram = MelSpectrogram::new(shape);
+        let mut power = Vec::new();
+        let mut magnitude = Vec::new();
+        assert_eq!(spectrogram.power(&samples, &mut power), 3);
+        assert_eq!(spectrogram.magnitude(&samples, 0.0, &mut magnitude), 3);
+        for (out, want) in [
+            (power, [0.08, 0.008, 0.0]),
+            (magnitude, [0.024, 0.004, 0.0]),
+        ] {
+            for (got, want) in out.iter().zip(want.repeat(3)) {
+                assert!((got - want).abs() < 1e-6, "{out:?}");
+            }
         }
     }
 }

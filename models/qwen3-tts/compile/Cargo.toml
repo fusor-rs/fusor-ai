@@ -1,0 +1,23 @@
+[package]
+name = "fusor-ai-qwen3-tts-compile"
+description = "Compiles the Qwen3-TTS-12Hz-0.6B-Base checkpoint into a bundle: what to keep, renames, folds and the dtype of every tensor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "qwen3_tts_compile"
+
+[dependencies]
+qwen3-tts.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
+compile.workspace = true
+kernels.workspace = true
+team.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

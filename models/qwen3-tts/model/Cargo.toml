@@ -1,0 +1,27 @@
+[package]
+name = "fusor-ai-qwen3-tts"
+description = "Qwen3-TTS-12Hz-0.6B-Base: the model. No I/O; builds for native and wasm32."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "qwen3_tts"
+
+[dependencies]
+team.workspace = true
+kernels.workspace = true
+media.workspace = true
+blocks.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
+serde.workspace = true
+
+[features]
+# Run the thread team on Rayon's pool (native, and the threaded browser runtimes).
+threads = ["team/threads"]
+
+[lints]
+workspace = true

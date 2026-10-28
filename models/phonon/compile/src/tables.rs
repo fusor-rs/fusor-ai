@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use compile::{Checkpoint, Error, Tensors};
+use compile::{Checkpoint, Error, Tensors, scale_rows};
 use kernels::ops::{rms_norm, silu};
 use phonon::model::{
     FLOW_LM_SHAPE, FLOW_SHAPE, HIDDEN, LATENT, MIMI_TRANSFORMER_SHAPE, SEANET_SHAPE, VOICE_FRAMES,
@@ -302,115 +302,20 @@ pub(crate) fn mimi(checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> R
 
 /// SEANet's layers as `blocks::seanet` causal-conv matrices.
 fn seanet(checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> Result<(), Error> {
-    conv(
-        checkpoint,
-        tensors,
-        "init",
-        &format!("{SEANET}.{FIRST_CONV}.conv"),
-    )?;
+    let first = format!("{SEANET}.{FIRST_CONV}.conv");
+    tensors.conv1d(checkpoint, "mimi.decoder.init", &first)?;
     for (stage, &ratio) in SEANET_SHAPE.ratios.iter().enumerate() {
         let elu = FIRST_CONV + 1 + stage * STAGE_LAYERS;
-        let name = |part: &str| format!("stages.{stage}.{part}");
+        let name = |part: &str| format!("mimi.decoder.stages.{stage}.{part}");
         let upsample = format!("{SEANET}.{}.convtr", elu + 1);
-        transposed_conv(checkpoint, tensors, &name("upsample"), &upsample, ratio)?;
+        tensors.transposed_conv1d(checkpoint, &name("upsample"), &upsample, ratio)?;
         let [first, second] = RESIDUAL_CONVS.map(|conv| format!("{SEANET}.{}.{conv}", elu + 2));
-        conv(checkpoint, tensors, &name("residual1"), &first)?;
-        conv(checkpoint, tensors, &name("residual2"), &second)?;
+        tensors.conv1d(checkpoint, &name("residual1"), &first)?;
+        tensors.conv1d(checkpoint, &name("residual2"), &second)?;
     }
     let last = FIRST_CONV + 1 + SEANET_SHAPE.ratios.len() * STAGE_LAYERS + 1;
-    conv(
-        checkpoint,
-        tensors,
-        "final",
-        &format!("{SEANET}.{last}.conv"),
-    )
-}
-
-/// A conv layer of the checkpoint.
-struct Conv {
-    /// `[out, in, kernel]`, or `[in, out, kernel]` for a transposed conv.
-    shape: [usize; 3],
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-}
-
-impl Conv {
-    fn read(checkpoint: &Checkpoint, source: &str) -> Result<Self, Error> {
-        let weight_name = format!("{source}.weight");
-        let [first, second, kernel] = checkpoint.shape(&weight_name)?[..] else {
-            return Err(Error::Format(format!("{weight_name} is not a conv weight")));
-        };
-        Ok(Self {
-            shape: [first, second, kernel],
-            weight: checkpoint.f32(&weight_name)?,
-            bias: checkpoint.f32(&format!("{source}.bias"))?,
-        })
-    }
-}
-
-/// A conv `[out, in, k]` as `[out, k · in]`, oldest input first.
-fn conv(
-    checkpoint: &Checkpoint,
-    tensors: &mut Tensors<Profile>,
-    name: &str,
-    source: &str,
-) -> Result<(), Error> {
-    let Conv {
-        shape: [outputs, inputs, kernel],
-        weight,
-        bias,
-    } = Conv::read(checkpoint, source)?;
-    let mut matrix = Vec::with_capacity(weight.len());
-    for output in 0..outputs {
-        for tap in 0..kernel {
-            matrix
-                .extend((0..inputs).map(|input| weight[(output * inputs + input) * kernel + tap]));
-        }
-    }
-    tensors.linear(
-        &format!("mimi.decoder.{name}"),
-        outputs,
-        &matrix,
-        Some(&bias),
-    )
-}
-
-/// A transposed conv `[in, out, 2s]` of stride `s` as a window-2 conv of `s` phases,
-/// `[s · out, 2 · in]`: output step `s·p + j` is `W[:, :, s + j]` times input `p − 1` plus
-/// `W[:, :, j]` times input `p`.
-fn transposed_conv(
-    checkpoint: &Checkpoint,
-    tensors: &mut Tensors<Profile>,
-    name: &str,
-    source: &str,
-    stride: usize,
-) -> Result<(), Error> {
-    let Conv {
-        shape: [inputs, outputs, kernel],
-        weight,
-        bias,
-    } = Conv::read(checkpoint, source)?;
-    if kernel != 2 * stride {
-        return Err(Error::Format(format!(
-            "{source}: kernel {kernel} for stride {stride}"
-        )));
-    }
-    let at =
-        |input: usize, output: usize, tap: usize| weight[(input * outputs + output) * kernel + tap];
-    let mut matrix = Vec::with_capacity(weight.len());
-    for phase in 0..stride {
-        for output in 0..outputs {
-            matrix.extend((0..inputs).map(|input| at(input, output, stride + phase)));
-            matrix.extend((0..inputs).map(|input| at(input, output, phase)));
-        }
-    }
-    let rows = stride * outputs;
-    tensors.linear(
-        &format!("mimi.decoder.{name}"),
-        rows,
-        &matrix,
-        Some(&bias.repeat(stride)),
-    )
+    let last = format!("{SEANET}.{last}.conv");
+    tensors.conv1d(checkpoint, "mimi.decoder.final", &last)
 }
 
 /// The voices of `VOICES` through the speaker projection, `[VOICE_FRAMES, HIDDEN]` each.
@@ -453,12 +358,4 @@ fn matvec(matrix: &[f32], x: &[f32]) -> Vec<f32> {
         .chunks_exact(x.len())
         .map(|row| dot(row) as f32)
         .collect()
-}
-
-/// Multiplies row `i` of a row-major matrix by `scales[i]`.
-fn scale_rows(matrix: &mut [f32], scales: &[f32]) {
-    let cols = matrix.len() / scales.len();
-    for (row, scale) in matrix.chunks_exact_mut(cols).zip(scales) {
-        row.iter_mut().for_each(|value| *value *= scale);
-    }
 }

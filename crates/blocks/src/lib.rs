@@ -8,11 +8,14 @@
 pub mod adaln_mlp;
 mod attention;
 pub mod audio;
+mod causal;
+pub mod code2wav;
 pub mod codec;
 pub mod conformer;
 pub mod depth;
 pub mod dit;
 pub mod dpm;
+pub mod ecapa;
 pub mod flow;
 pub mod hybrid;
 pub mod interleaved;

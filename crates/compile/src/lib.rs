@@ -5,6 +5,7 @@
 //! `Profile`) is the model's own compiler; this crate is the part every model shares.
 
 mod checkpoint;
+mod conv;
 mod npz;
 mod onnx;
 mod profile;
@@ -47,4 +48,12 @@ pub fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, Error> {
     let json = std::fs::read(path).map_err(Error::io(path))?;
     serde_json::from_slice(&json)
         .map_err(|error| Error::Format(format!("{}: {error}", path.display())))
+}
+
+/// Multiplies row `i` of a row-major matrix by `scales[i]`.
+pub fn scale_rows(matrix: &mut [f32], scales: &[f32]) {
+    let cols = matrix.len() / scales.len();
+    for (row, scale) in matrix.chunks_exact_mut(cols).zip(scales) {
+        row.iter_mut().for_each(|value| *value *= scale);
+    }
 }

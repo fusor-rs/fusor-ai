@@ -64,6 +64,10 @@ members = [
     "models/d1/compile",
     "models/d1/runtime",
     "models/d1/cli",
+    "models/qwen3-tts/model",
+    "models/qwen3-tts/compile",
+    "models/qwen3-tts/runtime",
+    "models/qwen3-tts/cli",
 ]
 resolver = "2"
 
@@ -136,6 +140,8 @@ lfm3 = { package = "fusor-ai-lfm3", path = "models/lfm3/model", version = "=0.1.
 lfm3-compile = { package = "fusor-ai-lfm3-compile", path = "models/lfm3/compile", version = "=0.1.2" }
 d1 = { package = "fusor-ai-d1", path = "models/d1/model", version = "=0.1.2" }
 d1-compile = { package = "fusor-ai-d1-compile", path = "models/d1/compile", version = "=0.1.2" }
+qwen3-tts = { package = "fusor-ai-qwen3-tts", path = "models/qwen3-tts/model", version = "=0.1.2" }
+qwen3-tts-compile = { package = "fusor-ai-qwen3-tts-compile", path = "models/qwen3-tts/compile", version = "=0.1.2" }
 rayon = "=1.12.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
