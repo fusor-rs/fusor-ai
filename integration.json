@@ -705,5 +705,63 @@
     "outputs": [
       ".txt"
     ]
+  },
+  "qwen3-tts": {
+    "product": "qwen3-tts-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/golden_f32_icl_english.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/b62ebf751dcf7c783362689a6c423553d53b68d5/qwen3-tts/golden_f32_icl_english.safetensors",
+        "sha256": "sha256:90a2f4cb5555509be87f4c7f1169ce66e52fa029c083c955edb4d38c736090f4"
+      },
+      {
+        "file": "fixtures/goldens/golden_f32_icl_chinese.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/b62ebf751dcf7c783362689a6c423553d53b68d5/qwen3-tts/golden_f32_icl_chinese.safetensors",
+        "sha256": "sha256:f36963dcfb7d6f3133aa1d29e632eaae69f90dd4e4a6e772709e40c84bf90597"
+      },
+      {
+        "file": "fixtures/goldens/golden_f32_xvector_english.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/b62ebf751dcf7c783362689a6c423553d53b68d5/qwen3-tts/golden_f32_xvector_english.safetensors",
+        "sha256": "sha256:1730d7931cd3c40f7321f53960e3c3a089a9b78441ade3266e4d8e9d5a06fe32"
+      },
+      {
+        "file": "fixtures/goldens/golden_f32_xvector_chinese.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/b62ebf751dcf7c783362689a6c423553d53b68d5/qwen3-tts/golden_f32_xvector_chinese.safetensors",
+        "sha256": "sha256:e404b1d19db3b5d2065bd3b3d14af57cc3321fcf44d692ce04bd89f59f783704"
+      }
+    ],
+    "build": [
+      "just model",
+      "just fixtures",
+      "just asr",
+      "rm -rf dist/model-f32",
+      "target/release/qwen3-tts compile .cache/checkpoint dist/model-f32 --profile f32",
+      "just runtimes",
+      "just page",
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model",
+      "dist/model-f32"
+    ],
+    "parity": "target/release/qwen3-tts parity dist/model-f32 fixtures/goldens/golden_f32_icl_english.safetensors fixtures/goldens/golden_f32_icl_chinese.safetensors fixtures/goldens/golden_f32_xvector_english.safetensors fixtures/goldens/golden_f32_xvector_chinese.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single.wav"
+    ],
+    "e2e": [
+      "ASR_PYTHON=.cache/asr/bin/python node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "bench": "target/release/qwen3-tts bench dist/model fixtures/media/voice-24k.wav --threads 8",
+    "page": [
+      "openToFirstAudioMs",
+      "cold.load",
+      "warm.heard",
+      "warm.rtf",
+      "revisitMs"
+    ],
+    "outputs": [
+      ".wav"
+    ],
+    "unstable": "^e2e/.*record"
   }
 }
