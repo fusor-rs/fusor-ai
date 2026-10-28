@@ -303,7 +303,7 @@ checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
 
 [[package]]
 name = "d1-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -319,7 +319,7 @@ dependencies = [
 
 [[package]]
 name = "d1-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-d1",
  "fusor-ai-runtime",
@@ -330,7 +330,7 @@ dependencies = [
 
 [[package]]
 name = "d3-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -346,7 +346,7 @@ dependencies = [
 
 [[package]]
 name = "d3-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-d3",
  "fusor-ai-runtime",
@@ -499,7 +499,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "fusor-ai-blocks"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -512,7 +512,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-bundle"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "blake3",
  "fusor-ai-kernels",
@@ -524,7 +524,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "blake3",
  "fusor-ai-bundle",
@@ -537,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-d1"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fancy-regex",
  "fusor-ai-blocks",
@@ -552,7 +552,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-d1-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -563,7 +563,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-d3"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -576,7 +576,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-d3-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -586,7 +586,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-harness"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-indra-ocr"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -615,7 +615,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-indra-ocr-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -625,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-intern-decision"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -638,7 +638,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-intern-decision-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -648,7 +648,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-kernels"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-team",
  "serde",
@@ -657,7 +657,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-kronos"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -668,7 +668,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-kronos-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -678,7 +678,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-lfm3"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -691,7 +691,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-lfm3-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -702,7 +702,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-media"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-kernels",
  "realfft",
@@ -710,7 +710,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-ming"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-ming-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -734,7 +734,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-oxr"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -746,7 +746,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-oxr-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -756,7 +756,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-paddle-ocr"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -768,7 +768,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-paddle-ocr-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -778,7 +778,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-parakeet"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -792,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-parakeet-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-phonon"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -816,7 +816,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-phonon-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -826,7 +826,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-qwen3-5"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -838,7 +838,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-qwen3-5-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -848,7 +848,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-qwen3-tts"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -860,7 +860,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-qwen3-tts-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -872,7 +872,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-realistic-vision"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -884,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-realistic-vision-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -896,7 +896,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "blake3",
  "fusor-ai-bundle",
@@ -909,7 +909,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-spark-x2-6"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-blocks",
  "fusor-ai-bundle",
@@ -920,7 +920,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-spark-x2-6-compile"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-bundle",
  "fusor-ai-compile",
@@ -930,7 +930,7 @@ dependencies = [
 
 [[package]]
 name = "fusor-ai-team"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "rayon",
 ]
@@ -1018,7 +1018,7 @@ dependencies = [
 
 [[package]]
 name = "indra-ocr-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1034,7 +1034,7 @@ dependencies = [
 
 [[package]]
 name = "indra-ocr-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-indra-ocr",
  "fusor-ai-runtime",
@@ -1044,7 +1044,7 @@ dependencies = [
 
 [[package]]
 name = "intern-decision-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "intern-decision-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-intern-decision",
  "fusor-ai-runtime",
@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "kronos-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1117,7 +1117,7 @@ dependencies = [
 
 [[package]]
 name = "kronos-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-kronos",
  "fusor-ai-runtime",
@@ -1127,7 +1127,7 @@ dependencies = [
 
 [[package]]
 name = "lfm3-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1144,7 +1144,7 @@ dependencies = [
 
 [[package]]
 name = "lfm3-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-lfm3",
  "fusor-ai-runtime",
@@ -1189,7 +1189,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "ming-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1202,7 +1202,7 @@ dependencies = [
 
 [[package]]
 name = "ming-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-ming",
  "fusor-ai-runtime",
@@ -1319,7 +1319,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "oxr-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1332,7 +1332,7 @@ dependencies = [
 
 [[package]]
 name = "oxr-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-oxr",
  "fusor-ai-runtime",
@@ -1342,7 +1342,7 @@ dependencies = [
 
 [[package]]
 name = "paddle-ocr-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1355,7 +1355,7 @@ dependencies = [
 
 [[package]]
 name = "paddle-ocr-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-paddle-ocr",
  "fusor-ai-runtime",
@@ -1365,7 +1365,7 @@ dependencies = [
 
 [[package]]
 name = "parakeet-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1378,7 +1378,7 @@ dependencies = [
 
 [[package]]
 name = "parakeet-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-parakeet",
  "fusor-ai-runtime",
@@ -1399,7 +1399,7 @@ checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
 name = "phonon-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1412,7 +1412,7 @@ dependencies = [
 
 [[package]]
 name = "phonon-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-phonon",
  "fusor-ai-runtime",
@@ -1483,7 +1483,7 @@ dependencies = [
 
 [[package]]
 name = "qwen3-5-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1499,7 +1499,7 @@ dependencies = [
 
 [[package]]
 name = "qwen3-5-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-qwen3-5",
  "fusor-ai-runtime",
@@ -1510,7 +1510,7 @@ dependencies = [
 
 [[package]]
 name = "qwen3-tts-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1526,7 +1526,7 @@ dependencies = [
 
 [[package]]
 name = "qwen3-tts-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-qwen3-tts",
  "fusor-ai-runtime",
@@ -1613,7 +1613,7 @@ dependencies = [
 
 [[package]]
 name = "realistic-vision-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1627,7 +1627,7 @@ dependencies = [
 
 [[package]]
 name = "realistic-vision-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-realistic-vision",
  "fusor-ai-runtime",
@@ -1761,7 +1761,7 @@ checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 
 [[package]]
 name = "spark-x2-6-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1777,7 +1777,7 @@ dependencies = [
 
 [[package]]
 name = "spark-x2-6-runtime"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "fusor-ai-runtime",
  "fusor-ai-spark-x2-6",
