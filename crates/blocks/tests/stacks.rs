@@ -830,31 +830,43 @@ fn interleaved_stack_reads_on_across_calls_as_in_one() {
     }
     let stack = Interleaved::load(&mut weights.store(DType::F32), "lfm", LFM)
         .expect("the bundle holds every tensor the block loads");
-    let whole = read_interleaved(&stack, &input, ROWS);
-    let in_calls = read_interleaved(&stack, &input, CALL);
-    let error = relative_error(&in_calls, &widen(&whole));
-    assert!(error < tolerance(DType::F32), "error {error:.2e}");
+    let whole = widen(&read_interleaved(&stack, &input, ROWS, Detour::None));
+    for detour in [Detour::None, Detour::Prefix] {
+        let error = relative_error(&read_interleaved(&stack, &input, CALL, detour), &whole);
+        assert!(error < tolerance(DType::F32), "{detour:?}: {error:.2e}");
+    }
 }
 
-/// The output of `input`'s rows through the stack in calls of `call` rows.
-fn read_interleaved(stack: &Interleaved, input: &[f32], call: usize) -> Vec<f32> {
+/// The output of `input`'s rows through the stack in calls of `call` rows, under `detour`.
+fn read_interleaved(stack: &Interleaved, input: &[f32], call: usize, detour: Detour) -> Vec<f32> {
     let hidden = DECODER.hidden;
     let team = Team::global();
-    let state = interleaved::State::new(&LFM, ROWS, call);
+    let mut state = interleaved::State::new(&LFM, ROWS, call);
     let mut buffers = LFM.buffers(call, team.threads());
     let positions: Vec<Position> = (0..ROWS).map(Position::uniform).collect();
-    let mut output = Vec::new();
-    for first in (0..ROWS).step_by(call) {
-        let rows = first..ROWS.min(first + call);
+    let reversed: Vec<f32> = input.rchunks(hidden).flatten().copied().collect();
+    let mut read = |state: &interleaved::State, from: &[f32], rows: Range<usize>| {
         buffers.hidden.get_mut()[..rows.len() * hidden]
-            .copy_from_slice(&input[rows.start * hidden..rows.end * hidden]);
+            .copy_from_slice(&from[rows.start * hidden..rows.end * hidden]);
         let rows_call = hybrid::Rows {
             first: rows.start,
             positions: &positions[rows.clone()],
             mask: transformer::Mask::Causal,
         };
-        team.run(|ctx| stack.forward(ctx, &state, &buffers, &rows_call));
-        output.extend_from_slice(&buffers.hidden.read()[..rows.len() * hidden]);
+        team.run(|ctx| stack.forward(ctx, state, &buffers, &rows_call));
+        buffers.hidden.read()[..rows.len() * hidden].to_vec()
+    };
+    let mut output = Vec::new();
+    for first in (0..ROWS).step_by(call) {
+        if detour == Detour::Prefix && first > 0 {
+            let prefix = state.keep_prefix(first);
+            state.clear();
+            for other in (0..ROWS).step_by(call) {
+                read(&state, &reversed, other..ROWS.min(other + call));
+            }
+            state.restore_prefix(&prefix);
+        }
+        output.extend(read(&state, input, first..ROWS.min(first + call)));
     }
     output
 }

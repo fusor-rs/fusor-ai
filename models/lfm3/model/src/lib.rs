@@ -8,7 +8,9 @@
 //! LFM3-Omni-2B read a turn's images too: each cut into patches (`media`), through the vision tower
 //! (`blocks::vit::interleaved`) and projector into the prompt's image tokens. LFM3-Audio-2B and
 //! LFM3-Omni-2B hear a turn's clips (`audio::Hearing`) and speak (`audio::Voice`): a reply is text,
-//! speech, or both in turns (`output`). `pipeline` lists the stages in order; `session` runs them.
+//! speech, or both in turns (`output`). `pipeline` lists the stages in order; `session` runs them,
+//! and may keep prompts' first rows, to read later prompts on from their end, and hold a reply to
+//! a constraint.
 
 pub mod audio;
 pub mod media;

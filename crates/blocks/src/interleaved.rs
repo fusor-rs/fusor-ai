@@ -10,9 +10,10 @@
 //! (`hybrid::attention` and `conv` list them). A final norm after the last layer is the model's.
 //!
 //! `Interleaved::forward` runs inside a team run. Calls read consecutive rows of one sequence
-//! from its first: the window layers keep their keys in a ring that holds the window and one
-//! call's rows, and the conv layers their last inputs, so a sequence is read on, never from an
-//! earlier row again.
+//! from its first, or on from the end of a prefix kept with `State::keep_prefix` and put back with
+//! `State::restore_prefix` after other sequences were read: the window layers keep their keys in a
+//! ring that holds the window and one call's rows, and the conv layers their last inputs, so a
+//! sequence is read on, never from an earlier row again.
 
 pub(crate) mod conv;
 
@@ -27,7 +28,7 @@ use crate::layer::{
     prepare,
 };
 use crate::rotary::Rotation;
-use crate::transformer::{KvCache, Mask, Span};
+use crate::transformer::{KvCache, KvRows, Mask, Span};
 
 /// How a layer mixes its rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,6 +151,32 @@ impl State {
     pub fn clear(&mut self) {
         self.conv.get_mut().fill(0.0);
     }
+
+    /// The state after the first `rows` rows read, to read another sequence that begins with
+    /// them on from there, whatever was read in between.
+    pub fn keep_prefix(&self, rows: usize) -> Prefix {
+        Prefix {
+            global: self.global.copy_rows(rows),
+            window: self.window.copy_rows(self.window_capacity),
+            conv: self.conv.read().to_vec(),
+        }
+    }
+
+    /// Goes back to the state after `prefix`'s rows, to read on from the row after them.
+    pub fn restore_prefix(&mut self, prefix: &Prefix) {
+        self.global.put_rows(&prefix.global);
+        self.window.put_rows(&prefix.window);
+        self.conv.get_mut().copy_from_slice(&prefix.conv);
+    }
+}
+
+/// The state after a sequence's first rows: the full attention layers' keys and values of those
+/// rows, the window layers' ring and the conv layers' kept inputs, which a sequence read after
+/// them overwrites.
+pub struct Prefix {
+    global: KvRows,
+    window: KvRows,
+    conv: Vec<f32>,
 }
 
 enum Mixing {

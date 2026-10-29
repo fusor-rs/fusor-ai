@@ -1,10 +1,11 @@
 //! A conversation's prompt, byte for byte as the variant's chat template and processor render it:
-//! the conversation's system text when it has one, each turn's user message (its images first,
-//! each its tokens between its vision markers, then its audio clips, each its tokens, between the
-//! same markers for LFM3-Omni-2B, then its text), each earlier reply's text as the template writes
-//! it back (its reasoning dropped, behind an empty thinking block but for LFM3-Audio-2B), and the
-//! reply's opener (`Mode`): a thinking block, opened when the turn thinks and empty when not, or
-//! the marker of a spoken reply or of one interleaving text and speech.
+//! the conversation's system text when it has one, its tools listed after it (`system`), each
+//! turn's user message (its images first, each its tokens between its vision markers, then its
+//! audio clips, each its tokens, between the same markers for LFM3-Omni-2B, then its text), each
+//! earlier reply's text as the template writes it back (its reasoning dropped, behind an empty
+//! thinking block but for LFM3-Audio-2B), and the reply's opener (`Mode`): a thinking block,
+//! opened when the turn thinks and empty when not, or the marker of a spoken reply or of one
+//! interleaving text and speech.
 
 use bundle::Tokenizer;
 use serde::Deserialize;
@@ -17,6 +18,8 @@ const END: &str = "<|im_end|>";
 const THINK_START: &str = "<think>";
 const THINK_END: &str = "</think>";
 const EMPTY_THOUGHT: &str = "<think></think>";
+const TOOLS_START: &str = "<tools>\n";
+const TOOLS_END: &str = "\n</tools>";
 const VISION_START: &str = "<|vision_start|>";
 const IMAGE: &str = "<|image|>";
 const VISION_END: &str = "<|vision_end|>";
@@ -94,6 +97,19 @@ pub struct Opening {
 pub struct Replied {
     pub turn: Turn,
     pub reply: String,
+}
+
+/// The system text as the template writes it with `tools` listed after it, each tool's JSON as
+/// its `tool_to_json` writes it; the text alone without tools.
+pub fn system(text: &str, tools: &[String]) -> String {
+    if tools.is_empty() {
+        return text.to_owned();
+    }
+    let separator = if text.is_empty() { "" } else { "\n\n" };
+    format!(
+        "{text}{separator}{TOOLS_START}{}{TOOLS_END}",
+        tools.join("\n")
+    )
 }
 
 /// The ids of the prompt asking for the reply to `next`, after `system` and `history`: as many
@@ -204,5 +220,40 @@ pub(crate) fn reasoned(reply: &str) -> (Option<&str>, &str) {
     match reply.rsplit_once(THINK_END) {
         Some((reasoning, answer)) => (Some(reasoning), answer),
         None => (None, reply),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::system;
+
+    const ADD: &str = r#"{"name": "add", "description": "Adds"}"#;
+    const SUBTRACT: &str = r#"{"name": "sub", "description": "Subtracts"}"#;
+
+    #[test]
+    fn lists_tools_after_the_system_text_as_the_template_writes_them() {
+        let cases = [
+            (
+                "Fill it.",
+                vec![ADD],
+                "Fill it.\n\n<tools>\n{\"name\": \"add\", \"description\": \"Adds\"}\n</tools>",
+            ),
+            (
+                "Fill it.",
+                vec![ADD, SUBTRACT],
+                "Fill it.\n\n<tools>\n{\"name\": \"add\", \"description\": \"Adds\"}\n\
+                 {\"name\": \"sub\", \"description\": \"Subtracts\"}\n</tools>",
+            ),
+            (
+                "",
+                vec![ADD],
+                "<tools>\n{\"name\": \"add\", \"description\": \"Adds\"}\n</tools>",
+            ),
+            ("Fill it.", vec![], "Fill it."),
+        ];
+        for (text, tools, expected) in cases {
+            let tools: Vec<String> = tools.into_iter().map(str::to_owned).collect();
+            assert_eq!(system(text, &tools), expected);
+        }
     }
 }

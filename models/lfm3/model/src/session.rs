@@ -3,15 +3,16 @@
 //! an image through the vision tower, a clip through the audio encoder, the prompt through the
 //! language model, or one more row of the reply: a token, or a spoken frame through the codec —
 //! so that a host streams the reply, its text and its samples (`speech`), and can stop between
-//! steps. Each turn reads its whole prompt from its first row: the template writes a reply back
-//! as its text alone, without its reasoning or its speech, and the window and conv layers keep
-//! only their last rows; the conversation keeps its images' and clips' tokens for it. The stages
-//! also run one by one, on given inputs, for checks against the reference.
+//! steps. Each turn reads its whole prompt from its first row, or on from the end of the longest
+//! kept prompt it begins with (`keep`): the template writes a reply back as its text alone,
+//! without its reasoning or its speech, and the window and conv layers keep only their last rows;
+//! the conversation keeps its images' and clips' tokens for it. The stages also run one by one, on
+//! given inputs, for checks against the reference.
 
 use ::media::image::Pixels;
 use blocks::codec;
 use blocks::hybrid::Rows;
-use blocks::interleaved::State;
+use blocks::interleaved::{Prefix, State};
 use blocks::lm;
 use blocks::rotary::Position;
 use blocks::transformer::{Buffers, Mask};
@@ -34,7 +35,7 @@ use crate::prompt::{
     self, AUDIO_OUT_TOKEN, AUDIO_TOKEN, Chat, IMAGE_TOKEN, Mode, Opening, Replied, Turn, reasoned,
     written,
 };
-use crate::sampling::{self, FrameSampler, Sampler, Sampling};
+use crate::sampling::{self, Constraint, FrameSampler, Sampler, Sampling};
 
 /// The longest conversation, in rows: every turn's text and reply.
 pub const MAX_ROWS: usize = 8_192;
@@ -42,6 +43,9 @@ pub const MAX_ROWS: usize = 8_192;
 pub const MAX_TOKENS: usize = 4_096;
 /// Prompt rows per call of the language model's stack.
 const PREFILL_ROWS: usize = 512;
+/// The most prompts' first rows kept at once, each with its attention layers' keys and values.
+const KEPT_PROMPTS: usize = 4;
+const NO_REPLY: &str = "no reply in progress";
 
 /// The user's next message, and how to reply to it.
 #[derive(Debug, Clone, Deserialize)]
@@ -50,6 +54,10 @@ pub struct Message {
     /// The conversation's system text, the same on each of its turns.
     #[serde(default)]
     pub system: String,
+    /// The tools the system block lists, each its JSON as the template's `tool_to_json` writes
+    /// it; none lists none.
+    #[serde(default)]
+    pub tools: Vec<String>,
     /// Whether a text reply reasons first, in a thinking block.
     #[serde(default)]
     pub thinking: bool,
@@ -107,7 +115,15 @@ pub struct Engine {
     media: Vec<f32>,
     /// The 24 kHz samples spoken and not yet taken.
     speech: Vec<f32>,
+    /// Prompts' first rows, kept for later prompts that begin with them, the last used first.
+    kept: Vec<Kept>,
     job: Option<Job>,
+}
+
+/// A prompt's first rows, and the state after them.
+struct Kept {
+    ids: Vec<u32>,
+    prefix: Prefix,
 }
 
 /// The vision of LFM3-VL-2B and LFM3-Omni-2B, and its activations.
@@ -127,8 +143,14 @@ struct Job {
     /// Their tokens, in prompt order, `tokens × hidden`.
     tokens: Vec<f32>,
     prompt: Vec<u32>,
-    thinking: bool,
+    /// The system block as written, with its tools, and how the reply opens: what `keep` reads
+    /// its prefix with.
+    system: String,
+    opening: Opening,
+    /// The prompt's first rows to keep, from `Engine::keep`.
+    keep: Option<usize>,
     sampler: Sampler,
+    constraint: Option<Box<dyn Constraint>>,
     output: Output,
     speaking: Option<Speaking>,
     /// The reply's rows: its tokens, and `<|audio_out|>` for each frame it spoke.
@@ -191,6 +213,7 @@ impl bundle::Engine for Engine {
             history: Vec::new(),
             media: Vec::new(),
             speech: Vec::new(),
+            kept: Vec::new(),
             job: None,
         })
     }
@@ -373,7 +396,7 @@ impl Engine {
         std::mem::take(&mut self.speech)
     }
 
-    /// Forgets the conversation, to start a new one.
+    /// Forgets the conversation, to start a new one; the rows `keep` kept stay.
     pub fn reset(&mut self) {
         self.job = None;
         self.history.clear();
@@ -381,10 +404,11 @@ impl Engine {
         self.speech.clear();
     }
 
-    /// The prompt through the language model, its image and clip rows `media` in order: the last
-    /// row's prediction.
+    /// The prompt through the language model (from the end of the longest kept prompt it begins
+    /// with, or its first row), its image and clip rows `media` in order: the last row's
+    /// prediction.
     pub fn prefill(&mut self, prompt: &[u32], media: &[f32]) -> Prediction {
-        self.read_prompt(prompt, media.as_chunks().0.iter());
+        self.read_prompt(prompt, media.as_chunks().0.iter(), None);
         self.prediction()
     }
 
@@ -456,7 +480,8 @@ impl Engine {
             mode: message.mode,
             thinking: message.thinking,
         };
-        let prompt = self.prompt(&message.system, &self.history, &turn, opening)?;
+        let system = prompt::system(&message.system, &message.tools);
+        let prompt = self.prompt(&system, &self.history, &turn, opening)?;
         let rows = prompt.len();
         if rows >= MAX_ROWS {
             return Err(Error::Request(format!(
@@ -485,8 +510,11 @@ impl Engine {
             heard: 0,
             tokens: Vec::new(),
             prompt,
-            thinking: message.thinking,
+            system,
+            opening,
+            keep: None,
             sampler: Sampler::new(sampling, message.seed),
+            constraint: None,
             output: Output::of(message.mode),
             reply: Vec::new(),
             written: String::new(),
@@ -515,7 +543,7 @@ impl Engine {
         let mut job = self
             .job
             .take()
-            .ok_or_else(|| Error::Request("no reply in progress".into()))?;
+            .ok_or_else(|| Error::Request(NO_REPLY.into()))?;
         if let Some(stage) = self.take_in(&mut job)? {
             let progress = progress(stage, &job, false);
             self.job = Some(job);
@@ -524,7 +552,8 @@ impl Engine {
         let read = if job.reply.is_empty() {
             let media = std::mem::take(&mut self.media);
             let turn = job.tokens.as_chunks().0;
-            self.read_prompt(&job.prompt, media.as_chunks().0.iter().chain(turn));
+            let rows = media.as_chunks().0.iter().chain(turn);
+            self.read_prompt(&job.prompt, rows, job.keep);
             self.media = media;
             Stage::Prefill
         } else {
@@ -546,6 +575,52 @@ impl Engine {
             self.job = Some(job);
         }
         Ok(progress)
+    }
+
+    /// Holds the reply `start` began to `constraint`, from its first token.
+    ///
+    /// # Errors
+    /// When no reply is in progress.
+    pub fn constrain(&mut self, constraint: Box<dyn Constraint>) -> Result<(), Error> {
+        let job = self
+            .job
+            .as_mut()
+            .ok_or_else(|| Error::Request(NO_REPLY.into()))?;
+        job.constraint = Some(constraint);
+        Ok(())
+    }
+
+    /// Keeps the state after the rows of the prompt `start` began that its system block and
+    /// `prefix`, the start of its message's text, read as, for every later prompt that begins
+    /// with the same rows: such a prompt is read on from there. Only a first turn without images
+    /// or clips is kept; any other is read as it was.
+    ///
+    /// # Errors
+    /// When no reply is in progress, or `prefix` doesn't tokenize.
+    pub fn keep(&mut self, prefix: &str) -> Result<(), Error> {
+        let job = self
+            .job
+            .as_ref()
+            .ok_or_else(|| Error::Request(NO_REPLY.into()))?;
+        let alone = Turn {
+            text: prefix.to_owned(),
+            ..Turn::default()
+        };
+        let read_alone = self.prompt(&job.system, &[], &alone, job.opening)?;
+        let rows = read_alone
+            .iter()
+            .zip(&job.prompt)
+            .take_while(|(alone, read)| alone == read)
+            .count();
+        let first_turn =
+            self.history.is_empty() && job.turn.images.is_empty() && job.turn.audio.is_empty();
+        let keepable = first_turn && rows < job.prompt.len();
+        let job = self
+            .job
+            .as_mut()
+            .expect("a reply is in progress, as checked above");
+        job.keep = keepable.then_some(rows);
+        Ok(())
     }
 
     /// The turn's next image or clip into its tokens, while one is left: its stage.
@@ -596,7 +671,13 @@ impl Engine {
     fn write_token(&mut self, job: &mut Job) -> Result<(), Error> {
         let logits = self.prediction.logits.get_mut();
         job.output.suppress(logits);
+        if let Some(constraint) = &mut job.constraint {
+            constraint.mask(logits);
+        }
         let token = job.sampler.draw(logits);
+        if let Some(constraint) = &mut job.constraint {
+            constraint.take(token);
+        }
         job.reply.push(token);
         job.ended = job.output.wrote(token);
         job.written = self.text(&written(&job.reply))?;
@@ -618,19 +699,57 @@ impl Engine {
         }
     }
 
-    /// The prompt's rows from its first, in calls of up to `PREFILL_ROWS` rows, its image and
-    /// clip rows `media` in order: the sequence read before forgotten.
+    /// The prompt's rows from the end of the longest kept prompt it begins with, or its first, in
+    /// calls of up to `PREFILL_ROWS` rows, the last of the first `keep` rows ending there and
+    /// keeping the state; its image and clip rows `media` in order: the sequence read before
+    /// forgotten.
     fn read_prompt<'rows>(
         &mut self,
         prompt: &[u32],
         mut media: impl Iterator<Item = &'rows [f32; HIDDEN]>,
+        keep: Option<usize>,
     ) {
-        self.state.clear();
-        for first in (0..prompt.len()).step_by(PREFILL_ROWS) {
-            let ids = &prompt[first..(first + PREFILL_ROWS).min(prompt.len())];
-            self.embed_rows(ids, &mut media);
-            self.forward(first, ids.len());
+        let mut first = self.restore_longest_kept(prompt);
+        while first < prompt.len() {
+            let stop = keep.filter(|row| *row > first).unwrap_or(prompt.len());
+            let last = (first + PREFILL_ROWS).min(stop);
+            self.embed_rows(&prompt[first..last], &mut media);
+            self.forward(first, last - first);
+            if Some(last) == keep {
+                self.keep_rows(&prompt[..last]);
+            }
+            first = last;
         }
+    }
+
+    /// Puts back the state after the longest kept prompt `prompt` begins with, as the last used,
+    /// or clears it: the row to read from.
+    fn restore_longest_kept(&mut self, prompt: &[u32]) -> usize {
+        let begun = self.kept.iter().enumerate();
+        let longest = begun
+            .filter(|(_, kept)| prompt.starts_with(&kept.ids))
+            .max_by_key(|(_, kept)| kept.ids.len())
+            .map(|(index, _)| index);
+        let Some(index) = longest else {
+            self.state.clear();
+            return 0;
+        };
+        self.kept[..=index].rotate_right(1);
+        let used = &self.kept[0];
+        self.state.restore_prefix(&used.prefix);
+        used.ids.len()
+    }
+
+    /// Keeps the state after `ids`, the prompt's first rows, as the last used; the least recently
+    /// used goes once `KEPT_PROMPTS` are kept.
+    fn keep_rows(&mut self, ids: &[u32]) {
+        let prefix = self.state.keep_prefix(ids.len());
+        let kept = Kept {
+            ids: ids.to_vec(),
+            prefix,
+        };
+        self.kept.insert(0, kept);
+        self.kept.truncate(KEPT_PROMPTS);
     }
 
     /// The embeddings of `ids` into `buffers.hidden`, an image's or a clip's row the next of
@@ -688,12 +807,13 @@ impl Engine {
             mask: Mask::Causal,
         };
         let (model, state, buffers) = (&self.model, &self.state, &self.buffers);
+        let prediction = &self.prediction;
         let last = positions.len() - 1;
         self.team.run(|ctx| {
             model.stack.forward(ctx, state, buffers, &rows);
             let hidden = &buffers.hidden.read()[last * HIDDEN..(last + 1) * HIDDEN];
             let norm = (&model.norm, NORM_EPS);
-            self.prediction.predict(ctx, hidden, norm, &model.head);
+            prediction.predict(ctx, hidden, norm, &model.head);
         });
     }
 }
@@ -703,7 +823,7 @@ impl Engine {
 fn progress(stage: Stage, job: &Job, done: bool) -> Progress {
     let (reasoning, answer) = match reasoned(&job.written) {
         (Some(reasoning), answer) => (Some(reasoning), answer),
-        (None, text) if job.thinking => (Some(text), ""),
+        (None, text) if job.opening.thinking => (Some(text), ""),
         (None, text) => (None, text),
     };
     Progress {
