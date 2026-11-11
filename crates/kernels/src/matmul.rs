@@ -14,6 +14,7 @@
 )]
 
 use std::hint::black_box;
+use std::mem::MaybeUninit;
 use std::ops::Range;
 
 use crate::arch::{Active, Backend, CHUNKS, activation_scale, dot_f32_each_with};
@@ -339,8 +340,51 @@ impl Format for T2 {
     }
 }
 
+/// How the dots read a tile's activations, a chunk at a time: four values of a row on every
+/// lane.
+trait Activations<B: Backend> {
+    /// Bytes from one chunk of a row to the next.
+    const CHUNK_BYTES: usize;
+
+    /// # Safety
+    /// A chunk readable at `at`.
+    unsafe fn chunk(at: *const u8) -> B::Chunk;
+}
+
+/// The quantized rows as they lie: a chunk's four values are broadcast at every read.
+struct Compact;
+
+/// A tile's rows broadcast beforehand, a chunk per four values. V8 pays a vector operation for a
+/// broadcast and none for a load, and a tile reads each chunk once per pass.
+struct Broadcast;
+
+impl<B: Backend> Activations<B> for Compact {
+    const CHUNK_BYTES: usize = CHUNK_INPUTS;
+
+    #[inline(always)]
+    unsafe fn chunk(at: *const u8) -> B::Chunk {
+        // SAFETY: forwarded from the caller.
+        unsafe { B::broadcast(at.cast()) }
+    }
+}
+
+impl<B: Backend> Activations<B> for Broadcast {
+    const CHUNK_BYTES: usize = size_of::<B::Chunk>();
+
+    #[inline(always)]
+    unsafe fn chunk(at: *const u8) -> B::Chunk {
+        // SAFETY: forwarded from the caller; `broadcast_tile` stored the chunk, aligned.
+        unsafe { *at.cast() }
+    }
+}
+
 /// Quads per pass of a tile: 16 output columns.
 const QUADS: usize = 4;
+/// The widest rows a full tile broadcasts beforehand: four of them, broadcast, are a quarter
+/// of a 128 KB L1 beside a pass's weights; wider, the copy costs more than its broadcasts.
+const BROADCAST_COLS: usize = 2048;
+/// The rows of the tallest tile (`Backend::TILE`).
+const MAX_TILE: usize = 6;
 
 /// Never inlined: V8 optimizes a wasm function only on a later call, once its tiering budget is
 /// spent, never a loop already running (no on-stack replacement), so the hot loops live in a
@@ -368,30 +412,59 @@ fn quant_tiles<F: Format, B: Backend>(
         "activations cover the rows"
     );
     let one = black_box(1);
+    let mut broadcast = [const { MaybeUninit::<B::Chunk>::uninit() }; TILE_CHUNKS];
     for start in rows.clone().step_by(B::TILE) {
         let tile = (rows.end - start).min(B::TILE);
+        let quants = &x.quants[start * weights.cols..(start + tile) * weights.cols];
         let mut store_tile =
             |row: usize, col: usize, values: [f32; QUAD]| store(start + row, col, values);
-        let span = TileSpan {
-            first_row: start,
-            cols: cols.clone(),
-            one,
-        };
         macro_rules! dispatch {
-            ($($rows:literal)*) => {
+            ($activations:ty, $first:expr, $stride:expr, $($tile:literal)*) => {{
+                let rows = Strided {
+                    first: $first,
+                    stride: $stride,
+                };
+                let span = TileSpan {
+                    first_row: start,
+                    rows,
+                    cols: cols.clone(),
+                    one,
+                };
                 match tile {
-                    $($rows => quant_tile::<$rows, F, B>(weights, x, &span, &mut store_tile),)*
-                    _ => unreachable!("a backend's TILE is at most 6"),
+                    $($tile => {
+                        quant_tile::<$tile, $activations, F, B>(weights, x, &span, &mut store_tile);
+                    })*
+                    _ => unreachable!("a backend's TILE is at most {MAX_TILE}"),
                 }
-            };
+            }};
         }
-        dispatch!(1 2 3 4 5 6);
+        if tile == B::TILE && weights.cols <= BROADCAST_COLS {
+            broadcast_tile::<B>(quants, &mut broadcast);
+            let stride = weights.cols / CHUNK_INPUTS * size_of::<B::Chunk>();
+            dispatch!(Broadcast, broadcast.as_ptr().cast(), stride, 1 2 3 4 5 6);
+        } else {
+            dispatch!(Compact, quants.as_ptr().cast(), weights.cols, 1 2 3 4 5 6);
+        }
+    }
+}
+
+/// Chunks of the largest tile that is broadcast beforehand.
+const TILE_CHUNKS: usize = MAX_TILE * BROADCAST_COLS / CHUNK_INPUTS;
+
+/// `quants`, the rows of a tile of at most `TILE_CHUNKS` chunks, into `chunks`: each four
+/// values on every lane.
+fn broadcast_tile<B: Backend>(quants: &[i8], chunks: &mut [MaybeUninit<B::Chunk>; TILE_CHUNKS]) {
+    for (chunk, inputs) in chunks.iter_mut().zip(quants.as_chunks::<CHUNK_INPUTS>().0) {
+        // SAFETY: four readable values.
+        chunk.write(unsafe { B::broadcast(inputs.as_ptr()) });
     }
 }
 
 /// The activation rows `first_row..first_row + ROWS` and weight rows `cols` of one tile.
 struct TileSpan {
     first_row: usize,
+    /// The rows' first chunks, as the tile's `Activations` read them.
+    rows: Strided,
     cols: Range<usize>,
     /// 1, as the compiler cannot see it: its multiples are run-time values to the tile's loops.
     one: usize,
@@ -401,7 +474,7 @@ struct TileSpan {
 /// (a token being written) reads its weights once from memory, and one quad per pass keeps
 /// that read one sequential stream: four interleaved streams run at half the bandwidth.
 #[inline(always)]
-fn quant_tile<const ROWS: usize, F: Format, B: Backend>(
+fn quant_tile<const ROWS: usize, A: Activations<B>, F: Format, B: Backend>(
     weights: &QuantWeights,
     x: &Quantized,
     span: &TileSpan,
@@ -414,17 +487,17 @@ fn quant_tile<const ROWS: usize, F: Format, B: Backend>(
         first + (end - first) / QUADS * QUADS
     };
     for quad in (first..full).step_by(QUADS) {
-        quad_pass::<ROWS, QUADS, F, B>(weights, x, span, quad, store);
+        quad_pass::<ROWS, QUADS, A, F, B>(weights, x, span, quad, store);
     }
     for quad in full..end {
-        quad_pass::<ROWS, 1, F, B>(weights, x, span, quad, store);
+        quad_pass::<ROWS, 1, A, F, B>(weights, x, span, quad, store);
     }
 }
 
 /// `ROWS` activation rows against `PASS` quads from `first_quad`; each group's blocks add up as
 /// integers before one scaling.
 #[inline(always)]
-fn quad_pass<const ROWS: usize, const PASS: usize, F: Format, B: Backend>(
+fn quad_pass<const ROWS: usize, const PASS: usize, A: Activations<B>, F: Format, B: Backend>(
     weights: &QuantWeights,
     x: &Quantized,
     span: &TileSpan,
@@ -435,8 +508,8 @@ fn quad_pass<const ROWS: usize, const PASS: usize, F: Format, B: Backend>(
     let groups = blocks / F::BLOCKS_PER_GROUP;
     // `quant_tiles` asserted that the weights cover the quads of `cols.end` columns (their
     // `blocks` blocks and group scales) and the activations `rows · blocks` blocks and their
-    // group scales and corrections; here `first_row + ROWS ≤ rows`, `first_quad + PASS ≤
-    // cols.end / 4`, `block < blocks` and `group < groups`.
+    // group scales and corrections, and `span.rows` holds the tile's; here `first_row + ROWS ≤
+    // rows`, `first_quad + PASS ≤ cols.end / 4`, `block < blocks` and `group < groups`.
     let load_scales = |quad: usize, group: usize| {
         let index = (quad * groups + group) * QUAD;
         // SAFETY: the quad's scales lie within the asserted weight scales (above).
@@ -467,27 +540,24 @@ fn quad_pass<const ROWS: usize, const PASS: usize, F: Format, B: Backend>(
             [B::seed(unsafe { *x.corrections.get_unchecked(activation(row, group)) }); PASS]
         });
         for block in group * F::BLOCKS_PER_GROUP..(group + 1) * F::BLOCKS_PER_GROUP {
-            // SAFETY: the blocks lie within the asserted weight and activation bytes (above).
+            // SAFETY: the blocks lie within the asserted weight bytes and the tile's rows (above).
             let (quads, rows) = unsafe {
                 let quad = weights
                     .quants
                     .as_ptr()
                     .add((first_quad * blocks + block) * F::QUAD_BYTES);
-                let row = x
-                    .quants
-                    .as_ptr()
-                    .add((span.first_row * blocks + block) * BLOCK);
+                let row = span.rows.at(0, block * CHUNKS * A::CHUNK_BYTES);
                 let quads = Strided {
                     first: quad,
                     stride: blocks * F::QUAD_BYTES,
                 };
                 let rows = Strided {
                     first: row,
-                    stride: weights.cols,
+                    stride: span.rows.stride,
                 };
                 (quads, rows)
             };
-            accumulate::<ROWS, PASS, F, B>(&mut dots, quads, rows, words);
+            accumulate::<ROWS, PASS, A, F, B>(&mut dots, quads, rows, words);
         }
         let column_scales: [B::Sums; PASS] =
             std::array::from_fn(|quad| load_scales(first_quad + quad, group));
@@ -512,32 +582,32 @@ fn quad_pass<const ROWS: usize, const PASS: usize, F: Format, B: Backend>(
     }
 }
 
-/// One block's operands, `stride` bytes apart from `first`: a pass's quads of weights, or a
-/// tile's rows of activations.
+/// Operands `stride` bytes apart from `first`: a pass's quads of weights, or a tile's rows of
+/// activations.
 #[derive(Clone, Copy)]
-struct Strided<T> {
-    first: *const T,
+struct Strided {
+    first: *const u8,
     stride: usize,
 }
 
-impl<T> Strided<T> {
+impl Strided {
     /// Operand `index`, `offset` bytes in.
     ///
     /// # Safety
     /// The bytes read there lie within the operands' allocation.
-    unsafe fn at(self, index: usize, offset: usize) -> *const T {
+    unsafe fn at(self, index: usize, offset: usize) -> *const u8 {
         // SAFETY: forwarded from the caller.
-        unsafe { self.first.byte_add(index * self.stride + offset) }
+        unsafe { self.first.add(index * self.stride + offset) }
     }
 }
 
 /// `dots[row][quad] += Σ` over one block, a word of every quad at a time (`words`, the
 /// format's `WORDS`): each of its chunks against every row's same four activations.
 #[inline(always)]
-fn accumulate<const ROWS: usize, const PASS: usize, F: Format, B: Backend>(
+fn accumulate<const ROWS: usize, const PASS: usize, A: Activations<B>, F: Format, B: Backend>(
     dots: &mut [[B::Dots; PASS]; ROWS],
-    quads: Strided<u8>,
-    rows: Strided<i8>,
+    quads: Strided,
+    rows: Strided,
     words: usize,
 ) {
     for word in 0..words {
@@ -546,12 +616,12 @@ fn accumulate<const ROWS: usize, const PASS: usize, F: Format, B: Backend>(
             std::array::from_fn(|quad| unsafe { B::load_word(quads.at(quad, word * WORD)) });
         for part in 0..CHUNKS / F::WORDS {
             let chunks = codes.map(|codes| F::chunk::<B>(codes, part));
-            let inputs = (part * F::WORDS + word) * CHUNK_INPUTS;
+            let chunk = part * F::WORDS + word;
             for (row, dots) in dots.iter_mut().enumerate() {
-                // SAFETY: the chunk lies within the activation bytes `quant_tiles` asserted.
-                let broadcast = unsafe { B::broadcast(rows.at(row, inputs)) };
+                // SAFETY: the chunk lies within the tile's rows.
+                let activations = unsafe { A::chunk(rows.at(row, chunk * A::CHUNK_BYTES)) };
                 for (dot, chunk) in dots.iter_mut().zip(chunks) {
-                    *dot = B::dot(*dot, broadcast, chunk);
+                    *dot = B::dot(*dot, activations, chunk);
                 }
             }
         }
