@@ -1,5 +1,7 @@
 //! LayerNorm with its affine parameters, and GroupNorm over images.
 
+use std::ops::Range;
+
 use bundle::{Load, Scope, Store};
 use kernels::Vector;
 use kernels::conv::Grid;
@@ -68,15 +70,16 @@ impl GroupNorm {
             channels, groups, ..
         } = self.groups;
         let values = &input.read()[..grid.pixels() * channels];
-        for unit in ctx.split(grid.images * groups, 1) {
-            let (mean, inverse) = self.moments(values, grid, unit);
-            statistics.set(2 * unit, mean);
-            statistics.set(2 * unit + 1, inverse);
+        let units = ctx.split(grid.images * groups, 1);
+        for image in units.start / groups..units.end.div_ceil(groups) {
+            let first = image * groups;
+            let mine = units.start.max(first)..units.end.min(first + groups);
+            let pixels = &values[image * grid.area() * channels..][..grid.area() * channels];
+            let moments = statistics.part(2 * mine.start..2 * mine.end);
+            self.moments(pixels, mine.start - first..mine.end - first, moments);
         }
         ctx.barrier();
         let moments = statistics.read();
-        let (scales, shifts) = (self.weight.values(), self.bias.values());
-        let width = channels / groups;
         let in_place = std::ptr::eq(input, out);
         for pixel in ctx.split(grid.pixels(), 1) {
             let first = pixel / grid.area() * groups;
@@ -86,39 +89,54 @@ impl GroupNorm {
             if !in_place {
                 row.copy_from_slice(&input.read()[range]);
             }
-            for (channel, value) in row.iter_mut().enumerate() {
-                let unit = first + channel / width;
-                let (mean, inverse) = (moments[2 * unit], moments[2 * unit + 1]);
-                *value = activation((*value - mean) * inverse * scales[channel] + shifts[channel]);
+            self.normalize(row, &moments[2 * first..2 * (first + groups)], &activation);
+        }
+    }
+
+    /// `row`, one pixel's channels, normalized by its image's `moments` (a mean and an inverse
+    /// standard deviation per group), scaled, shifted and activated, a group's run at a time.
+    fn normalize(&self, row: &mut [f32], moments: &[f32], activation: impl Fn(f32) -> f32) {
+        let width = self.groups.channels / self.groups.groups;
+        let affine = self.weight.values().chunks_exact(width);
+        let affine = affine.zip(self.bias.values().chunks_exact(width));
+        let runs = row.chunks_exact_mut(width).zip(affine);
+        for ((run, (scales, shifts)), &[mean, inverse]) in runs.zip(moments.as_chunks::<2>().0) {
+            for ((value, scale), shift) in run.iter_mut().zip(scales).zip(shifts) {
+                *value = activation((*value - mean) * inverse * scale + shift);
             }
         }
     }
 
-    /// The mean and the inverse standard deviation of `unit` (image-major, then group), summed
-    /// in f64.
-    fn moments(&self, values: &[f32], grid: Grid, unit: usize) -> (f32, f32) {
-        let Groups {
-            channels,
-            groups,
-            eps,
-        } = self.groups;
-        let width = channels / groups;
-        let (image, group) = (unit / groups, unit % groups);
-        let image_values = grid.area() * channels;
-        let runs = values[image * image_values..(image + 1) * image_values]
-            .chunks_exact(channels)
-            .map(|pixel| &pixel[group * width..(group + 1) * width]);
-        let count = (grid.area() * width) as f64;
-        let sum: f64 = runs
-            .clone()
-            .map(|run| f64::from(run.iter().sum::<f32>()))
-            .sum();
-        let mean = (sum / count) as f32;
-        let squares: f64 = runs
-            .map(|run| f64::from(run.iter().map(|value| (value - mean).powi(2)).sum::<f32>()))
-            .sum();
-        let inverse = 1.0 / (squares / count + f64::from(eps)).sqrt();
-        (mean, inverse as f32)
+    /// The mean and the inverse standard deviation of the groups `groups` of one image
+    /// (`pixels`, its rows) into `moments` (their pairs), summed in f64: the groups together, a
+    /// pass over the pixels for their sums and one for their squared deviations, each group's
+    /// sum in the order of its pixels.
+    fn moments(&self, pixels: &[f32], groups: Range<usize>, moments: &mut [f32]) {
+        let Groups { channels, eps, .. } = self.groups;
+        let width = channels / self.groups.groups;
+        let span = groups.start * width..groups.end * width;
+        let count = (pixels.len() / channels * width) as f64;
+        let pairs = moments.as_chunks_mut::<2>().0;
+        // `Iterator::sum` starts from −0.0; so do these, each the same sum pixel by pixel.
+        let mut sums = vec![-0.0_f64; groups.len()];
+        for pixel in pixels.chunks_exact(channels) {
+            for (sum, run) in sums.iter_mut().zip(pixel[span.clone()].chunks_exact(width)) {
+                *sum += f64::from(run.iter().sum::<f32>());
+            }
+        }
+        for ([mean, _], sum) in pairs.iter_mut().zip(&mut sums) {
+            *mean = (*sum / count) as f32;
+            *sum = -0.0;
+        }
+        for pixel in pixels.chunks_exact(channels) {
+            let runs = pixel[span.clone()].chunks_exact(width);
+            for ((sum, run), [mean, _]) in sums.iter_mut().zip(runs).zip(&*pairs) {
+                *sum += f64::from(run.iter().map(|value| (value - mean).powi(2)).sum::<f32>());
+            }
+        }
+        for ([_, inverse], squares) in pairs.iter_mut().zip(sums) {
+            *inverse = (1.0 / (squares / count + f64::from(eps)).sqrt()) as f32;
+        }
     }
 }
 
