@@ -338,7 +338,9 @@ a model also needs `just integrate` on every model it reaches: its bundles,
 runtimes, parity, smoke and e2e checks, built in the model's repository against
 this working tree, give exactly the outputs of its
 baseline (`models/<model>/baseline.json`) unless the change is meant to move them
-(`--bless`).
+(`--bless`). The run builds each model's artifacts first and skips a model whose
+artifacts last gave its baseline's outputs, so `just integrate --all` finds the
+models a change reaches instead of you guessing them.
 
 ## Final review
 

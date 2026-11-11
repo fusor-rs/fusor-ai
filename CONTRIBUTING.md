@@ -35,11 +35,18 @@ baseline in `models/<model>/baseline.json`; `integration.json` says how each pro
 checked. A change that moves no number leaves every output identical. A change meant to move
 them records the new outputs with `--bless`, so the baseline's diff shows what moved. A change
 to a kernel backend reaches every model whose weight formats it reads, the `formats` its
-`models/<model>/model.toml` lists. The run also times the model, its native bench three times and
-the figures its page measured in the e2e runs, and the report sets each timing beside the
-baseline's, flagging those that moved beyond their noise; timings never fail the run, and run
-only on a maintainer's machine, never in CI. Attach the report, `target/integrate/report.md`, to
-the pull request.
+`models/<model>/model.toml` lists. The run first builds the model's CLI, runtimes and page,
+without weights. A run identical to its baseline caches their hashes, with those of the product's
+files, the shared e2e half and server, Node's version and the model's entry in
+`integration.json`, in `target/integrate/<model>.artifacts.json`, and a later run whose hashes
+are the cached ones skips the model: `just integrate --all` checks a change on every model in
+the time it takes to build them and runs only the models the change reaches. `--bless` and
+`--bench` always run, and a model with no cache yet runs once in full. The run also times the
+model, the figures its page measured in the e2e runs and, with `--bench`, its native bench three
+times (bless with `--bench` to keep them in the baseline), and the report sets each timing beside
+the baseline's, flagging those that moved beyond their noise; timings never fail
+the run, and run only on a maintainer's machine, never in CI. Attach the report,
+`target/integrate/report.md`, to the pull request.
 
 Each model's repository runs its `just check` and `just runtimes` on GitHub through this
 repository's reusable [Product workflow](.github/workflows/product.yml).

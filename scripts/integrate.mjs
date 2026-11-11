@@ -5,11 +5,18 @@
 // outputs and metrics. A refactor must match it exactly; `--bless` records a change meant to move
 // it.
 //
-// It also times the model: its native bench, and the figures its page measured in the e2e runs.
-// The report sets them beside the baseline's and flags those that moved beyond their noise;
-// timings never fail the run.
+// The model's artifacts build first, without weights: its CLI (which compiles its bundles from
+// checkpoints its product pins), its runtimes and page. A run identical to its baseline caches
+// their hashes, with those of its product's files, the shared e2e half and server, Node's version
+// and its entry in integration.json, in target/integrate/<model>.artifacts.json; a later run
+// whose hashes are the cached ones, against the same baseline, skips the model as identical.
+// `--bless` and `--bench` always run.
 //
-//   node scripts/integrate.mjs <model>… [--bless]
+// It also times the model: the figures its page measured in the e2e runs, and with `--bench` its
+// native bench. The report sets them beside the baseline's and flags those that moved beyond their
+// noise; timings never fail the run.
+//
+//   node scripts/integrate.mjs <model>… [--bless] [--bench]
 //   node scripts/integrate.mjs --all
 //
 // The products are checkouts beside fusor-ai (integration.json). For the run, each product's
@@ -18,10 +25,11 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
-import { parseArgs } from "node:util";
+import { isDeepStrictEqual, parseArgs } from "node:util";
 
+const OUTPUT_LIMIT = 1 << 30;
 const ROOT = git(process.cwd(), "rev-parse", "--show-toplevel");
 const CONFIG = JSON.parse(readFileSync(join(ROOT, "integration.json"), "utf8"));
 const RUNS = join(ROOT, "target/integrate");
@@ -43,10 +51,15 @@ const BENCH_RUNS = 3;
 // the spread of the bench runs behind either when that is wider.
 const NOISE = 0.1;
 const TIMING_TABLE = ["| Timing | Baseline | Now | Change |", "| --- | --- | --- | --- |"];
+// `fusor build` names each page build `g-<nanoseconds>-<pid>`, in its directory and in the files
+// that load it; nothing else in the page varies between builds of the same sources.
+const GENERATION = /\bg-\d+-\d+\b/g;
+// The recipes every product shares (just/product.just) that build its artifacts without weights.
+const ARTIFACT_BUILD = "just native runtimes page";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { all: { type: "boolean" }, bless: { type: "boolean" } },
+  options: { all: { type: "boolean" }, bless: { type: "boolean" }, bench: { type: "boolean" } },
 });
 const models = values.all ? Object.keys(CONFIG) : positionals;
 const unknown = models.filter((model) => !(model in CONFIG));
@@ -59,30 +72,48 @@ const tree = `${git(ROOT, "rev-parse", "--short", "HEAD")}${changed}`;
 const sections = [];
 let identical = true;
 for (const model of models) {
-  let record;
+  const baselinePath = join(ROOT, "models", model, "baseline.json");
+  const baselineText = existsSync(baselinePath) ? readFileSync(baselinePath, "utf8") : null;
+  const cachePath = join(RUNS, `${model}.artifacts.json`);
+  const cached = values.bless || values.bench ? null : cachedArtifacts(cachePath, baselineText);
+  let result;
   try {
-    record = integrate(model, CONFIG[model]);
+    result = integrate(model, CONFIG[model], cached);
   } catch (error) {
     identical = false;
     sections.push(section(model, [error.message], null, null));
     continue;
   }
-  const baselinePath = join(ROOT, "models", model, "baseline.json");
-  if (values.bless) {
-    writeFileSync(baselinePath, `${JSON.stringify(record, null, 2)}\n`);
+  if (result === null) {
+    sections.push(`## ${model}: identical to its baseline, its artifacts the cached ones\n`);
+    continue;
   }
-  const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, "utf8")) : null;
-  const differences = baseline ? compare(baseline, record) : ["no baseline: run with --bless"];
-  identical &&= differences.length === 0;
-  sections.push(section(model, differences, record, baseline));
+  const baseline = baselineText && JSON.parse(baselineText);
+  const differences = baseline ? compare(baseline, result.record) : ["no baseline: --bless it"];
+  if (values.bless) {
+    writeJson(baselinePath, result.record);
+  } else if (differences.length === 0) {
+    writeJson(cachePath, { baseline: digest(baselineText), artifacts: result.artifacts });
+  } else {
+    identical = false;
+  }
+  sections.push(section(model, values.bless ? [] : differences, result.record, baseline));
 }
 const report = [`# Integration of fusor-ai's working tree (${tree})`, "", `Platform: ${PLATFORM}.`, "", ...sections];
 writeFileSync(join(RUNS, "report.md"), `${report.join("\n")}\n`);
 console.log(`${identical ? "every output identical" : "outputs differ"}: ${relative(process.cwd(), join(RUNS, "report.md"))}`);
 process.exit(identical ? 0 : 1);
 
-/** Builds `model` in its product against this working tree and records what it produced. */
-function integrate(model, spec) {
+/** The artifacts a run against this same baseline found identical to it, or null. */
+function cachedArtifacts(path, baselineText) {
+  if (baselineText === null || !existsSync(path)) return null;
+  const cache = JSON.parse(readFileSync(path, "utf8"));
+  return cache.baseline === digest(baselineText) ? cache.artifacts : null;
+}
+
+/** Builds `model` in its product against this working tree and records what it produced and the
+ * artifacts that produced it, or returns null when its artifacts are `cached`. */
+function integrate(model, spec, cached) {
   const product = join(dirname(ROOT), spec.product);
   const vendor = join(product, "vendor/fusor-ai");
   const checkout = `${vendor}.checkout`;
@@ -93,26 +124,74 @@ function integrate(model, spec) {
   rmSync(run, { recursive: true, force: true });
   mkdirSync(run, { recursive: true });
   const log = join(run, "log.txt");
-  fetchGoldens(model, product, spec.goldens, log);
   renameSync(vendor, checkout);
   symlinkSync(ROOT, vendor, "dir");
   try {
-    for (const command of spec.build) {
-      const { status } = shell(model, product, command, log);
-      if (status !== 0) throw new Error(`\`${command}\` failed with ${status}; see ${log}`);
-    }
-    return {
+    execute(model, product, ARTIFACT_BUILD, log);
+    const built = artifacts(model, product, spec);
+    if (isDeepStrictEqual(cached, built)) return null;
+    fetchGoldens(model, product, spec.goldens, log);
+    for (const command of spec.build) execute(model, product, command, log);
+    const record = {
       platform: PLATFORM,
       bundles: Object.fromEntries(spec.bundles.map((bundle) => [bundle, sha256(join(product, bundle, "manifest.json"))])),
       parity: parity(model, product, spec.parity, log),
       smoke: check(model, product, spec, "smoke", log),
       e2e: check(model, product, spec, "e2e", log),
-      timings: { ...bench(model, product, spec.bench, log), ...pageTimings(model, spec.page) },
+      timings: {
+        ...(values.bench ? bench(model, product, spec.bench, log) : {}),
+        ...pageTimings(model, spec.page),
+      },
     };
+    if (!isDeepStrictEqual(artifacts(model, product, spec), built)) {
+      throw new Error("its artifacts changed during the run (an edit?): run it again");
+    }
+    return { record, artifacts: built };
   } finally {
     unlinkSync(vendor);
     renameSync(checkout, vendor);
   }
+}
+
+/** Runs `command` and returns what it printed, or throws when it fails. */
+function execute(model, product, command, log) {
+  const { status, stdout } = shell(model, product, command, log);
+  if (status !== 0) throw new Error(`\`${command}\` failed with ${status}; see ${log}`);
+  return stdout;
+}
+
+/** The hashes of what the model's outputs are a function of, beside the bundles: the CLI
+ * compiles those from checkpoints the product's files pin. */
+function artifacts(model, product, spec) {
+  const runtimes = join(product, "app/engine/dist");
+  const page = join(product, "app/dist");
+  return {
+    cli: sha256(join(product, "target/release", model)),
+    runtimes: filesHash(runtimes, readdirSync(runtimes, { recursive: true })),
+    page: filesHash(page, readdirSync(page, { recursive: true })),
+    product: filesHash(product, sources(product, ".", ":(exclude)vendor")),
+    e2e: filesHash(ROOT, sources(ROOT, "packages/e2e", "scripts/serve.mjs")),
+    node: process.version,
+    integration: digest(JSON.stringify(spec)),
+  };
+}
+
+/** The paths of `files` under `root` and their contents, the page build's generation left out. */
+function filesHash(root, files) {
+  const lines = files
+    .filter((file) => existsSync(join(root, file)) && statSync(join(root, file)).isFile())
+    .sort()
+    .map((file) => {
+      const content = readFileSync(join(root, file), "latin1").replaceAll(GENERATION, "");
+      return `${file.replaceAll(GENERATION, "")} ${digest(content)}\n`;
+    });
+  return digest(lines.join(""));
+}
+
+/** The files under `pathspecs` in `repository`'s working tree, tracked or not, but not ignored. */
+function sources(repository, ...pathspecs) {
+  const options = ["-z", "--cached", "--others", "--exclude-standard"];
+  return git(repository, "ls-files", ...options, "--", ...pathspecs).split("\0");
 }
 
 /** Downloads each golden file that is missing or differs from its pinned hash. */
@@ -160,9 +239,7 @@ function check(model, product, spec, name, log) {
 /** The bench's times over `BENCH_RUNS` runs: each line's median, and the runs' spread around it. */
 function bench(model, product, command, log) {
   const runs = Array.from({ length: BENCH_RUNS }, () => {
-    const { status, stdout } = shell(model, product, command, log);
-    if (status !== 0) throw new Error(`\`${command}\` failed with ${status}; see ${log}`);
-    return stdout.split("\n").flatMap((line) => {
+    return execute(model, product, command, log).split("\n").flatMap((line) => {
       const [, label, number, unit] = BENCH_LINE.exec(line) ?? [];
       if (!label) return [];
       return [[`bench/${label.replace(/\s+/g, " ")}`, milliseconds(Number(number), unit)]];
@@ -270,17 +347,25 @@ function shown(figure) {
 function shell(model, product, command, log) {
   console.log(`${model}: ${command}`);
   appendFileSync(log, `$ ${command}\n`);
-  const result = spawnSync("sh", ["-c", command], { cwd: product, encoding: "utf8", maxBuffer: 1 << 30 });
+  const result = spawnSync("sh", ["-c", command], { cwd: product, encoding: "utf8", maxBuffer: OUTPUT_LIMIT });
   appendFileSync(log, `${result.stdout}${result.stderr}exit ${result.status}\n\n`);
   return result;
 }
 
 function sha256(path) {
-  return `sha256:${createHash("sha256").update(readFileSync(path)).digest("hex")}`;
+  return digest(readFileSync(path));
+}
+
+function digest(content) {
+  return `sha256:${createHash("sha256").update(content).digest("hex")}`;
+}
+
+function writeJson(path, value) {
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function git(cwd, ...args) {
-  const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+  const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8", maxBuffer: OUTPUT_LIMIT });
   if (result.status !== 0) throw new Error(`git ${args.join(" ")} in ${cwd}: ${result.stderr.trim()}`);
   return result.stdout.trim();
 }

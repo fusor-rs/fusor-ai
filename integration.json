@@ -12,8 +12,6 @@
       "just model",
       "rm -rf dist/model-f32",
       "target/release/ming compile .cache/Ming-3.0-tts-0.5B dist/model-f32 --profile f32",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -52,8 +50,6 @@
       "just model",
       "rm -rf dist/model-f32",
       "target/release/phonon compile .cache/phonon-31m-en dist/model-f32 --profile f32",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -95,8 +91,6 @@
       "just recordings",
       "rm -rf dist/model-f32",
       "target/release/parakeet compile .cache/parakeet-redux dist/model-f32 --profile f32",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -138,8 +132,6 @@
       "just model",
       "rm -rf dist/model-f32",
       "target/release/realistic-vision compile .cache/realistic-vision dist/model-f32 --profile f32",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -180,8 +172,6 @@
       "just images",
       "rm -rf dist/model-f32",
       "target/release/paddle-ocr compile .cache/checkpoint dist/model-f32 --profile f32",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -228,8 +218,6 @@
       "just images",
       "rm -rf dist/model-f32",
       "target/release/oxr compile .cache/checkpoint dist/model-f32 --profile f32",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -281,8 +269,6 @@
       "just images",
       "rm -rf dist/model-f32",
       "target/release/intern-decision compile .cache/checkpoint dist/model-f32 --profile f32",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -327,8 +313,6 @@
     "build": [
       "just model",
       "just images",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -370,8 +354,6 @@
     "build": [
       "just model",
       "just series",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -433,8 +415,6 @@
     "build": [
       "just model",
       "just media",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -485,8 +465,6 @@
     "build": [
       "just model",
       "just media",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -527,8 +505,6 @@
     ],
     "build": [
       "just model",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -614,8 +590,6 @@
     "build": [
       "just models=\"lfm3-1.7b lfm3-vl-2b lfm3-audio-2b lfm3-omni-2b\" model",
       "just fixtures",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -681,8 +655,6 @@
     "build": [
       "just models=\"d1-2b d1-omni-2b\" model",
       "just fixtures",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -736,8 +708,6 @@
       "just asr",
       "rm -rf dist/model-f32",
       "target/release/qwen3-tts compile .cache/checkpoint dist/model-f32 --profile f32",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -777,8 +747,6 @@
       "just model",
       "rm -rf dist/model-f32",
       "target/release/wan2-1 compile .cache/checkpoint dist/model-f32 --profile f32",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -839,8 +807,6 @@
     "build": [
       "just bundles",
       "just fixtures",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -889,8 +855,6 @@
     ],
     "build": [
       "just bundles",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
@@ -934,8 +898,6 @@
     ],
     "build": [
       "just bundles",
-      "just runtimes",
-      "just page",
       "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
     ],
     "bundles": [
