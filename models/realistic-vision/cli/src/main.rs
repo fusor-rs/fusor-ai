@@ -11,7 +11,7 @@ mod parity;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use realistic_vision::session::{Engine, Request};
 
@@ -132,7 +132,7 @@ fn generate(engine: &mut Engine, settings: Settings, out: &Path) -> Result<()> {
         }
     }
     let image = engine.take_image()?;
-    write_png(out, (plan.width, plan.height), &image)?;
+    harness::write_png(out, (plan.width, plan.height), &image)?;
     println!(
         "{} ({}×{}, {} steps) in {:.1}s",
         out.display(),
@@ -141,17 +141,5 @@ fn generate(engine: &mut Engine, settings: Settings, out: &Path) -> Result<()> {
         plan.steps,
         start.elapsed().as_secs_f64()
     );
-    Ok(())
-}
-
-/// RGBA rows top to bottom as a PNG file.
-fn write_png(path: &Path, (width, height): (usize, usize), rgba: &[u8]) -> Result<()> {
-    let file = std::fs::File::create(path).with_context(|| path.display().to_string())?;
-    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width as u32, height as u32);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder.write_header()?;
-    writer.write_image_data(rgba)?;
-    writer.finish()?;
     Ok(())
 }

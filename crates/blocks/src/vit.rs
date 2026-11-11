@@ -1,7 +1,8 @@
 //! Vision transformer encoders over the patches of one image of any size, as SigLIP's NaViT
 //! variant runs them: pre-LayerNorm layers, a fused QKV, full attention among all the image's
-//! patches on the int8 kernels (`attention`) with 2-D rotary embeddings by patch row and column
-//! (`Rotation::Grid`), and a GELU-tanh MLP; every linear has a bias.
+//! patches on the int8 kernels (`attention`) with, where the shape has them, 2-D rotary
+//! embeddings by patch row and column (`Rotation::Grid`), and a GELU-tanh MLP; every linear has a
+//! bias.
 //!
 //! Tensors under a prefix `p`: `p.layers.{i}.{norm1, qkv, out, norm2, ff1, ff2}` (q, k and v
 //! fused into `qkv`), the norms as `weight` and `bias` vectors.
@@ -33,7 +34,9 @@ pub struct Shape {
     pub layers: usize,
     pub heads: usize,
     pub feed_forward: usize,
-    pub rope_base: f32,
+    /// The base of the 2-D rotary embeddings by patch row and column (NaViT's); `None` for an
+    /// encoder whose positions are only its tower's learned grid (SigLIP's).
+    pub rope_base: Option<f32>,
     pub norm_eps: f32,
     pub exponentials: Exponentials,
 }
@@ -202,9 +205,15 @@ impl Load for Vit {
             },
         )?;
         let head_dim = shape.heads().head_dim;
-        let rotary = Rotary::new(Rotation::Grid, shape.rope_base, head_dim);
+        let (rope, rotary) = match shape.rope_base {
+            Some(base) => (
+                LayerSpec::VIT.rope,
+                Rotary::new(Rotation::Grid, base, head_dim),
+            ),
+            None => (None, Rotary::default()),
+        };
         Ok(Self {
-            stack: Stack::new(shape.heads(), LayerSpec::VIT.rope, rotary, layers),
+            stack: Stack::new(shape.heads(), rope, rotary, layers),
             exponentials: shape.exponentials,
         })
     }

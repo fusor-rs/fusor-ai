@@ -24,10 +24,10 @@ pub(crate) fn write(checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> 
         transformer_layer(checkpoint, tensors, layer)?;
     }
     let downsample = format!("{SOURCE}.downsample.conv");
-    tensors.conv1d(checkpoint, "codec.encoder.downsample", &downsample)?;
+    tensors.conv(checkpoint, "codec.encoder.downsample", &downsample)?;
     for (name, half) in [("semantic", SEMANTIC), ("acoustic", ACOUSTIC)] {
         let source = format!("{SOURCE}.{half}.input_proj");
-        tensors.conv1d(checkpoint, &format!("codec.encoder.{name}"), &source)?;
+        tensors.conv(checkpoint, &format!("codec.encoder.{name}"), &source)?;
     }
     codebooks(checkpoint, tensors)
 }
@@ -37,29 +37,29 @@ pub(crate) fn write(checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> 
 fn seanet(checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> Result<(), Error> {
     let layer = |index: usize| format!("{SOURCE}.encoder.layers.{index}");
     let target = |part: &str| format!("codec.encoder.seanet.{part}");
-    tensors.conv1d(checkpoint, &target("init"), &format!("{}.conv", layer(0)))?;
+    tensors.conv(checkpoint, &target("init"), &format!("{}.conv", layer(0)))?;
     for stage in 0..SEANET.ratios.len() {
         let unit = layer(1 + 3 * stage);
         let name = |part: &str| target(&format!("stages.{stage}.{part}"));
-        tensors.conv1d(
+        tensors.conv(
             checkpoint,
             &name("residual1"),
             &format!("{unit}.block.1.conv"),
         )?;
-        tensors.conv1d(
+        tensors.conv(
             checkpoint,
             &name("residual2"),
             &format!("{unit}.block.3.conv"),
         )?;
         let downsample = layer(3 + 3 * stage);
-        tensors.conv1d(
+        tensors.conv(
             checkpoint,
             &name("downsample"),
             &format!("{downsample}.conv"),
         )?;
     }
     let last = layer(1 + 3 * SEANET.ratios.len() + 1);
-    tensors.conv1d(checkpoint, &target("final"), &format!("{last}.conv"))
+    tensors.conv(checkpoint, &target("final"), &format!("{last}.conv"))
 }
 
 fn transformer_layer(

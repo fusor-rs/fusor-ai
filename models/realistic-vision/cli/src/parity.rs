@@ -11,7 +11,7 @@ use std::path::Path;
 use anyhow::{Result, ensure};
 use bundle::Stages as _;
 use compile::Checkpoint;
-use harness::parity::compare;
+use harness::parity::{compare, pixel_major};
 use realistic_vision::Grid;
 use realistic_vision::model::{IMAGE_CHANNELS, LATENT_CHANNELS};
 use realistic_vision::pipeline::Stage;
@@ -67,17 +67,6 @@ impl Goldens {
             image: file.f32("image")?,
         })
     }
-}
-
-/// Channel-major images (`[images, channels, pixels]`) as pixel-major rows.
-fn pixel_major(values: &[f32], (channels, pixels): (usize, usize)) -> Vec<f32> {
-    let mut out = vec![0.0; values.len()];
-    for (at, value) in values.iter().enumerate() {
-        let (plane, pixel) = (at / pixels, at % pixels);
-        let (image, channel) = (plane / channels, plane % channels);
-        out[(image * pixels + pixel) * channels + channel] = *value;
-    }
-    out
 }
 
 pub fn run(engine: &mut Engine, goldens: &Path) -> Result<()> {

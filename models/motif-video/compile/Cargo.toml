@@ -1,0 +1,22 @@
+[package]
+name = "fusor-ai-motif-video-compile"
+description = "Compiles Motif-Video-2B (Motif-Technologies/Motif-Video-2B) into two bundles, its text encoder with SigLIP and its video model: renamed and fused tensors, convolutions as matrices, the autoencoder's first-frame encoder, the latents' denormalization folded into the decoder, the T5Gemma2 tokenizer and the dtype of every tensor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "motif_video_compile"
+
+[dependencies]
+motif-video.workspace = true
+bundle.workspace = true
+compile.workspace = true
+kernels.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -1,13 +1,21 @@
-//! Image resampling as vision models' reference preprocessing does it: Pillow's bilinear and
-//! bicubic resizes of 8-bit images, and PyTorch's bilinear and bicubic interpolation of a grid of
-//! f32 vectors (a learned position table resampled to an image's patch grid), with its corner
-//! cells on the image's or not.
+//! Image resampling as vision models' reference preprocessing does it: Pillow's bilinear, bicubic
+//! and Lanczos resizes of 8-bit images, and PyTorch's bilinear and bicubic interpolation of a grid
+//! of f32 vectors (a learned position table resampled to an image's patch grid, or an image), with
+//! its corner cells on the image's or not, or antialiased as Pillow filters.
+
+use std::f64::consts::PI;
 
 /// Width and height, in pixels or grid cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Size {
     pub width: usize,
     pub height: usize,
+}
+
+impl Size {
+    pub fn pixels(&self) -> usize {
+        self.width * self.height
+    }
 }
 
 /// An 8-bit image, row-major, its `channels` interleaved.
@@ -27,11 +35,15 @@ const BICUBIC_A: f64 = -0.5;
 /// PyTorch's bicubic interpolation's `a` (`upsample_bicubic2d`).
 const TORCH_BICUBIC_A: f32 = -0.75;
 
-/// A Pillow resampling filter (`Image.BILINEAR`, `Image.BICUBIC`).
+/// Pillow's Lanczos window: three lobes each side.
+const LANCZOS_SUPPORT: f64 = 3.0;
+
+/// A Pillow resampling filter (`Image.BILINEAR`, `Image.BICUBIC`, `Image.LANCZOS`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Filter {
     Bilinear,
     Bicubic,
+    Lanczos,
 }
 
 impl Filter {
@@ -40,6 +52,7 @@ impl Filter {
         match self {
             Filter::Bilinear => 1.0,
             Filter::Bicubic => 2.0,
+            Filter::Lanczos => LANCZOS_SUPPORT,
         }
     }
 
@@ -49,8 +62,17 @@ impl Filter {
             Filter::Bilinear => (1.0 - x).max(0.0),
             Filter::Bicubic if x < 1.0 => ((BICUBIC_A + 2.0) * x - (BICUBIC_A + 3.0)) * x * x + 1.0,
             Filter::Bicubic if x < 2.0 => (((x - 5.0) * x + 8.0) * x - 4.0) * BICUBIC_A,
-            Filter::Bicubic => 0.0,
+            Filter::Lanczos if x < LANCZOS_SUPPORT => sinc(x) * sinc(x / LANCZOS_SUPPORT),
+            Filter::Bicubic | Filter::Lanczos => 0.0,
         }
+    }
+}
+
+fn sinc(x: f64) -> f64 {
+    if x == 0.0 {
+        1.0
+    } else {
+        (PI * x).sin() / (PI * x)
     }
 }
 
@@ -106,29 +128,47 @@ struct Weights {
     weights: Vec<Vec<i32>>,
 }
 
+/// Pillow's `precompute_coeffs`: per output pixel its first source pixel and its taps' weights,
+/// normalized to sum to 1.
+fn coefficients(source: usize, target: usize, filter: Filter) -> (Vec<usize>, Vec<Vec<f64>>) {
+    let scale = source as f64 / target as f64;
+    let filter_scale = scale.max(1.0);
+    let support = filter.support() * filter_scale;
+    let (mut first, mut weights) = (Vec::with_capacity(target), Vec::with_capacity(target));
+    for out in 0..target {
+        let center = (out as f64 + 0.5) * scale;
+        let start = ((center - support + 0.5) as isize).max(0) as usize;
+        let end = ((center + support + 0.5) as usize).min(source);
+        let taps: Vec<f64> = (start..end)
+            .map(|x| filter.weight((x as f64 - center + 0.5) / filter_scale))
+            .collect();
+        let total: f64 = taps.iter().sum();
+        first.push(start);
+        weights.push(
+            taps.iter()
+                .map(|tap| if total == 0.0 { *tap } else { tap / total })
+                .collect(),
+        );
+    }
+    (first, weights)
+}
+
 impl Weights {
-    /// `precompute_coeffs` and `normalize_coeffs_8bpc` of Pillow's `Resample.c`.
+    /// `normalize_coeffs_8bpc` of Pillow's `Resample.c` over `coefficients`.
     fn new(source: usize, target: usize, filter: Filter) -> Self {
-        let scale = source as f64 / target as f64;
-        let filter_scale = scale.max(1.0);
-        let support = filter.support() * filter_scale;
-        let (mut first, mut weights) = (Vec::with_capacity(target), Vec::with_capacity(target));
-        for out in 0..target {
-            let center = (out as f64 + 0.5) * scale;
-            let start = ((center - support + 0.5) as isize).max(0) as usize;
-            let end = ((center + support + 0.5) as usize).min(source);
-            let taps: Vec<f64> = (start..end)
-                .map(|x| filter.weight((x as f64 - center + 0.5) / filter_scale))
-                .collect();
-            let total: f64 = taps.iter().sum();
-            let fixed = taps.iter().map(|tap| {
-                let normalized = if total == 0.0 { *tap } else { tap / total };
-                let scaled = normalized * f64::from(1u32 << PRECISION_BITS);
-                (scaled + 0.5f64.copysign(scaled)) as i32
-            });
-            first.push(start);
-            weights.push(fixed.collect());
-        }
+        let (first, taps) = coefficients(source, target, filter);
+        let weights = taps
+            .iter()
+            .map(|normalized| {
+                normalized
+                    .iter()
+                    .map(|tap| {
+                        let scaled = tap * f64::from(1u32 << PRECISION_BITS);
+                        (scaled + 0.5f64.copysign(scaled)) as i32
+                    })
+                    .collect()
+            })
+            .collect();
         Self { first, weights }
     }
 
@@ -163,6 +203,50 @@ pub fn resize_bilinear(grid: &[f32], from: Size, to: Size, width: usize) -> Vec<
         }
     }
     out
+}
+
+/// `grid` (`from.height × from.width` cells of `width` values each, row-major) resampled to
+/// `to` cells as `F.interpolate(mode="bicubic", antialias=True, align_corners=False)`
+/// (torchvision's `resize` of a float image) does it: Pillow's bicubic coefficients, the support
+/// widened when shrinking, applied in f32 along each row, then along each column.
+pub fn resize_bicubic_antialiased(grid: &[f32], from: Size, to: Size, width: usize) -> Vec<f32> {
+    let (first_column, column_taps) = coefficients(from.width, to.width, Filter::Bicubic);
+    let (first_row, row_taps) = coefficients(from.height, to.height, Filter::Bicubic);
+    let mut wide = vec![0.0; from.height * to.width * width];
+    for y in 0..from.height {
+        for x in 0..to.width {
+            let cell = &mut wide[(y * to.width + x) * width..][..width];
+            for (tap, weight) in column_taps[x].iter().enumerate() {
+                let source = (y * from.width + first_column[x] + tap) * width;
+                add_scaled(cell, &grid[source..][..width], *weight as f32);
+            }
+        }
+    }
+    let mut out = vec![0.0; to.height * to.width * width];
+    let stride = to.width * width;
+    for y in 0..to.height {
+        let line = &mut out[y * stride..][..stride];
+        for (tap, weight) in row_taps[y].iter().enumerate() {
+            let source = (first_row[y] + tap) * stride;
+            add_scaled(line, &wide[source..][..stride], *weight as f32);
+        }
+    }
+    out
+}
+
+/// Pixel-major RGB in `[−1, 1]` as RGBA bytes: `round(255 · clamp(x / 2 + 1/2, 0, 1))`, opaque
+/// (diffusers' `postprocess` of a decoded image).
+pub fn rgba_from_signed(values: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(values.len() / RGB * RGBA);
+    for pixel in values.as_chunks::<RGB>().0 {
+        out.extend(pixel.map(byte_from_signed));
+        out.push(u8::MAX);
+    }
+    out
+}
+
+fn byte_from_signed(value: f32) -> u8 {
+    ((value / 2.0 + 0.5).clamp(0.0, 1.0) * f32::from(u8::MAX)).round() as u8
 }
 
 /// `grid` resampled to `to` cells bilinearly with its corner cells on the corners of `to`
@@ -297,7 +381,7 @@ impl Axis {
 
 #[cfg(test)]
 mod tests {
-    use super::{Filter, Pixels, Size, resize_bicubic};
+    use super::{Filter, Pixels, Size, resize_bicubic, resize_bicubic_antialiased};
 
     fn image() -> Pixels {
         Pixels {
@@ -336,6 +420,76 @@ mod tests {
         ];
         let down = [104, 135, 30, 130, 72, 123, 122, 124, 80, 54, 62, 36];
         check_pillow(Filter::Bilinear, &up, &down);
+    }
+
+    // Pillow 12.3.0: `Image.fromarray(image, "RGB").resize(size, Image.LANCZOS)`, to 6×4 and
+    // to 2×2.
+    #[test]
+    fn lanczos_resize_matches_pillow_up_and_down() {
+        let up = [
+            6, 255, 12, 102, 147, 26, 191, 0, 45, 100, 74, 67, 178, 48, 190, 255, 0, 255, 0, 70, 0,
+            130, 139, 0, 255, 192, 20, 55, 144, 62, 58, 71, 139, 137, 46, 178, 106, 70, 130, 141,
+            132, 61, 148, 182, 0, 66, 126, 36, 9, 66, 50, 0, 46, 37, 255, 255, 255, 123, 133, 145,
+            0, 0, 1, 120, 41, 18, 86, 39, 23, 2, 0, 0,
+        ];
+        let down = [98, 144, 10, 142, 69, 139, 132, 131, 86, 36, 58, 19];
+        check_pillow(Filter::Lanczos, &up, &down);
+    }
+
+    // Pillow 12.3.0: `Image.fromarray(grid, "F").resize(size, Image.BICUBIC)`, the filter torch's
+    // antialiased bicubic applies, in double.
+    #[test]
+    fn antialiased_bicubic_grid_resize_matches_pillow_float_up_and_down() {
+        let grid = [
+            -1.0, 0.0, -0.5, 0.5, 0.0, 1.0, 0.5, 0.25, 1.0, 0.75, 1.5, 0.0,
+        ];
+        let from = Size {
+            width: 4,
+            height: 3,
+        };
+        let up = [
+            -1.141_261_1,
+            -0.575_471_7,
+            -0.090_452_48,
+            -0.567_042_3,
+            -0.025_527_192,
+            0.590_863_9,
+            -0.763_501_6,
+            -0.164_398_6,
+            0.348_979_95,
+            -0.150_622_74,
+            0.100_197_54,
+            0.464_134_9,
+            -0.065_789_476,
+            0.5,
+            1.000_578_8,
+            0.586_226_9,
+            0.338_235_3,
+            0.233_552_63,
+            0.681_633,
+            0.764_376_64,
+            0.943_805_3,
+            1.223_379_6,
+            0.620_72,
+            0.002_970_345,
+            1.098_125_7,
+            0.863_762_5,
+            0.831_291_5,
+            1.562_117_8,
+            0.781_076_6,
+            -0.123_758_7,
+        ];
+        let down = [-0.189_989_78, 0.175_374_43, 0.858_870_7, 0.660_944_8];
+        for (width, height, want) in [(6, 5, up.as_slice()), (2, 2, down.as_slice())] {
+            let got = resize_bicubic_antialiased(&grid, from, Size { width, height }, 1);
+            assert_eq!(got.len(), want.len());
+            for (got, want) in got.iter().zip(want) {
+                assert!(
+                    (got - want).abs() < 1e-5,
+                    "{width}×{height}: {got} vs {want}"
+                );
+            }
+        }
     }
 
     fn check_pillow(filter: Filter, up: &[u8], down: &[u8]) {

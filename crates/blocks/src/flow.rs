@@ -1,10 +1,11 @@
-//! Flow-matching integration: Euler steps from noise at `t = 0` to a sample at `t = 1` over a
-//! fixed knot schedule, with classifier-free guidance on the steps that ask for it.
+//! Flow-matching integration: Euler steps over a fixed knot schedule, from noise at `t = 0` to a
+//! sample at `t = 1` (F5-TTS), or from noise level 1 down to 0 (a rectified flow's
+//! sampler: Iris's Turbo, P-JiT's), with classifier-free guidance on the steps that ask for it.
 
 use crate::SINUSOID_BASE;
 
-/// The knots `0 = t_0 < … < t_steps = 1` and, per step, whether it is guided (evaluates the
-/// unconditional branch too).
+/// The knots `t_0, …, t_steps`, increasing or decreasing, and, per step, whether it is guided
+/// (evaluates the unconditional branch too).
 pub struct Schedule {
     knots: Vec<f32>,
     guided: Vec<bool>,
@@ -35,6 +36,7 @@ impl Schedule {
         self.guided[step]
     }
 
+    /// `t_{step+1} − t_step`, negative on decreasing knots.
     pub fn dt(&self, step: usize) -> f32 {
         self.knots[step + 1] - self.knots[step]
     }

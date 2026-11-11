@@ -43,3 +43,15 @@ pub fn compare(name: &str, ours: &[f32], reference: &[f32]) -> Result<String, Le
         max_abs(ours, reference)
     ))
 }
+
+/// Channel-major planes (`[images, channels, pixels]`, the reference's layout) as pixel-major
+/// images (`[images, pixels, channels]`, the runtime's).
+pub fn pixel_major(values: &[f32], (channels, pixels): (usize, usize)) -> Vec<f32> {
+    let mut out = vec![0.0; values.len()];
+    for (at, value) in values.iter().enumerate() {
+        let (plane, pixel) = (at / pixels, at % pixels);
+        let (image, channel) = (plane / channels, plane % channels);
+        out[(image * pixels + pixel) * channels + channel] = *value;
+    }
+    out
+}

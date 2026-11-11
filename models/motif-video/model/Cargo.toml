@@ -1,0 +1,27 @@
+[package]
+name = "fusor-ai-motif-video"
+description = "Motif-Video-2B text and image to video: T5Gemma2's text encoder and SigLIP, the dual- and single-stream transformer with its DDT decoder, DPM-Solver++(2M) at diffusers' flow levels with adaptive projected guidance, the Wan autoencoder's first-frame encoder and decoder, the prompt and image frontend and a live preview. No I/O; builds for native and wasm32."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "motif_video"
+
+[dependencies]
+team.workspace = true
+kernels.workspace = true
+blocks.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
+media.workspace = true
+serde.workspace = true
+
+[features]
+# Run the thread team on Rayon's pool (native, and the threaded browser runtimes).
+threads = ["team/threads"]
+
+[lints]
+workspace = true

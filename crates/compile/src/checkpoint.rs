@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::Error;
+use crate::{Error, pth};
 
 /// A safetensors file read into memory, every tensor's data range checked against its dtype and
 /// shape.
@@ -14,22 +14,23 @@ pub struct Checkpoint {
 }
 
 #[derive(Deserialize)]
-struct Entry {
-    dtype: Dtype,
-    shape: Vec<usize>,
-    data_offsets: [usize; 2],
+pub(crate) struct Entry {
+    pub(crate) dtype: Dtype,
+    pub(crate) shape: Vec<usize>,
+    pub(crate) data_offsets: [usize; 2],
 }
 
 /// The element types a safetensors header may name. Tensors of another type can be present but
 /// not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
-enum Dtype {
+pub(crate) enum Dtype {
     Bf16,
     F16,
     F32,
     F64,
     U8,
+    Bool,
     I32,
     I64,
     #[serde(other)]
@@ -37,9 +38,9 @@ enum Dtype {
 }
 
 impl Dtype {
-    fn size(self) -> Option<usize> {
+    pub(crate) fn size(self) -> Option<usize> {
         match self {
-            Dtype::U8 => Some(1),
+            Dtype::U8 | Dtype::Bool => Some(1),
             Dtype::Bf16 | Dtype::F16 => Some(2),
             Dtype::F32 | Dtype::I32 => Some(4),
             Dtype::F64 | Dtype::I64 => Some(8),
@@ -79,6 +80,18 @@ impl Checkpoint {
         Ok(Self {
             bytes,
             data_start: HEADER_LEN_BYTES + header_len,
+            entries,
+        })
+    }
+
+    /// A PyTorch `torch.save` archive (`.pth`) of a state dict, read into memory (`pth`).
+    pub fn read_pth(path: &Path) -> Result<Self, Error> {
+        let bytes = std::fs::read(path).map_err(Error::io(path))?;
+        let entries = pth::tensors(&bytes)
+            .map_err(|error| Error::Format(format!("{}: {error}", path.display())))?;
+        Ok(Self {
+            bytes,
+            data_start: 0,
             entries,
         })
     }
@@ -128,6 +141,10 @@ impl Checkpoint {
 
     pub fn u8(&self, name: &str) -> Result<Vec<u8>, Error> {
         self.scalars(name, Dtype::U8, u8::from_le_bytes)
+    }
+
+    pub fn bool(&self, name: &str) -> Result<Vec<bool>, Error> {
+        self.scalars(name, Dtype::Bool, |[byte]: [u8; 1]| byte != 0)
     }
 
     pub fn i32(&self, name: &str) -> Result<Vec<i32>, Error> {

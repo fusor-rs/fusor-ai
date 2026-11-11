@@ -1,0 +1,76 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model/text": "sha256:e13e46b3a6d76892ab2ceaa40e83171df2bbb722853c7b35e4946e2aaa5ff76e",
+    "dist/model/image": "sha256:91d16d4eb09de7405c1440f900a5307cb1877ee9bde7d640f7a88e3a0e847ee6",
+    "dist/model-f32/text": "sha256:e13e46b3a6d76892ab2ceaa40e83171df2bbb722853c7b35e4946e2aaa5ff76e",
+    "dist/model-f32/image": "sha256:3840efa513a9ced59371f5e90caff7d41309b1676d5af2b1e4c65add14ef932c"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "200×288, 4 steps, guidance 15",
+      "prompt: both prompts' tokens identical",
+      "text: 683520 values, rel 1.20e-1, max abs 3.50e0",
+      "dit: 345600 values, rel 9.87e-3, max abs 1.04e-2",
+      "sampler: knots and timesteps identical; sample: 172800 values, rel 4.73e-2, max abs 1.91e-1"
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-single-relaxed.rgba": "sha256:fa582a0c9bb146078e1b97d1c5a7704266ab310f6852287178091bfa2e713305",
+      "web-single.rgba": "sha256:1dab24f9862dce5b41f30096d5df80c62446d436b5e3720b88f549a25dc1e4a0"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      1,
+      1
+    ],
+    "outputs": {
+      "web-threaded-relaxed/reference.rgba": "sha256:60053f5610ea4be136659162b66c6847028a1a7319bed62c9a2542273c2888e6",
+      "web-threaded/reference.rgba": "sha256:12e7d1627979c3122d495becaacef89519b488f6786701ba8e96200ecb6b9c20"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "timings": {
+    "bench/prompt": {
+      "value": 0.07,
+      "unit": "ms",
+      "spread": 0
+    },
+    "bench/text": {
+      "value": 572.04,
+      "unit": "ms",
+      "spread": 0.0478637857492483
+    },
+    "bench/dit": {
+      "value": 2835.03,
+      "unit": "ms",
+      "spread": 0.09657393396189809
+    },
+    "bench/sampler": {
+      "value": 5292.79,
+      "unit": "ms",
+      "spread": 0.12129708528016415
+    },
+    "bench/a generation of 20 steps at guidance 15": {
+      "value": 106400,
+      "unit": "ms",
+      "spread": 0.1212406015037594
+    }
+  }
+}

@@ -1,0 +1,28 @@
+[package]
+name = "fusor-ai-wan2-1"
+description = "Wan2.1-T2V-1.3B text to video: umT5-XXL's encoder, Wan's diffusion transformer, DPM-Solver++(2M) at shifted flow-matching levels with classifier-free guidance, the causal video autoencoder's decoder, the prompt frontend and a live preview. No I/O; builds for native and wasm32."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "wan2_1"
+
+[dependencies]
+team.workspace = true
+kernels.workspace = true
+blocks.workspace = true
+media.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
+serde.workspace = true
+unicode-normalization.workspace = true
+
+[features]
+# Run the thread team on Rayon's pool (native, and the threaded browser runtimes).
+threads = ["team/threads"]
+
+[lints]
+workspace = true

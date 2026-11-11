@@ -1,0 +1,21 @@
+[package]
+name = "fusor-ai-wan2-1-compile"
+description = "Compiles Wan2.1-T2V-1.3B (Wan-AI/Wan2.1-T2V-1.3B) into two bundles, its text encoder and its video model: renamed and fused tensors, convolutions as matrices, the latents' denormalization folded into the decoder, the umT5 tokenizer and the dtype of every tensor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "wan2_1_compile"
+
+[dependencies]
+wan2-1.workspace = true
+bundle.workspace = true
+compile.workspace = true
+kernels.workspace = true
+
+[lints]
+workspace = true

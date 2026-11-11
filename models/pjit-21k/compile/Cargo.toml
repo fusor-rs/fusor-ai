@@ -1,0 +1,21 @@
+[package]
+name = "fusor-ai-pjit-21k-compile"
+description = "Compiles P-JiT 21K (Linum-AI/pjit-21k) and its text encoder (Qwen/Qwen3.5-4B) into two bundles: renamed and fused tensors, the patch convolution as a matrix, the tokenizer and the dtype of every tensor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "pjit_21k_compile"
+
+[dependencies]
+pjit-21k.workspace = true
+bundle.workspace = true
+compile.workspace = true
+kernels.workspace = true
+
+[lints]
+workspace = true

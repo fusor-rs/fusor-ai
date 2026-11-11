@@ -11,7 +11,6 @@ use blocks::vit::tower::{self, Ending, Resample, Tower};
 use bundle::{Load, Scope, Store, Tokenizer};
 use kernels::ops::Exponentials;
 use kernels::{Linear, Table};
-use media::image::Filter;
 
 use crate::Error;
 
@@ -32,7 +31,7 @@ pub(crate) const TOWER: tower::Shape = tower::Shape {
     encoder: VISION_SHAPE,
     patch_values: PATCH_VALUES,
     position_grid: POSITION_GRID,
-    resample: Resample::Interpolate(Filter::Bicubic),
+    resample: Resample::Bicubic,
     ending: Ending::Encoder,
 };
 
@@ -41,7 +40,7 @@ pub const VISION_SHAPE: vit::Shape = vit::Shape {
     layers: 27,
     heads: 16,
     feed_forward: VISION_FEED_FORWARD,
-    rope_base: 10_000.0,
+    rope_base: Some(10_000.0),
     norm_eps: 1e-6,
     exponentials: Exponentials::Exact,
 };

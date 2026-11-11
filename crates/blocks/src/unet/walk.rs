@@ -8,14 +8,14 @@ use team::SharedBuf;
 use super::Unet;
 use super::level::Middle;
 use super::pass::Pass;
-use crate::SINUSOID_BASE;
 
 impl Unet {
     /// `activated = silu(time_out(silu(time_in(sinusoid(timestep)))))`.
     pub(super) fn embed_time(&self, pass: &Pass, timestep: f32) {
         let (ctx, buffers) = (pass.ctx, pass.buffers);
         if ctx.is_first() {
-            sinusoid(timestep, buffers.sinusoid.part(0..self.shape.channels[0]));
+            let frequencies = buffers.sinusoid.part(0..self.shape.channels[0]);
+            crate::timestep_sinusoid(timestep, crate::SINUSOID_BASE, frequencies);
         }
         ctx.barrier();
         let stages = [
@@ -131,18 +131,5 @@ impl Unet {
         self.norm_out.apply(ctx, (hidden, grid), normed, silu);
         ctx.barrier();
         pass.convolve(&self.conv_out, (&buffers.normed, grid), &buffers.prediction);
-    }
-}
-
-/// The timestep's sinusoids, `cos(t · fᵢ)` then `sin(t · fᵢ)` for `fᵢ = 10000^(−i / half)`, in
-/// f32 like `get_timestep_embedding(flip_sin_to_cos=True, downscale_freq_shift=0)`.
-fn sinusoid(timestep: f32, out: &mut [f32]) {
-    let half = out.len() / 2;
-    let (cosines, sines) = out.split_at_mut(half);
-    for (i, (cosine, sine)) in cosines.iter_mut().zip(sines).enumerate() {
-        let exponent = -SINUSOID_BASE.ln() * i as f32 / half as f32;
-        let angle = timestep * exponent.exp();
-        *cosine = angle.cos();
-        *sine = angle.sin();
     }
 }

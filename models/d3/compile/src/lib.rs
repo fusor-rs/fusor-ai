@@ -187,22 +187,10 @@ fn language(
             norms.push(("k_norm", format!("{from}.self_attn.k_norm")));
         }
         for (name, source) in norms {
-            shifted_norm(checkpoint, tensors, &format!("{layer}.{name}"), &source)?;
+            tensors.shifted_norm(checkpoint, &format!("{layer}.{name}"), &source)?;
         }
     }
-    shifted_norm(checkpoint, tensors, "llm.norm", &format!("{LANGUAGE}.norm"))
-}
-
-/// A zero-centred RMSNorm's multipliers, `1 + w`.
-fn shifted_norm(
-    checkpoint: &Checkpoint,
-    tensors: &mut Tensors<Profile>,
-    name: &str,
-    source: &str,
-) -> Result<(), Error> {
-    let weight = checkpoint.f32(&format!("{source}.weight"))?;
-    let shifted: Vec<f32> = weight.iter().map(|value| 1.0 + value).collect();
-    tensors.vector(name, &shifted)
+    tensors.shifted_norm(checkpoint, "llm.norm", &format!("{LANGUAGE}.norm"))
 }
 
 /// An attention layer's projection `layer.qkv`: the query heads, their gate heads, the key heads

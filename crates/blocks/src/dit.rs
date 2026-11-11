@@ -1,8 +1,11 @@
 //! DiT blocks: pre-RMSNorm layers (`layer`) with non-causal attention inside short sequences,
-//! interleaved rotary embeddings (x-transformers) at positions `0..len`, and a GELU-tanh MLP.
+//! either with interleaved rotary embeddings (x-transformers) at positions `0..len` and a
+//! GELU-tanh MLP (`Kind::Rotary`), or with neither rotary embeddings nor GELU, a SiLU MLP
+//! (`Kind::Plain`).
 //!
 //! Tensors under a prefix `p`: `p.blocks.{i}.{norm1, qkv, out, norm2, ff1, ff2}` (q, k and v fused
-//! into `qkv`, every linear with a bias), and for `FinalLayer`, `p.final_norm` and `p.final`.
+//! into `qkv`; the linears' biases are optional), and for `FinalLayer`, `p.final_norm` and
+//! `p.final`.
 //!
 //! `forward` runs inside a team run over `Sequences`: consecutive sequences of equal length.
 
@@ -15,6 +18,17 @@ pub use crate::layer::Buffers;
 use crate::layer::{Attention, Heads, Layer, LayerSpec, Norm, Pass, Stack, Widths};
 use crate::rotary::{Rotary, Rotation};
 
+/// What sets one DiT's layers apart.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Kind {
+    /// GELU-tanh MLPs and interleaved rotary embeddings of this base at positions `0..len`
+    /// (Ming's flow head).
+    Rotary { rope_base: f32 },
+    /// SiLU MLPs and no rotary embeddings (Iris's layer-wise text blocks over each token's
+    /// layers).
+    Plain,
+}
+
 /// The dimensions of one DiT stack.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shape {
@@ -23,8 +37,8 @@ pub struct Shape {
     pub head_dim: usize,
     pub feed_forward: usize,
     pub depth: usize,
-    pub rope_base: f32,
     pub norm_eps: f32,
+    pub kind: Kind,
 }
 
 impl Shape {
@@ -167,23 +181,21 @@ impl Load for Dit {
                 "{prefix}: {heads} heads of {head_dim} for a width of {hidden}"
             )));
         }
-        let rotary = Rotary::new(Rotation::Sequence, shape.rope_base, head_dim);
+        let (spec, rotary) = match shape.kind {
+            Kind::Rotary { rope_base } => (
+                &LayerSpec::DIT,
+                Rotary::new(Rotation::Sequence, rope_base, head_dim),
+            ),
+            Kind::Plain => (&LayerSpec::LAYERWISE, Rotary::default()),
+        };
         let blocks = load_each(
             store,
             &format!("{prefix}.blocks"),
             shape.depth,
-            |store, name| {
-                Layer::load(
-                    store,
-                    name,
-                    &LayerSpec::DIT,
-                    &shape.widths(),
-                    shape.norm_eps,
-                )
-            },
+            |store, name| Layer::load(store, name, spec, &shape.widths(), shape.norm_eps),
         )?;
         Ok(Self {
-            stack: Stack::new(shape.heads(), LayerSpec::DIT.rope, rotary, blocks),
+            stack: Stack::new(shape.heads(), spec.rope, rotary, blocks),
         })
     }
 }

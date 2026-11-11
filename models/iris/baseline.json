@@ -1,0 +1,177 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model/text": "sha256:cbdab104877ad63167acd5ac8f7562e5b7f20f001e4ea75fbee64b000b966248",
+    "dist/model/base": "sha256:dd265436063e5b4f8c2586d5ae8e394d36338efc30b8c1a53de26955617ef19a",
+    "dist/model/turbo": "sha256:2105654794dbd27e138e7d58d512c994c7042df2cdc2d47ac2bfca580aa5ef5d",
+    "dist/model/depth": "sha256:26f07aed798cd535ccd56b8f9bb0e82953f2cb01bf2167fc3e0e83fb96c0d6c8",
+    "dist/model/upscaler": "sha256:0e611443df90a49b3dd720d90f7b9ed03b93a905073704fe9b0acc22bbccd0cb"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "text:",
+      "prompt: both prompts' tokens identical",
+      "text: 614400 values, rel 1.63e-1, max abs 3.49e1",
+      "base:",
+      "adapter: 1536000 values, rel 5.81e-3, max abs 1.13e-1",
+      "dit: 393216 values, rel 5.60e-2, max abs 4.96e-1",
+      "timesteps: 3 values, rel 0.00e0, max abs 0.00e0",
+      "levels: 4 values, rel 0.00e0, max abs 0.00e0",
+      "sampler: 196608 values, rel 4.66e-1, max abs 2.00e0",
+      "turbo:",
+      "dit: 196608 values, rel 9.61e-2, max abs 8.23e-1",
+      "sampler: 196608 values, rel 6.12e-1, max abs 2.00e0",
+      "depth:",
+      "resize: 258048 values, rel 0.00e0, max abs 0.00e0",
+      "depth: 86016 values, rel 6.41e-2, max abs 1.09e0",
+      "upsample: 84224 values, rel 3.15e-8, max abs 5.96e-8",
+      "colorize: 0 of 84224 pixels differ",
+      "upscaler:",
+      "budget: identical",
+      "bicubic: 2727936 values, rel 6.69e-8, max abs 2.98e-7",
+      "work: 4866048 values, rel 1.25e-6, max abs 1.44e-5",
+      "tiles: 4866048 values, rel 4.58e-2, max abs 9.58e-1",
+      "finish: 2727936 values, rel 5.41e-6, max abs 5.64e-5",
+      "image: 15 of 2727936 bytes differ"
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-single-relaxed/base.rgba": "sha256:e0e3a6e29573f0b0ccc7dc22d1e8f35384d2d9992120a49996ece449df822019",
+      "web-single-relaxed/depth.rgba": "sha256:60666272db04710eedddd5a79c66e7cabce651cfd4dde0dd0e6d7a043219a70c",
+      "web-single-relaxed/turbo.rgba": "sha256:e4e42bb694e238d41922e3b508da8749b358f8bcad22a4a4fbedc7de8a0c6819",
+      "web-single-relaxed/upscaler.rgba": "sha256:80c812e377aba797bcd9c99febe5816e609788e0eafd5e90a2cdf895c9db2710",
+      "web-single/base.rgba": "sha256:006bd1199921574def51dfd7b214470694a6189c23c242b339e6d47f67d77ced",
+      "web-single/depth.rgba": "sha256:e4a51e8f1284f83eb42cefef5bdcffaf19af07ad2a57d18a5accb87e7ad3293e",
+      "web-single/turbo.rgba": "sha256:4711399bea6b765414eab3537945adffb5662b5a4386c6d3be15ce3b13c609bb",
+      "web-single/upscaler.rgba": "sha256:952123b73772075142d05592f3fa32a857adf26728ebfe5b278c58b3a51380ed"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-threaded-relaxed/base.rgba": "sha256:14f9e9d4cfa217f498a801df6f0f551aa53689c4da00a0e4db7a99d16c82544d",
+      "web-threaded-relaxed/depth.rgba": "sha256:77ede74e3a2078a0ca7f67a68be8d297578ee338c0d0758d6aef12fbee84f48b",
+      "web-threaded-relaxed/reference-base.rgba": "sha256:14f9e9d4cfa217f498a801df6f0f551aa53689c4da00a0e4db7a99d16c82544d",
+      "web-threaded-relaxed/reference-depth.rgba": "sha256:77ede74e3a2078a0ca7f67a68be8d297578ee338c0d0758d6aef12fbee84f48b",
+      "web-threaded-relaxed/reference-turbo.rgba": "sha256:e404522d44f5cd4bfb71714c67e7e9d626127f9ce083717de6e3942dff8a4e0c",
+      "web-threaded-relaxed/reference-upscaler.rgba": "sha256:80c812e377aba797bcd9c99febe5816e609788e0eafd5e90a2cdf895c9db2710",
+      "web-threaded-relaxed/turbo.rgba": "sha256:e404522d44f5cd4bfb71714c67e7e9d626127f9ce083717de6e3942dff8a4e0c",
+      "web-threaded-relaxed/upscaler.rgba": "sha256:80c812e377aba797bcd9c99febe5816e609788e0eafd5e90a2cdf895c9db2710",
+      "web-threaded/base.rgba": "sha256:1862e53e4338c6e6578f70f205eca28125dca8cb594be3d8a2c4c81a35c8ea1f",
+      "web-threaded/depth.rgba": "sha256:45ffa69bd1534ebaed6b024a0c9c51f72331082ea0b08fbe38412bf26822ce5e",
+      "web-threaded/reference-base.rgba": "sha256:1862e53e4338c6e6578f70f205eca28125dca8cb594be3d8a2c4c81a35c8ea1f",
+      "web-threaded/reference-depth.rgba": "sha256:45ffa69bd1534ebaed6b024a0c9c51f72331082ea0b08fbe38412bf26822ce5e",
+      "web-threaded/reference-turbo.rgba": "sha256:3bd10e395b0d4882cb5d1fe3ff8c778efd4f1310e3196acdfb1ab656baf330e1",
+      "web-threaded/reference-upscaler.rgba": "sha256:952123b73772075142d05592f3fa32a857adf26728ebfe5b278c58b3a51380ed",
+      "web-threaded/turbo.rgba": "sha256:3bd10e395b0d4882cb5d1fe3ff8c778efd4f1310e3196acdfb1ab656baf330e1",
+      "web-threaded/upscaler.rgba": "sha256:952123b73772075142d05592f3fa32a857adf26728ebfe5b278c58b3a51380ed"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "timings": {
+    "bench/prompt": {
+      "value": 0.05,
+      "unit": "ms",
+      "spread": 0
+    },
+    "bench/text": {
+      "value": 325.32,
+      "unit": "ms",
+      "spread": 0.004672322636173558
+    },
+    "bench/adapter": {
+      "value": 35.44,
+      "unit": "ms",
+      "spread": 0.013544018058690857
+    },
+    "bench/dit": {
+      "value": 24471.91,
+      "unit": "ms",
+      "spread": 0.01629092293981133
+    },
+    "bench/restore": {
+      "value": 24471.91,
+      "unit": "ms",
+      "spread": 0.01629092293981133
+    },
+    "bench/a Turbo image at 1024×1024": {
+      "value": 98200,
+      "unit": "ms",
+      "spread": 0.016293279022403257
+    },
+    "web-threaded/loadMs": {
+      "value": 19810,
+      "unit": "ms"
+    },
+    "web-threaded/metrics.turbo-time": {
+      "value": 266800,
+      "unit": "ms"
+    },
+    "web-threaded/metrics.turbo-per-step": {
+      "value": 66310,
+      "unit": "ms"
+    },
+    "web-threaded/metrics.base-per-step": {
+      "value": 131480,
+      "unit": "ms"
+    },
+    "web-threaded/metrics.depth-time": {
+      "value": 7100,
+      "unit": "ms"
+    },
+    "web-threaded/metrics.upscale-per-tile": {
+      "value": 64989.99999999999,
+      "unit": "ms"
+    },
+    "web-threaded/revisitMs": {
+      "value": 4353,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/loadMs": {
+      "value": 14136,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/metrics.turbo-time": {
+      "value": 75200,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/metrics.turbo-per-step": {
+      "value": 18600,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/metrics.base-per-step": {
+      "value": 37440,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/metrics.depth-time": {
+      "value": 2100,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/metrics.upscale-per-tile": {
+      "value": 18220,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/revisitMs": {
+      "value": 5919,
+      "unit": "ms"
+    }
+  }
+}

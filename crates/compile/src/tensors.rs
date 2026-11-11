@@ -74,4 +74,37 @@ impl<'bundle, P: Profile> Tensors<'bundle, P> {
         }
         Ok(())
     }
+
+    /// A zero-centred RMSNorm's multipliers `1 + w`, from `source.weight`, as the vector `name`.
+    pub fn shifted_norm(
+        &mut self,
+        checkpoint: &Checkpoint,
+        name: &str,
+        source: &str,
+    ) -> Result<(), Error> {
+        let weight = checkpoint.f32(&format!("{source}.weight"))?;
+        let shifted: Vec<f32> = weight.iter().map(|value| 1.0 + value).collect();
+        self.vector(name, &shifted)
+    }
+
+    /// The linear `name` reading `scale ⊙ x + shift` instead of `x`: `weight`'s columns times
+    /// `scale`, the bias plus `weight · shift` (summed in f64).
+    pub fn linear_of_affine(
+        &mut self,
+        name: &str,
+        (weight, mut bias): (&[f32], Vec<f32>),
+        (scale, shift): (&[f32], &[f32]),
+    ) -> Result<(), Error> {
+        let mut folded = Vec::with_capacity(weight.len());
+        for (row, bias) in weight.chunks_exact(scale.len()).zip(&mut bias) {
+            let offset: f64 = row
+                .iter()
+                .zip(shift)
+                .map(|(&weight, &shift)| f64::from(weight) * f64::from(shift))
+                .sum();
+            *bias += offset as f32;
+            folded.extend(row.iter().zip(scale).map(|(weight, scale)| weight * scale));
+        }
+        self.linear(name, bias.len(), &folded, Some(&bias))
+    }
 }

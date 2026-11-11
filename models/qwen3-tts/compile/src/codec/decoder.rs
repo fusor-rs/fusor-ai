@@ -15,7 +15,7 @@ const REST: &str = "decoder.quantizer.rvq_rest";
 
 pub(crate) fn write(checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> Result<(), Error> {
     codebooks(checkpoint, tensors)?;
-    tensors.conv1d(
+    tensors.conv(
         checkpoint,
         "codec.decoder.pre_conv",
         &format!("{SOURCE}.pre_conv.conv"),

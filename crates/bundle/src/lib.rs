@@ -17,7 +17,7 @@ mod store;
 mod tokenizer;
 
 pub use engine::Engine;
-pub use load::{Load, Scope, load_each};
+pub use load::{Load, Scope, load_each, load_pair};
 pub use manifest::{FORMAT, Manifest, Part, Source, TensorEntry};
 pub use stages::Stages;
 pub use store::Store;

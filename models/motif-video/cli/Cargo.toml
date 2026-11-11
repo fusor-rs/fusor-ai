@@ -1,0 +1,27 @@
+[package]
+name = "motif-video-cli"
+description = "The native Motif-Video host: compile the checkpoint, generate videos, benchmark, and check parity with the reference goldens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "motif-video"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+motif-video = { workspace = true, features = ["threads"] }
+motif-video-compile.workspace = true
+harness.workspace = true
+blocks.workspace = true
+bundle.workspace = true
+compile.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true

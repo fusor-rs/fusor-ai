@@ -26,8 +26,8 @@
       "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed.wav"
     ],
     "e2e": [
-      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
-      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
     ],
     "bench": "target/release/ming bench dist/model --threads 8",
     "page": [
@@ -105,12 +105,12 @@
     ],
     "parity": "target/release/parakeet parity dist/model-f32 fixtures/goldens/golden_f32_A.safetensors --threads 8",
     "smoke": [
-      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single",
-      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed"
+      "node scripts/node-smoke.mjs dist/model --build web-single --steps 1 --stop-after 1 --out {out}/web-single",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --steps 1 --stop-after 1 --out {out}/web-single-relaxed"
     ],
     "e2e": [
-      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
-      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
     ],
     "bench": "target/release/parakeet bench dist/model fixtures/recordings/02.wav --threads 8",
     "page": [
@@ -152,8 +152,8 @@
       "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed.rgba"
     ],
     "e2e": [
-      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
-      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
     ],
     "bench": "target/release/realistic-vision bench dist/model --threads 8",
     "page": [
@@ -190,12 +190,12 @@
     ],
     "parity": "target/release/paddle-ocr parity dist/model-f32 fixtures/goldens/golden_f32_textline.safetensors --threads 8",
     "smoke": [
-      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single",
-      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed"
+      "node scripts/node-smoke.mjs dist/model --build web-single --steps 1 --stop-after 1 --out {out}/web-single",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --steps 1 --stop-after 1 --out {out}/web-single-relaxed"
     ],
     "e2e": [
-      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
-      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
     ],
     "bench": "target/release/paddle-ocr bench dist/model fixtures/images/seal.png --task seal --threads 8",
     "page": [
@@ -238,12 +238,12 @@
     ],
     "parity": "target/release/oxr parity dist/model-f32 fixtures/goldens/golden_f32_textline.safetensors --threads 8",
     "smoke": [
-      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single",
-      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed"
+      "node scripts/node-smoke.mjs dist/model --build web-single --steps 1 --stop-after 1 --out {out}/web-single",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --steps 1 --stop-after 1 --out {out}/web-single-relaxed"
     ],
     "e2e": [
-      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
-      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
     ],
     "bench": "target/release/oxr bench dist/model fixtures/images/book.jpg --task page --threads 8",
     "page": [
@@ -291,12 +291,12 @@
     ],
     "parity": "target/release/intern-decision parity dist/model-f32 fixtures/goldens/golden_f32_refund.safetensors fixtures/goldens/golden_f32_seal.safetensors --threads 8",
     "smoke": [
-      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single",
-      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed"
+      "node scripts/node-smoke.mjs dist/model --build web-single --steps 1 --stop-after 1 --out {out}/web-single",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --steps 1 --stop-after 1 --out {out}/web-single-relaxed"
     ],
     "e2e": [
-      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
-      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
     ],
     "bench": "target/release/intern-decision bench dist/model fixtures/requests.json seal --images fixtures/images --threads 8",
     "page": [
@@ -336,12 +336,12 @@
     ],
     "parity": "target/release/indra-ocr parity dist/model fixtures/goldens/golden_f32_scan.safetensors fixtures/goldens/golden_f32_equations.safetensors --threads 8",
     "smoke": [
-      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single",
-      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed"
+      "node scripts/node-smoke.mjs dist/model --build web-single --steps 1 --stop-after 1 --out {out}/web-single",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --steps 1 --stop-after 1 --out {out}/web-single-relaxed"
     ],
     "e2e": [
-      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
-      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
     ],
     "bench": "target/release/indra-ocr bench dist/model fixtures/pages.json scan --images fixtures/images --threads 8",
     "page": [
@@ -379,12 +379,12 @@
     ],
     "parity": "target/release/kronos parity dist/model fixtures/cases.json fixtures/series fixtures/goldens/golden_f32_minutes.safetensors fixtures/goldens/golden_f32_alibaba.safetensors --threads 8",
     "smoke": [
-      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single",
-      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed"
+      "node scripts/node-smoke.mjs dist/model --build web-single --steps 1 --stop-after 1 --out {out}/web-single",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --steps 1 --stop-after 1 --out {out}/web-single-relaxed"
     ],
     "e2e": [
-      "node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
-      "node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
     ],
     "bench": "target/release/kronos bench dist/model fixtures/cases.json minutes --series fixtures/series --threads 8",
     "page": [
@@ -443,8 +443,8 @@
     ],
     "parity": "target/release/d3 parity dist/model/nano fixtures/goldens/nano/golden_f32_support.safetensors fixtures/goldens/nano/golden_f32_receipt.safetensors fixtures/goldens/nano/golden_f32_clip.safetensors --threads 8 && target/release/d3 parity dist/model/lite fixtures/goldens/lite/golden_f32_support.safetensors fixtures/goldens/lite/golden_f32_receipt.safetensors fixtures/goldens/lite/golden_f32_clip.safetensors --threads 8",
     "smoke": [
-      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single",
-      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed"
+      "node scripts/node-smoke.mjs dist/model --build web-single --steps 1 --stop-after 1 --out {out}/web-single",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --steps 1 --stop-after 1 --out {out}/web-single-relaxed"
     ],
     "e2e": [
       "node e2e/run.mjs --size nano --threads 8 --build web-threaded --out {out}/web-threaded-nano",
@@ -763,5 +763,205 @@
       ".wav"
     ],
     "unstable": "^e2e/.*record"
+  },
+  "wan2-1": {
+    "product": "wan2-1-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/golden_f32.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/43811e0702791d2de9733457c17e1e3141e31064/wan2-1/golden_f32.safetensors",
+        "sha256": "sha256:3a3b959314204f59a86b54ee36c37c112b1bd509b7dd2a3f02f0ad7c3d0eb540"
+      }
+    ],
+    "build": [
+      "just model",
+      "rm -rf dist/model-f32",
+      "target/release/wan2-1 compile .cache/checkpoint dist/model-f32 --profile f32",
+      "just runtimes",
+      "just page",
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model/text",
+      "dist/model/video",
+      "dist/model-f32/text",
+      "dist/model-f32/video"
+    ],
+    "parity": "target/release/wan2-1 parity dist/model-f32 fixtures/goldens/golden_f32.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single.rgba",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed.rgba"
+    ],
+    "e2e": [
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "bench": "target/release/wan2-1 bench dist/model --threads 8",
+    "page": [
+      "loadMs",
+      "metrics.time",
+      "metrics.per-step",
+      "revisitMs"
+    ],
+    "outputs": [
+      ".rgba"
+    ]
+  },
+  "iris": {
+    "product": "iris-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/golden_f32_text.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/a95f7add0a616c17e508273b59c2e0e5341958c3/iris/golden_f32_text.safetensors",
+        "sha256": "sha256:36608245c373df620f9579d24a53ab3aef9c3b6d3fd02dc4545f09999b04df35"
+      },
+      {
+        "file": "fixtures/goldens/golden_f32_base.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/a95f7add0a616c17e508273b59c2e0e5341958c3/iris/golden_f32_base.safetensors",
+        "sha256": "sha256:7836ba294d35c216977761601f40322172723ea189f119fbc75e8bf3fb752346"
+      },
+      {
+        "file": "fixtures/goldens/golden_f32_turbo.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/a95f7add0a616c17e508273b59c2e0e5341958c3/iris/golden_f32_turbo.safetensors",
+        "sha256": "sha256:d3695ccf1a6e8c19f562507ebeccf5647dd5a8a5f7a75b3ada10d19a48b96466"
+      },
+      {
+        "file": "fixtures/goldens/golden_f32_depth.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/a95f7add0a616c17e508273b59c2e0e5341958c3/iris/golden_f32_depth.safetensors",
+        "sha256": "sha256:10aa94b782f7093a86c9039a926d43e76358ea83e0542ffa08b84a79131923ac"
+      },
+      {
+        "file": "fixtures/goldens/golden_f32_upscaler.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/a95f7add0a616c17e508273b59c2e0e5341958c3/iris/golden_f32_upscaler.safetensors",
+        "sha256": "sha256:ec254ff4b024d57e5bef255942b77286b69cda573587f22688ee4b80ac4ed995"
+      }
+    ],
+    "build": [
+      "just bundles",
+      "just fixtures",
+      "just runtimes",
+      "just page",
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model/text",
+      "dist/model/base",
+      "dist/model/turbo",
+      "dist/model/depth",
+      "dist/model/upscaler"
+    ],
+    "parity": "target/release/iris parity dist/model fixtures/goldens --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --steps 1 --stop-after 1 --out {out}/web-single",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --steps 1 --stop-after 1 --out {out}/web-single-relaxed"
+    ],
+    "e2e": [
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "PORT=8795 node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "bench": "target/release/iris bench dist/model --threads 8",
+    "page": [
+      "loadMs",
+      "metrics.turbo-time",
+      "metrics.turbo-per-step",
+      "metrics.base-per-step",
+      "metrics.depth-time",
+      "metrics.upscale-per-tile",
+      "revisitMs"
+    ],
+    "outputs": [
+      ".rgba"
+    ]
+  },
+  "motif-video": {
+    "product": "motif-video-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/golden_f32_t2v.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/c8e4b87ebc2eb9736f91c6836fbfb3a116d10cea/motif-video/golden_f32_t2v.safetensors",
+        "sha256": "sha256:8e6ce6027cf4d54c7eb61001edb10a9479f1af9db4d0c81e90b8801e32ea5b0d"
+      },
+      {
+        "file": "fixtures/goldens/golden_f32_i2v.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/c8e4b87ebc2eb9736f91c6836fbfb3a116d10cea/motif-video/golden_f32_i2v.safetensors",
+        "sha256": "sha256:ff75fb43f8c8e745cc40613b7e56ed5f9517658a72249661090df0e2a36e5691"
+      }
+    ],
+    "build": [
+      "just bundles",
+      "just runtimes",
+      "just page",
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model/text",
+      "dist/model/video",
+      "dist/model-f32/text",
+      "dist/model-f32/video"
+    ],
+    "parity": "target/release/motif-video parity dist/model-f32 fixtures/goldens --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single.rgba",
+      "node scripts/node-smoke.mjs dist/model --build web-single --gradient --steps 1 --out {out}/web-single-image.rgba",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed.rgba",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --gradient --steps 1 --out {out}/web-single-relaxed-image.rgba"
+    ],
+    "e2e": [
+      "PORT=8791 node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "PORT=8791 node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "bench": "target/release/motif-video bench dist/model --threads 8",
+    "page": [
+      "loadMs",
+      "cases.t2v.metrics.time",
+      "cases.t2v.metrics.per-step",
+      "cases.i2v.metrics.time",
+      "cases.i2v.metrics.per-step",
+      "revisitMs"
+    ],
+    "outputs": [
+      ".rgba"
+    ]
+  },
+  "pjit-21k": {
+    "product": "pjit-21k-wasm",
+    "goldens": [
+      {
+        "file": "fixtures/goldens/golden_f32.safetensors",
+        "url": "https://huggingface.co/datasets/fusorlabs/fusor-ai-goldens/resolve/40a159c8dd440188a197ad88c944f5e1667c0de3/pjit-21k/golden_f32.safetensors",
+        "sha256": "sha256:1db2725054a8042b4cea080fc2efb5a771ce553c712260f03bfd551005dd5afc"
+      }
+    ],
+    "build": [
+      "just bundles",
+      "just runtimes",
+      "just page",
+      "cd vendor/fusor-ai/packages/e2e && npm ci --no-audit --no-fund --silent && npx playwright install chromium"
+    ],
+    "bundles": [
+      "dist/model/text",
+      "dist/model/image",
+      "dist/model-f32/text",
+      "dist/model-f32/image"
+    ],
+    "parity": "target/release/pjit-21k parity dist/model-f32 fixtures/goldens/golden_f32.safetensors --threads 8",
+    "smoke": [
+      "node scripts/node-smoke.mjs dist/model --build web-single --out {out}/web-single.rgba",
+      "node scripts/node-smoke.mjs dist/model --build web-single-relaxed --out {out}/web-single-relaxed.rgba"
+    ],
+    "e2e": [
+      "PORT=8793 node e2e/run.mjs --threads 8 --build web-threaded --out {out}/web-threaded",
+      "PORT=8793 node e2e/run.mjs --threads 8 --build web-threaded-relaxed --out {out}/web-threaded-relaxed"
+    ],
+    "bench": "target/release/pjit-21k bench dist/model --threads 8",
+    "page": [
+      "loadMs",
+      "metrics.time",
+      "metrics.per-step",
+      "revisitMs"
+    ],
+    "outputs": [
+      ".rgba"
+    ]
   }
 }

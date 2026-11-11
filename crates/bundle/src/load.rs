@@ -1,4 +1,4 @@
-use kernels::conv::{self, Conv2d, Depthwise2d, DepthwiseShape};
+use kernels::conv::{self, CausalConv3d, CausalShape, Conv2d, Depthwise2d, DepthwiseShape};
 use kernels::{Linear, Table, Vector};
 
 use crate::{Error, Store};
@@ -37,6 +37,19 @@ pub fn load_each<T>(
     (0..count)
         .map(|index| load(store, &format!("{prefix}.{index}")))
         .collect()
+}
+
+/// The two linears `prefix.0` and `prefix.1` of an MLP.
+pub fn load_pair(
+    store: &mut Store,
+    prefix: &str,
+    shapes: [[usize; 2]; 2],
+) -> Result<[Linear; 2], Error> {
+    let [first, second] = shapes;
+    Ok([
+        Linear::load(store, &format!("{prefix}.0"), first)?,
+        Linear::load(store, &format!("{prefix}.1"), second)?,
+    ])
 }
 
 /// The f32 vector named `prefix`, of this length.
@@ -89,6 +102,17 @@ impl Load for Conv2d {
     fn load(store: &mut Store, prefix: &str, shape: conv::Shape) -> Result<Self, Error> {
         let linear = Linear::load(store, prefix, shape.matrix())?;
         Ok(Conv2d::new(linear, shape.kernel, shape.stride)?)
+    }
+}
+
+/// The causal 3-D convolution `prefix`: `prefix.weight`, `[outputs, window · kernel² · inputs]`,
+/// and its bias when the bundle has one.
+impl Load for CausalConv3d {
+    type Shape = CausalShape;
+
+    fn load(store: &mut Store, prefix: &str, shape: CausalShape) -> Result<Self, Error> {
+        let linear = Linear::load(store, prefix, shape.matrix())?;
+        Ok(CausalConv3d::new(linear, shape.window, shape.kernel)?)
     }
 }
 

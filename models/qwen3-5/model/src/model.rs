@@ -33,7 +33,7 @@ const VISION: vit::Shape = vit::Shape {
     layers: 24,
     heads: 16,
     feed_forward: 4096,
-    rope_base: 10_000.0,
+    rope_base: Some(10_000.0),
     norm_eps: NORM_EPS,
     exponentials: Exponentials::Fast,
 };

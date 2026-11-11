@@ -1,0 +1,172 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model/text": "sha256:0da2217dd94cf50c99e2f6c6d49b69170d0da01d838556ac24e1fed8c6108a12",
+    "dist/model/video": "sha256:6d85dba688be3bdc7d7c5945cd671e7457c80bd85fb5bf7809a79a0c4ba509ba",
+    "dist/model-f32/text": "sha256:ad818c1ca68a8dace24b279eab85d1f8c8be159748350220ce0896aa7c92dfac",
+    "dist/model-f32/video": "sha256:a3d80fc8dbed163a484485c9469844133107bb08dcb5aac7af315a6bfff36202"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "t2v: 20×12 latents, 3 latent frames, 4 steps, guidance 8",
+      "i2v: 20×12 latents, 3 latent frames, 2 steps, guidance 8",
+      "prompt: every prompt's tokens identical",
+      "frame: 46080 values, rel 0.00e0, max abs 0.00e0",
+      "pixels: 2408448 values, rel 1.34e-6, max abs 1.43e-5",
+      "text: 683520 values, rel 2.33e-1, max abs 3.34e1",
+      "vision: 4718592 values, rel 4.38e-2, max abs 3.26e0",
+      "encode: 7680 values, rel 1.62e-5, max abs 1.13e-3",
+      "dit t2v: 23040 values, rel 6.23e-3, max abs 3.88e-2",
+      "guidance t2v: 11520 values, rel 4.20e-7, max abs 2.86e-6",
+      "sampler t2v: timesteps identical; levels: 5 values, rel 0.00e0, max abs 0.00e0; latents: 11520 values, rel 1.34e-1, max abs 3.93e0",
+      "decode t2v: 414720 values, rel 3.37e-4, max abs 5.30e-3",
+      "dit i2v: 23040 values, rel 8.61e-3, max abs 1.04e-1",
+      "guidance i2v: 11520 values, rel 4.04e-7, max abs 2.86e-6",
+      "sampler i2v: timesteps identical; levels: 3 values, rel 0.00e0, max abs 0.00e0; latents: 11520 values, rel 1.55e-1, max abs 1.18e0",
+      "decode i2v: 414720 values, rel 2.86e-4, max abs 4.54e-3"
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "outputs": {
+      "web-single-image.rgba": "sha256:d87d3aa5d0897049a9ab8000b8a5028afd806c1c180e15bbe23ef5035fc72f71",
+      "web-single-relaxed-image.rgba": "sha256:c995983b56f90ed671bd2f8cc1a038b6d4d3d74e0448271c709bbbdd7ad488d4",
+      "web-single-relaxed.rgba": "sha256:5d6352bdd6ba6aaa52bfb306c1cbd92f231dc3b3f91935b3b3e6a7cf48c1f281",
+      "web-single.rgba": "sha256:69dae38165d0c5925d801bfd47e1d1ca783ac979073cf6ff0d3174480bddf91f"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-threaded-relaxed/first-image.rgba": "sha256:d32dd8f6de0166d18f8974ea04903ccfe8bf42b561aeecb90f0f5446a5eb53fd",
+      "web-threaded-relaxed/reference-i2v.rgba": "sha256:e4229c738a59c90fd3b5c8ffd1ca7431b6a1cc7e43c999b9e1626300e2866cf9",
+      "web-threaded-relaxed/reference-t2v.rgba": "sha256:53899d34dfaaf6cf4bbae203d42d4dcd9384093144cfcf5f4b02614b760fc8ef",
+      "web-threaded-relaxed/video-i2v.rgba": "sha256:e4229c738a59c90fd3b5c8ffd1ca7431b6a1cc7e43c999b9e1626300e2866cf9",
+      "web-threaded-relaxed/video-t2v.rgba": "sha256:53899d34dfaaf6cf4bbae203d42d4dcd9384093144cfcf5f4b02614b760fc8ef",
+      "web-threaded/first-image.rgba": "sha256:d32dd8f6de0166d18f8974ea04903ccfe8bf42b561aeecb90f0f5446a5eb53fd",
+      "web-threaded/reference-i2v.rgba": "sha256:79265577b8ea179981547ef79938c13591cc4d7b3b1e80636c240765857dd9ab",
+      "web-threaded/reference-t2v.rgba": "sha256:0c7452e99cb9438945548fc85d2531f14a94a8e303b99b963481e009611a3152",
+      "web-threaded/video-i2v.rgba": "sha256:79265577b8ea179981547ef79938c13591cc4d7b3b1e80636c240765857dd9ab",
+      "web-threaded/video-t2v.rgba": "sha256:0c7452e99cb9438945548fc85d2531f14a94a8e303b99b963481e009611a3152"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "timings": {
+    "bench/prompt": {
+      "value": 0.06,
+      "unit": "ms",
+      "spread": 0.16666666666666682
+    },
+    "bench/text": {
+      "value": 783.75,
+      "unit": "ms",
+      "spread": 0.020771929824561514
+    },
+    "bench/frame": {
+      "value": 12.44,
+      "unit": "ms",
+      "spread": 0.008038585209003187
+    },
+    "bench/vision": {
+      "value": 6504.78,
+      "unit": "ms",
+      "spread": 0.0643757359972205
+    },
+    "bench/encode": {
+      "value": 172.75,
+      "unit": "ms",
+      "spread": 0.17059334298118667
+    },
+    "bench/dit": {
+      "value": 4049.44,
+      "unit": "ms",
+      "spread": 0.06428543205974163
+    },
+    "bench/sampler": {
+      "value": 35329.93,
+      "unit": "ms",
+      "spread": 0.08935115354035528
+    },
+    "bench/decode": {
+      "value": 10180.29,
+      "unit": "ms",
+      "spread": 0.06541267488450704
+    },
+    "bench/a generation of 20 steps at guidance 8": {
+      "value": 184000,
+      "unit": "ms",
+      "spread": 0.1875
+    },
+    "bench/with a first image, 10 steps": {
+      "value": 371300,
+      "unit": "ms",
+      "spread": 0.0872609749528683
+    },
+    "web-threaded/loadMs": {
+      "value": 199019,
+      "unit": "ms"
+    },
+    "web-threaded/cases.t2v.metrics.time": {
+      "value": 27400,
+      "unit": "ms"
+    },
+    "web-threaded/cases.t2v.metrics.per-step": {
+      "value": 4910,
+      "unit": "ms"
+    },
+    "web-threaded/cases.i2v.metrics.time": {
+      "value": 306500,
+      "unit": "ms"
+    },
+    "web-threaded/cases.i2v.metrics.per-step": {
+      "value": 69570,
+      "unit": "ms"
+    },
+    "web-threaded/revisitMs": {
+      "value": 4551,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/loadMs": {
+      "value": 64037,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/cases.t2v.metrics.time": {
+      "value": 7500,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/cases.t2v.metrics.per-step": {
+      "value": 1260,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/cases.i2v.metrics.time": {
+      "value": 86100,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/cases.i2v.metrics.per-step": {
+      "value": 18650,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/revisitMs": {
+      "value": 4095,
+      "unit": "ms"
+    }
+  }
+}

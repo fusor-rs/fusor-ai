@@ -122,8 +122,8 @@ impl Layer {
         let out = scope.load(spec.out, [hidden, heads.width()])?;
         let norm2 = spec.norm.load(&mut scope, norm2, hidden, eps)?;
         let feed_forward = match spec.feed_forward {
-            FeedForwardSpec::Gated => {
-                FeedForward::gated(&mut scope, hidden, feed_forward, Activation::Silu)?
+            FeedForwardSpec::Gated(activation) => {
+                FeedForward::gated(&mut scope, hidden, feed_forward, activation)?
             }
             FeedForwardSpec::Plain(activation) => FeedForward::Plain {
                 up: scope.load("ff1", [feed_forward, hidden])?,

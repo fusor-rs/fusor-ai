@@ -1,0 +1,26 @@
+[package]
+name = "wan2-1-cli"
+description = "The native Wan2.1 host: compile the checkpoint, generate videos, benchmark, and check parity with the reference goldens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "wan2-1"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+wan2-1 = { workspace = true, features = ["threads"] }
+wan2-1-compile.workspace = true
+harness.workspace = true
+bundle.workspace = true
+compile.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true

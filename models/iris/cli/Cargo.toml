@@ -1,0 +1,26 @@
+[package]
+name = "iris-cli"
+description = "The native Iris-3B host: compile the checkpoint, generate images, estimate depth, upscale, benchmark, and check parity with the reference goldens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "iris"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+iris = { workspace = true, features = ["threads"] }
+iris-compile.workspace = true
+harness.workspace = true
+bundle.workspace = true
+compile.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true

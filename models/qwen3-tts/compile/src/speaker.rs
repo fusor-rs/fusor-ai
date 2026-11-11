@@ -9,7 +9,7 @@ const SOURCE: &str = "speaker_encoder";
 
 pub(crate) fn write(checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> Result<(), Error> {
     let mut conv = |name: String, source: String| {
-        tensors.conv1d(
+        tensors.conv(
             checkpoint,
             &format!("speaker.{name}"),
             &format!("{SOURCE}.{source}"),

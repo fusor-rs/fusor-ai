@@ -292,7 +292,23 @@ impl Transformer {
     /// When the cache would overwrite a key the span still sees: a causal span past the cache's
     /// capacity, or a window plus the span's rows over it.
     pub fn forward(&self, ctx: &Ctx, cache: &KvCache, buffers: &Buffers, span: Span) {
-        self.run(ctx, buffers, &Cached::new(cache, span, None));
+        self.forward_layers(ctx, cache, buffers, (span, 0..self.stack.layers()));
+    }
+
+    /// `forward` through the layers in `layers` only: the residual stream between two layers,
+    /// which a text encoder that reads an inner layer's states (Iris's Qwen3-VL, Z-Image's
+    /// Qwen3) keeps.
+    ///
+    /// # Panics
+    /// As `forward`, and when `layers` reaches past the stack.
+    pub fn forward_layers(
+        &self,
+        ctx: &Ctx,
+        cache: &KvCache,
+        buffers: &Buffers,
+        (span, layers): (Span, Range<usize>),
+    ) {
+        self.run(ctx, buffers, &Cached::new(cache, span, None), layers);
     }
 
     /// `forward` with each row's rotary angles turned by its own position (multimodal RoPE).
@@ -302,10 +318,15 @@ impl Transformer {
     pub fn forward_at(&self, ctx: &Ctx, cache: &KvCache, buffers: &Buffers, at: Positioned) {
         let Positioned { span, positions } = at;
         assert_eq!(positions.len(), span.rows, "one position per row");
-        self.run(ctx, buffers, &Cached::new(cache, span, Some(positions)));
+        self.run(
+            ctx,
+            buffers,
+            &Cached::new(cache, span, Some(positions)),
+            0..self.stack.layers(),
+        );
     }
 
-    fn run(&self, ctx: &Ctx, buffers: &Buffers, attention: &Cached) {
+    fn run(&self, ctx: &Ctx, buffers: &Buffers, attention: &Cached, layers: Range<usize>) {
         let Cached { cache, span, .. } = attention;
         let reach = match span.mask {
             Mask::Causal | Mask::Full | Mask::Groups { .. } => span.first + span.rows,
@@ -315,7 +336,8 @@ impl Transformer {
             reach <= cache.capacity,
             "the cache holds every key the span sees"
         );
-        self.stack.forward(ctx, buffers, span.rows, attention);
+        self.stack
+            .forward_layers(ctx, buffers, (span.rows, layers), attention);
     }
 }
 

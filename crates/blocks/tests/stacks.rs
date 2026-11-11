@@ -21,7 +21,7 @@ use team::Team;
 use support::{
     Bias, DeltaDims, Dims, HeadNorms, HybridDims, Kind, LAYERS, Linear, Llama, Mask, NormKind,
     Pairing, Plain, Rotary, Weights, angles, gelu_erf, gelu_tanh, quick_gelu, relative_error,
-    rms_norm, widen,
+    rms_norm, silu, widen,
 };
 
 const EPS: f32 = 1e-6;
@@ -360,32 +360,37 @@ fn vision_encoder_attends_among_the_patches_like_the_reference() {
         activation: gelu_tanh,
     };
     let stack = weights.stack("vit.layers", &ENCODER, Kind::Plain(plain));
-    let shape = vit::Shape {
-        hidden,
-        layers: LAYERS,
-        heads,
-        feed_forward: ENCODER.feed_forward,
-        rope_base: ROPE_BASE,
-        norm_eps: EPS,
-        exponentials: Exponentials::Exact,
-    };
-    let vit = Vit::load(&mut weights.store(VIT_WEIGHTS), "vit", shape)
-        .expect("the bundle holds every tensor the block loads");
-
-    let team = Team::global();
-    let mut buffers = shape.buffers(grid.patches(), team.threads());
-    buffers.hidden.get_mut().copy_from_slice(&input);
-    team.run(|ctx| vit.forward(ctx, &buffers, grid));
-
-    let mut x = widen(&input);
     let angles = |row: usize| grid_angles(grid, ENCODER.head_dim, row);
     let rotary = Rotary {
         pairing: Pairing::Half,
         angles: &angles,
     };
-    stack.apply(&mut x, &ENCODER, Some(&rotary), Mask::Full);
-    let error = relative_error(buffers.hidden.read(), &x);
-    assert!(error < tolerance(VIT_WEIGHTS), "error {error:.2e}");
+    for (rope_base, reference_rotary) in [(Some(ROPE_BASE), Some(&rotary)), (None, None)] {
+        let shape = vit::Shape {
+            hidden,
+            layers: LAYERS,
+            heads,
+            feed_forward: ENCODER.feed_forward,
+            rope_base,
+            norm_eps: EPS,
+            exponentials: Exponentials::Exact,
+        };
+        let vit = Vit::load(&mut weights.clone().store(VIT_WEIGHTS), "vit", shape)
+            .expect("the bundle holds every tensor the block loads");
+
+        let team = Team::global();
+        let mut buffers = shape.buffers(grid.patches(), team.threads());
+        buffers.hidden.get_mut().copy_from_slice(&input);
+        team.run(|ctx| vit.forward(ctx, &buffers, grid));
+
+        let mut x = widen(&input);
+        stack.apply(&mut x, &ENCODER, reference_rotary, Mask::Full);
+        let error = relative_error(buffers.hidden.read(), &x);
+        assert!(
+            error < tolerance(VIT_WEIGHTS),
+            "rope base {rope_base:?}: error {error:.2e}"
+        );
+    }
 }
 
 /// A patch's rotary angles: the first half of a head's frequencies by its row in `grid`, the
@@ -531,6 +536,28 @@ fn vision_tower_mixes_its_patches_like_the_reference() {
     assert!(error < tolerance(VIT_WEIGHTS), "error {error:.2e}");
 }
 
+/// A kind of DiT, with the reference's activation and rotary pairing for it.
+struct DitCase {
+    kind: dit::Kind,
+    activation: fn(f64) -> f64,
+    pairing: Option<Pairing>,
+}
+
+const DIT_CASES: [DitCase; 2] = [
+    DitCase {
+        kind: dit::Kind::Rotary {
+            rope_base: ROPE_BASE,
+        },
+        activation: gelu_tanh,
+        pairing: Some(Pairing::Interleaved),
+    },
+    DitCase {
+        kind: dit::Kind::Plain,
+        activation: silu,
+        pairing: None,
+    },
+];
+
 #[test]
 fn diffusion_transformer_attends_within_each_sequence_like_the_reference() {
     let sequences = Sequences {
@@ -544,42 +571,99 @@ fn diffusion_transformer_attends_within_each_sequence_like_the_reference() {
         feed_forward,
         ..
     } = ENCODER;
-    let mut weights = Weights::new("dit", 4);
-    let input = weights.floats(sequences.rows * hidden, 0.0, 1.0);
-    let plain = Plain {
-        norm: NormKind::Rms,
-        bias: Bias::With,
-        activation: gelu_tanh,
+    for DitCase {
+        kind,
+        activation,
+        pairing,
+    } in DIT_CASES
+    {
+        let mut weights = Weights::new("dit", 4);
+        let input = weights.floats(sequences.rows * hidden, 0.0, 1.0);
+        let plain = Plain {
+            norm: NormKind::Rms,
+            bias: Bias::With,
+            activation,
+        };
+        let stack = weights.stack("dit.blocks", &ENCODER, Kind::Plain(plain));
+        let shape = dit::Shape {
+            hidden,
+            heads,
+            head_dim,
+            feed_forward,
+            depth: LAYERS,
+            norm_eps: EPS,
+            kind,
+        };
+        let dit = Dit::load(&mut weights.store(DIT_WEIGHTS), "dit", shape)
+            .expect("the bundle holds every tensor the block loads");
+
+        let team = Team::global();
+        let mut buffers = shape.buffers(sequences.rows, team.threads());
+        buffers.hidden.get_mut().copy_from_slice(&input);
+        team.run(|ctx| dit.forward(ctx, &buffers, sequences));
+
+        let mut x = widen(&input);
+        let angles = |row: usize| angles(&vec![row; head_dim / 2], ROPE_BASE.into(), head_dim);
+        let rotary = pairing.map(|pairing| Rotary {
+            pairing,
+            angles: &angles,
+        });
+        for sequence in x.chunks_exact_mut(sequences.length * hidden) {
+            stack.apply(sequence, &ENCODER, rotary.as_ref(), Mask::Full);
+        }
+        let error = relative_error(buffers.hidden.read(), &x);
+        assert!(
+            error < tolerance(DIT_WEIGHTS),
+            "{kind:?}: error {error:.2e}"
+        );
+    }
+}
+
+/// Rows of the prompt a refiner's padding row sees.
+const REFINER_PROMPT: usize = 5;
+
+#[test]
+fn refiner_pad_row_sees_the_prompt_and_itself_like_the_reference() {
+    let hidden = DECODER.hidden;
+    let mut weights = Weights::new("refiner", 6);
+    let input = weights.floats((REFINER_PROMPT + 1) * hidden, 0.0, 1.0);
+    let llama = Llama {
+        qkv_bias: Bias::Without,
+        head_norms: HeadNorms::With,
     };
-    let stack = weights.stack("dit.blocks", &ENCODER, Kind::Plain(plain));
-    let shape = dit::Shape {
-        hidden,
-        heads,
-        head_dim,
-        feed_forward,
-        depth: LAYERS,
-        rope_base: ROPE_BASE,
-        norm_eps: EPS,
-    };
-    let dit = Dit::load(&mut weights.store(DIT_WEIGHTS), "dit", shape)
+    let stack = weights.stack("stack.layers", &DECODER, Kind::Llama(llama));
+    let shape = transformer_shape(Architecture::Qwen3, Rotation::Partial(0));
+    let refiner = Transformer::load(&mut weights.store(DType::F32), "stack", shape)
         .expect("the bundle holds every tensor the block loads");
 
     let team = Team::global();
-    let mut buffers = shape.buffers(sequences.rows, team.threads());
-    buffers.hidden.get_mut().copy_from_slice(&input);
-    team.run(|ctx| dit.forward(ctx, &buffers, sequences));
+    let cache = KvCache::new(shape, REFINER_PROMPT + 1);
+    let mut prompt = shape.buffers(REFINER_PROMPT, team.threads());
+    let mut padding = shape.buffers(1, team.threads());
+    let (prompt_input, padding_input) = input.split_at(REFINER_PROMPT * hidden);
+    prompt.hidden.get_mut().copy_from_slice(prompt_input);
+    padding.hidden.get_mut().copy_from_slice(padding_input);
+    let prompt_span = Span {
+        rows: REFINER_PROMPT,
+        first: 0,
+        mask: transformer::Mask::Full,
+    };
+    let padding_span = Span {
+        rows: 1,
+        first: REFINER_PROMPT,
+        mask: transformer::Mask::Causal,
+    };
+    team.run(|ctx| {
+        refiner.forward_layers(ctx, &cache, &prompt, (prompt_span, 0..1));
+        refiner.forward_layers(ctx, &cache, &prompt, (prompt_span, 1..LAYERS));
+        refiner.forward(ctx, &cache, &padding, padding_span);
+    });
 
     let mut x = widen(&input);
-    let angles = |row: usize| angles(&vec![row; head_dim / 2], ROPE_BASE.into(), head_dim);
-    let rotary = Rotary {
-        pairing: Pairing::Interleaved,
-        angles: &angles,
-    };
-    for sequence in x.chunks_exact_mut(sequences.length * hidden) {
-        stack.apply(sequence, &ENCODER, Some(&rotary), Mask::Full);
-    }
-    let error = relative_error(buffers.hidden.read(), &x);
-    assert!(error < tolerance(DIT_WEIGHTS), "error {error:.2e}");
+    stack.apply(&mut x, &DECODER, None, Mask::Prefix(REFINER_PROMPT));
+    let output = [prompt.hidden.read(), padding.hidden.read()].concat();
+    let error = relative_error(&output, &x);
+    assert!(error < tolerance(DType::F32), "error {error:.2e}");
 }
 
 /// Two hybrid layers: the delta rule, then gated attention over half of each head rotated.
@@ -597,23 +681,25 @@ const HYBRID: HybridDims = HybridDims {
 };
 const HYBRID_SECTIONS: [usize; 3] = [2, 1, 1];
 
-/// Whether each call is first read on other rows, the state saved before and restored after; or
-/// the whole sequence reversed is read from its first row before each call, the prefix before
-/// the call kept with its attention rows and put back.
+/// How each call is read: as it is; first on other rows (the state saved before and restored
+/// after); after the whole sequence reversed (the prefix before the call kept with its attention
+/// rows and put back); or one layer at a time.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Detour {
     None,
     EveryCall,
     Prefix,
+    Layers,
 }
 
 /// Each mask the hybrid stack reads under, the rows per call and the detours: a sequence read with
 /// every row seeing every other is read in one call.
-const HYBRID_CALLS: [(transformer::Mask, usize, Detour); 4] = [
+const HYBRID_CALLS: [(transformer::Mask, usize, Detour); 5] = [
     (transformer::Mask::Causal, CALL, Detour::None),
     (transformer::Mask::Causal, CALL, Detour::EveryCall),
     (transformer::Mask::Causal, CALL, Detour::Prefix),
     (transformer::Mask::Full, ROWS, Detour::None),
+    (transformer::Mask::Causal, CALL, Detour::Layers),
 ];
 
 #[test]
@@ -692,6 +778,117 @@ fn hybrid_shape() -> hybrid::Shape {
     }
 }
 
+/// `shape`'s layers with `blocks::interleaved`'s names under `prefix`.
+fn write_interleaved(weights: &mut Weights, prefix: &str, shape: &interleaved::Shape) {
+    let (hidden, heads) = (DECODER.hidden, DECODER.heads);
+    let head_dim = DECODER.head_dim;
+    let gate_heads = match shape.attention.gate {
+        Gate::Headwise => heads,
+        _ => 0,
+    };
+    for (layer, mixer) in shape.mixers.iter().enumerate() {
+        let prefix = format!("{prefix}.layers.{layer}");
+        let norms = [
+            "input_norm",
+            "post_norm",
+            "mixer_out_norm",
+            "feed_forward_out_norm",
+        ];
+        for norm in norms {
+            weights.tensor(&format!("{prefix}.{norm}"), &[hidden], 1.0, 0.1);
+        }
+        let matrices = match mixer {
+            Mixer::Conv => vec![
+                ("input.weight", 3 * hidden, hidden),
+                ("out.weight", hidden, hidden),
+            ],
+            Mixer::Full | Mixer::Window => {
+                let qkv = (heads + 2 * DECODER.kv_heads) * head_dim + gate_heads;
+                vec![
+                    ("qkv.weight", qkv, hidden),
+                    ("o.weight", hidden, heads * head_dim),
+                ]
+            }
+        };
+        let feed_forward = DECODER.feed_forward;
+        let inner = [
+            ("gate.weight", feed_forward, hidden),
+            ("up.weight", feed_forward, hidden),
+        ];
+        let down = ("down.weight", hidden, feed_forward);
+        for (name, outputs, inputs) in matrices.into_iter().chain(inner).chain([down]) {
+            weights.tensor(&format!("{prefix}.{name}"), &[outputs, inputs], 0.0, 0.2);
+        }
+        match mixer {
+            Mixer::Conv => {
+                weights.tensor(
+                    &format!("{prefix}.conv"),
+                    &[hidden, shape.conv_kernel],
+                    0.0,
+                    0.5,
+                );
+            }
+            Mixer::Full | Mixer::Window => {
+                for norm in ["q_norm", "k_norm"] {
+                    weights.tensor(&format!("{prefix}.{norm}"), &[head_dim], 1.0, 0.1);
+                }
+            }
+        }
+    }
+}
+
+/// Two layers of a bidirectional encoder in the shape of T5Gemma2's: attention between the rows
+/// of a call, windowed under `mixers` or not.
+const fn encoder_shape(mixers: &'static [Mixer]) -> interleaved::Shape {
+    interleaved::Shape {
+        mixers,
+        attention: AttentionShape {
+            gate: Gate::None,
+            rotation: Rotation::Sequence,
+            ..LFM.attention
+        },
+        window: Window {
+            rows: 2 * ROWS,
+            ..LFM.window
+        },
+        conv_kernel: 0,
+        ..LFM
+    }
+}
+
+#[test]
+fn window_layers_of_an_encoder_see_every_row() {
+    let windowed = encoder_shape(&[Mixer::Window; 2]);
+    let full = encoder_shape(&[Mixer::Full; 2]);
+    let mut weights = Weights::new("interleaved-encoder", 13);
+    let input = weights.floats(ROWS * DECODER.hidden, 0.0, 1.0);
+    write_interleaved(&mut weights, "encoder", &windowed);
+    let outputs = [windowed, full].map(|shape| {
+        let mut store = weights.clone().store(DType::F32);
+        let stack = Interleaved::load(&mut store, "encoder", shape)
+            .expect("the bundle holds every tensor the block loads");
+        read_whole(&stack, &shape, &input)
+    });
+    let error = relative_error(&outputs[0], &widen(&outputs[1]));
+    assert!(error < tolerance(DType::F32), "{error:.2e}");
+}
+
+/// `input`'s `ROWS` rows through the stack in one call under `Mask::Full`.
+fn read_whole(stack: &Interleaved, shape: &interleaved::Shape, input: &[f32]) -> Vec<f32> {
+    let team = Team::global();
+    let state = interleaved::State::encoder(shape, ROWS);
+    let mut buffers = shape.buffers(ROWS, team.threads());
+    let positions: Vec<Position> = (0..ROWS).map(Position::uniform).collect();
+    buffers.hidden.get_mut()[..input.len()].copy_from_slice(input);
+    let call = hybrid::Rows {
+        first: 0,
+        positions: &positions,
+        mask: transformer::Mask::Full,
+    };
+    team.run(|ctx| stack.forward(ctx, &state, &buffers, &call));
+    buffers.hidden.read()[..input.len()].to_vec()
+}
+
 /// The output of `input`'s rows through the stack in calls of `call` rows under `mask`, each call
 /// read first on the rows of the input reversed when it takes a detour.
 fn read_hybrid(
@@ -719,13 +916,23 @@ fn read_hybrid(
             positions: &positions[rows.clone()],
             mask,
         };
-        team.run(|ctx| hybrid.forward(ctx, state, &buffers, &rows_call));
+        match detour {
+            Detour::Layers => {
+                for layer in 0..shape.layers {
+                    team.run(|ctx| {
+                        let layers = layer..layer + 1;
+                        hybrid.forward_layers(ctx, state, &buffers, (&rows_call, layers));
+                    });
+                }
+            }
+            _ => team.run(|ctx| hybrid.forward(ctx, state, &buffers, &rows_call)),
+        }
         buffers.stack.hidden.read()[..rows.len() * hidden].to_vec()
     };
     let mut output = Vec::new();
     for rows in &calls {
         match detour {
-            Detour::None => {}
+            Detour::None | Detour::Layers => {}
             Detour::EveryCall => {
                 state.save(&mut saved);
                 read(&state, &reversed, rows);
@@ -775,59 +982,9 @@ const LFM: interleaved::Shape = interleaved::Shape {
 
 #[test]
 fn interleaved_stack_reads_on_across_calls_as_in_one() {
-    let (hidden, heads) = (DECODER.hidden, DECODER.heads);
-    let head_dim = DECODER.head_dim;
     let mut weights = Weights::new("interleaved", 11);
-    let input = weights.floats(ROWS * hidden, 0.0, 1.0);
-    for (layer, mixer) in LFM.mixers.iter().enumerate() {
-        let prefix = format!("lfm.layers.{layer}");
-        let norms = [
-            "input_norm",
-            "post_norm",
-            "mixer_out_norm",
-            "feed_forward_out_norm",
-        ];
-        for norm in norms {
-            weights.tensor(&format!("{prefix}.{norm}"), &[hidden], 1.0, 0.1);
-        }
-        let matrices = match mixer {
-            Mixer::Conv => vec![
-                ("input.weight", 3 * hidden, hidden),
-                ("out.weight", hidden, hidden),
-            ],
-            Mixer::Full | Mixer::Window => {
-                let qkv = (heads + 2 * DECODER.kv_heads) * head_dim + heads;
-                vec![
-                    ("qkv.weight", qkv, hidden),
-                    ("o.weight", hidden, heads * head_dim),
-                ]
-            }
-        };
-        let feed_forward = DECODER.feed_forward;
-        let inner = [
-            ("gate.weight", feed_forward, hidden),
-            ("up.weight", feed_forward, hidden),
-        ];
-        let down = ("down.weight", hidden, feed_forward);
-        for (name, outputs, inputs) in matrices.into_iter().chain(inner).chain([down]) {
-            weights.tensor(&format!("{prefix}.{name}"), &[outputs, inputs], 0.0, 0.2);
-        }
-        match mixer {
-            Mixer::Conv => {
-                weights.tensor(
-                    &format!("{prefix}.conv"),
-                    &[hidden, LFM.conv_kernel],
-                    0.0,
-                    0.5,
-                );
-            }
-            Mixer::Full | Mixer::Window => {
-                for norm in ["q_norm", "k_norm"] {
-                    weights.tensor(&format!("{prefix}.{norm}"), &[head_dim], 1.0, 0.1);
-                }
-            }
-        }
-    }
+    let input = weights.floats(ROWS * DECODER.hidden, 0.0, 1.0);
+    write_interleaved(&mut weights, "lfm", &LFM);
     let stack = Interleaved::load(&mut weights.store(DType::F32), "lfm", LFM)
         .expect("the bundle holds every tensor the block loads");
     let whole = widen(&read_interleaved(&stack, &input, ROWS, Detour::None));

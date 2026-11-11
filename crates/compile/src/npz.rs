@@ -3,6 +3,7 @@
 //! each member stored or deflated.
 
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::Path;
 
 use crate::Error;
@@ -54,8 +55,8 @@ pub fn read_npz(path: &Path) -> Result<HashMap<String, Array>, Error> {
 }
 
 /// A member of the archive, as its central directory entry describes it.
-struct Entry {
-    name: String,
+pub(crate) struct Entry {
+    pub(crate) name: String,
     method: u16,
     compressed: usize,
     offset: usize,
@@ -64,13 +65,7 @@ struct Entry {
 impl Entry {
     /// The member's bytes, inflated.
     fn data(&self, archive: &[u8]) -> Result<Vec<u8>, Error> {
-        let header = archive.get(self.offset..).ok_or_else(truncated)?;
-        let name_len = usize::from(u16_at(header, 26)?);
-        let extra_len = usize::from(u16_at(header, 28)?);
-        let start = LOCAL_HEADER_LEN + name_len + extra_len;
-        let data = header
-            .get(start..start + self.compressed)
-            .ok_or_else(truncated)?;
+        let data = &archive[self.range(archive)?];
         match self.method {
             STORED => Ok(data.to_vec()),
             DEFLATED => miniz_oxide::inflate::decompress_to_vec(data)
@@ -78,10 +73,31 @@ impl Entry {
             other => Err(Error::Format(format!("{}: compression {other}", self.name))),
         }
     }
+
+    /// Where the member's bytes lie in the archive, when it is stored uncompressed.
+    pub(crate) fn stored(&self, archive: &[u8]) -> Result<Range<usize>, Error> {
+        if self.method != STORED {
+            return Err(Error::Format(format!("{}: a compressed member", self.name)));
+        }
+        self.range(archive)
+    }
+
+    /// Where the member's bytes, compressed or not, lie in the archive.
+    fn range(&self, archive: &[u8]) -> Result<Range<usize>, Error> {
+        let header = archive.get(self.offset..).ok_or_else(truncated)?;
+        let name_len = usize::from(u16_at(header, 26)?);
+        let extra_len = usize::from(u16_at(header, 28)?);
+        let start = self.offset + LOCAL_HEADER_LEN + name_len + extra_len;
+        let end = start + self.compressed;
+        if end > archive.len() {
+            return Err(truncated());
+        }
+        Ok(start..end)
+    }
 }
 
 /// Every entry of the central directory.
-fn entries(archive: &[u8]) -> Result<Vec<Entry>, Error> {
+pub(crate) fn entries(archive: &[u8]) -> Result<Vec<Entry>, Error> {
     let end = (0..=archive.len().saturating_sub(END_OF_DIRECTORY_LEN))
         .rev()
         .find(|&at| u32_at(archive, at).ok() == Some(END_OF_DIRECTORY))

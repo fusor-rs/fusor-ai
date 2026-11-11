@@ -13,7 +13,9 @@
 //! from its first, or on from the end of a prefix kept with `State::keep_prefix` and put back with
 //! `State::restore_prefix` after other sequences were read: the window layers keep their keys in a
 //! ring that holds the window and one call's rows, and the conv layers their last inputs, so a
-//! sequence is read on, never from an earlier row again.
+//! sequence is read on, never from an earlier row again. Read under `Mask::Full` (an encoder
+//! reading its whole sequence at once, T5Gemma2's), the window layers see every row of the call,
+//! both ways: a call holds at most half the window's rows.
 
 pub(crate) mod conv;
 
@@ -131,8 +133,17 @@ pub struct State {
 impl State {
     /// The state of sequences of up to `capacity` rows, read in calls of up to `rows` rows.
     pub fn new(shape: &Shape, capacity: usize, rows: usize) -> Self {
+        Self::sized(shape, capacity, shape.window.rows + rows)
+    }
+
+    /// The state of an encoder reading sequences of up to `rows` rows, each whole in one
+    /// `Mask::Full` call from its first row: the window layers' ring holds that call's rows alone.
+    pub fn encoder(shape: &Shape, rows: usize) -> Self {
+        Self::sized(shape, rows, rows)
+    }
+
+    fn sized(shape: &Shape, capacity: usize, window_capacity: usize) -> Self {
         let heads = shape.attention.heads();
-        let window_capacity = shape.window.rows + rows;
         let conv_inputs = match shape.layers_of(Mixer::Conv) {
             0 => 0,
             layers => layers * shape.hidden * conv::history(shape.conv_kernel),
@@ -225,15 +236,24 @@ impl Interleaved {
     /// their window, the conv layers their kept inputs.
     ///
     /// # Panics
-    /// When the rows are more than the buffers hold, or the caches would overwrite a key they
-    /// still see.
+    /// When the rows are more than the buffers hold, the caches would overwrite a key they
+    /// still see, or a `Mask::Full` call is more than half the window's rows.
     pub fn forward(&self, ctx: &Ctx, state: &State, buffers: &layer::Buffers, rows: &Rows) {
         let count = rows.positions.len();
         assert!(count <= buffers.rows, "the buffers hold the rows");
+        let window_reach = match rows.mask {
+            Mask::Full => count,
+            _ => self.shape.window.rows + count,
+        };
         assert!(
-            rows.first + count <= state.capacity
-                && self.shape.window.rows + count <= state.window_capacity,
+            rows.first + count <= state.capacity && window_reach <= state.window_capacity,
             "the caches hold every key the rows see"
+        );
+        assert!(
+            rows.mask != Mask::Full
+                || self.shape.layers_of(Mixer::Window) == 0
+                || count <= self.shape.window.rows.div_ceil(2),
+            "an encoder's window layers reach every row of its call"
         );
         let pass = Pass {
             ctx,
@@ -269,7 +289,10 @@ impl Interleaved {
                 return conv.mix(pass, normed, &reach);
             }
             (Mixing::Attention(attention), Mixer::Window) => {
-                let window = Mask::Window(self.shape.window.rows);
+                let window = match rows.mask {
+                    Mask::Full => Mask::Full,
+                    _ => Mask::Window(self.shape.window.rows),
+                };
                 (attention, &state.window, window)
             }
             (Mixing::Attention(attention), _) => (attention, &state.global, rows.mask),

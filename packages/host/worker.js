@@ -35,16 +35,17 @@ export const requestsSinceReady = () => performance.getEntriesByType('resource')
 /**
  * Loads the bundle at `modelUrl` into the best runtime build of `glueName` under `distUrl`.
  * `onRuntime(started)` runs once the runtime exists, `onReady({ ms, ...progress })` once the model
- * is built; `progress` and `warning` messages are posted on the way.
+ * is built; `progress` and `warning` messages are posted on the way. `className` names the
+ * runtime's exported class when it exports several.
  */
-export async function load({ modelUrl, threads, build, glueName, cacheName, distUrl, onRuntime, onReady }) {
+export async function load({ modelUrl, threads, build, glueName, className = 'Runtime', cacheName, distUrl, onRuntime, onReady }) {
   const t0 = performance.now();
   const [manifestText, started] = await Promise.all([
     fetchOk(new URL('manifest.json', modelUrl)).then((response) => response.text()),
     startRuntime({ distUrl, glueName, threads, requested: build, onWarning: (message) => post({ type: 'warning', message }) }),
   ]);
   const manifest = JSON.parse(manifestText);
-  engine = { rt: new started.glue.Runtime(manifestText), glue: started.glue };
+  engine = { rt: new started.glue[className](manifestText), glue: started.glue };
   onRuntime(started);
   const progress = await loadParts({
     runtime: engine.rt,

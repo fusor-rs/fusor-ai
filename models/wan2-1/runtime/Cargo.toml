@@ -1,0 +1,28 @@
+[package]
+name = "wan2-1-runtime"
+description = "The Wan2.1 browser runtimes: the text encoder and the video model, each behind a wasm-bindgen surface (bundle parts and a request in, RGBA frames out)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wan2-1.workspace = true
+runtime.workspace = true
+serde_json.workspace = true
+
+[features]
+# Threaded runtimes (scripts/build-runtime.sh): the team runs on a wasm-bindgen-rayon pool of
+# page-owned workers sharing this module's memory.
+threads = ["wan2-1/threads", "runtime/threads"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+
+[lints]
+workspace = true

@@ -12,6 +12,7 @@ const CHUNK: usize = 4096;
 pub const LAYERS: usize = 2;
 
 /// Named tensors of seeded values, kept as f64 for the references.
+#[derive(Clone)]
 pub struct Weights {
     name: &'static str,
     state: u64,
@@ -413,6 +414,8 @@ pub enum Mask {
         state: usize,
         ends: &'static [usize],
     },
+    /// The first `n` rows; a later row those and itself.
+    Prefix(usize),
 }
 
 pub struct Stack(Vec<Layer>);
@@ -483,6 +486,8 @@ fn attend(heads: &[Vec<f64>], dims: &Dims, mask: Mask) -> Vec<f64> {
                 let first = ends.iter().rev().find(|&&end| end <= row).copied();
                 (0..state).chain(first.unwrap_or(state)..end).collect()
             }
+            Mask::Prefix(count) if row < count => (0..count).collect(),
+            Mask::Prefix(count) => (0..count).chain([row]).collect(),
             Mask::Full | Mask::Groups { .. } => (0..rows).collect(),
         };
         for head in 0..dims.heads {
@@ -516,7 +521,7 @@ fn add(x: &mut [f64], addend: &[f64]) {
     }
 }
 
-fn silu(x: f64) -> f64 {
+pub fn silu(x: f64) -> f64 {
     x / (1.0 + (-x).exp())
 }
 

@@ -1,0 +1,28 @@
+[package]
+name = "fusor-ai-iris"
+description = "Iris-3B: Qwen3-VL-4B's text states, Iris's pixel-space diffusion transformer (base, Turbo, depth and restoration), its samplers, depth's colours and the restorer's tiles. No I/O; builds for native and wasm32."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "iris"
+
+[dependencies]
+team.workspace = true
+kernels.workspace = true
+blocks.workspace = true
+media.workspace = true
+bundle = { workspace = true, features = ["tokenizer"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[features]
+# Run the thread team on Rayon's pool (native, and the threaded browser runtimes).
+threads = ["team/threads"]
+
+[lints]
+workspace = true

@@ -88,6 +88,17 @@ pub fn image(path: &Path) -> Result<Pixels, Error> {
     })
 }
 
+/// RGBA rows top to bottom as a PNG file.
+pub fn write_png(path: &Path, (width, height): (usize, usize), rgba: &[u8]) -> Result<(), Error> {
+    let (width, height) = (width as u32, height as u32);
+    image::save_buffer(path, rgba, width, height, image::ExtendedColorType::Rgba8).map_err(
+        |source| Error::Image {
+            path: path.to_path_buf(),
+            source,
+        },
+    )
+}
+
 fn unreadable(path: PathBuf) -> impl FnOnce(std::io::Error) -> Error {
     move |source| Error::Read { path, source }
 }

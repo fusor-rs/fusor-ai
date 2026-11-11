@@ -15,6 +15,8 @@ mod input;
 mod spec;
 mod weights;
 
+use std::ops::Range;
+
 use kernels::ops::{rms_norm, rope_half, rope_interleaved};
 use kernels::{COLUMN_ALIGN, Input, Linear, QUAD, project_input, project_residual_input};
 use team::Ctx;
@@ -106,16 +108,32 @@ impl Stack {
         rows: usize,
         attention: &impl Attention,
     ) {
+        self.forward_layers(ctx, buffers, (rows, 0..self.layers.len()), attention);
+    }
+
+    /// `forward` through the layers in `layers` only.
+    pub(crate) fn forward_layers(
+        &self,
+        ctx: &Ctx,
+        buffers: &Buffers,
+        (rows, layers): (usize, Range<usize>),
+        attention: &impl Attention,
+    ) {
         assert!(rows <= buffers.rows, "the buffers hold the rows");
+        assert!(layers.end <= self.layers.len(), "the stack has the layers");
         let pass = Pass {
             ctx,
             buffers,
             rows,
             heads: self.heads,
         };
-        for index in 0..self.layers.len() {
+        for index in layers {
             self.forward_layer(&pass, index, attention);
         }
+    }
+
+    pub(crate) fn layers(&self) -> usize {
+        self.layers.len()
     }
 
     /// Runs layer `index` over the pass's rows of `buffers.hidden`.

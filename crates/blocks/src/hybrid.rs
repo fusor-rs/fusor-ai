@@ -12,7 +12,8 @@
 //! checkpoint's zero-centred `1 + w` is folded by its compiler. A final norm after the last
 //! layer is the model's.
 //!
-//! `Hybrid::forward` runs inside a team run. Calls read consecutive rows of one sequence from its
+//! `Hybrid::forward` runs inside a team run; `forward_layers` runs a range of the layers, to read
+//! the hidden states between them. Calls read consecutive rows of one sequence from its
 //! first, or from a row whose state was saved (`State::save`, `State::restore`), or from the end
 //! of a prefix kept with its attention rows, after other sequences were read (`State::keep_prefix`,
 //! `State::restore_prefix`): the delta rule's state is the sum of every row before. The attention layers see keys under each call's mask;
@@ -21,6 +22,8 @@
 
 pub(crate) mod attention;
 mod delta;
+
+use std::ops::Range;
 
 use bundle::{Load, Scope, Store, load_each};
 use team::{Ctx, PerThread, SharedBuf};
@@ -198,6 +201,23 @@ impl Hybrid {
     /// # Panics
     /// When the rows are more than the buffers hold, or reach past the cache's capacity.
     pub fn forward(&self, ctx: &Ctx, state: &State, buffers: &Buffers, rows: &Rows) {
+        self.forward_layers(ctx, state, buffers, (rows, 0..self.layers.len()));
+    }
+
+    /// Layers `layers` over `buffers.stack.hidden[..rows.positions.len()]`, from the hidden states
+    /// the layer before the first left: an encoder reads a model's intermediate layers a run of
+    /// layers at a time, the hidden states read between the runs.
+    ///
+    /// # Panics
+    /// As `forward`, or when `layers` reaches past the stack.
+    pub fn forward_layers(
+        &self,
+        ctx: &Ctx,
+        state: &State,
+        buffers: &Buffers,
+        (rows, layers): (&Rows, Range<usize>),
+    ) {
+        assert!(layers.end <= self.layers.len(), "the stack has the layers");
         let Rows {
             first,
             positions,
@@ -212,7 +232,8 @@ impl Hybrid {
             rows,
             heads: self.shape.attention.heads(),
         };
-        for (index, layer) in self.layers.iter().enumerate() {
+        for index in layers {
+            let layer = &self.layers[index];
             let slot = self.shape.slot(index);
             let (projection, out) = match &layer.mixer {
                 Mixer::Attention(weights) => (&weights.qkv, &weights.out),

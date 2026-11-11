@@ -24,13 +24,23 @@ impl LayerSpec {
         norm: NormSpec::Rms,
         norms: ["input_norm", "post_norm"],
         out: "o",
-        feed_forward: FeedForwardSpec::Gated,
+        feed_forward: FeedForwardSpec::Gated(Activation::Silu),
         head_norm: HeadNorm::None,
         rope: Some(Rope::Half),
     };
     pub(crate) const QWEN3: Self = Self {
         head_norm: HeadNorm::Rms,
         ..Self::QWEN2
+    };
+    /// umT5's encoder layer: RMSNorms, a bias-free fused QKV and output `o`, a GELU-tanh-gated
+    /// feed-forward, no rotary embeddings (its positions are a relative bias added to the scores).
+    pub(crate) const UMT5: Self = Self {
+        norm: NormSpec::Rms,
+        norms: ["norm1", "norm2"],
+        out: "o",
+        feed_forward: FeedForwardSpec::Gated(Activation::GeluTanh),
+        head_norm: HeadNorm::None,
+        rope: None,
     };
     pub(crate) const KYUTAI: Self = Self::plain(
         NormSpec::Layer,
@@ -43,9 +53,11 @@ impl LayerSpec {
         Self::plain(NormSpec::Layer, Activation::GeluTanh, Some(Rope::Half));
     pub(crate) const DIT: Self =
         Self::plain(NormSpec::Rms, Activation::GeluTanh, Some(Rope::Interleaved));
+    /// Iris's layer-wise text blocks: the DiT layer with a SiLU MLP and no rotary embeddings.
+    pub(crate) const LAYERWISE: Self = Self::plain(NormSpec::Rms, Activation::Silu, None);
 
-    /// The layer of Kyutai's transformer, CLIP's text encoder, the encoder and the ViT and DiT
-    /// blocks: `norm1`, `out`, `norm2` and a plain feed-forward with `activation`.
+    /// The layer of Kyutai's transformer, CLIP's text encoder, the encoder and the ViT, DiT and
+    /// layer-wise blocks: `norm1`, `out`, `norm2` and a plain feed-forward with `activation`.
     const fn plain(norm: NormSpec, activation: Activation, rope: Option<Rope>) -> Self {
         Self {
             norm,
@@ -85,10 +97,10 @@ impl NormSpec {
     }
 }
 
-/// A layer's `FeedForward`, and a plain one's activation.
+/// A layer's `FeedForward` and its activation.
 #[derive(Clone, Copy)]
 pub(crate) enum FeedForwardSpec {
-    Gated,
+    Gated(Activation),
     Plain(Activation),
 }
 

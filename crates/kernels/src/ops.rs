@@ -1,5 +1,5 @@
-//! f32 operations of transformer inference: normalization, rotary embeddings, activations and
-//! attention.
+//! f32 operations of transformer inference: normalization, rotary embeddings, activations,
+//! attention and bfloat16 rounding.
 
 use crate::arch::{Active, Backend, DOTS, EXP_RUN, dot_f32, dot_f32_each};
 use crate::quant::QUAD;
@@ -240,6 +240,19 @@ pub fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + exp(-x))
 }
 
+/// bfloat16 keeps an f32's upper 16 bits.
+const BF16_SHIFT: u32 = 16;
+const BF16_HALF: u32 = 0x7FFF;
+const BF16_MASK: u32 = 0xFFFF_0000;
+
+/// `value` rounded to the nearest bfloat16 (ties to even) and back, as `x.to(torch.bfloat16)`
+/// rounds a finite f32.
+pub fn round_bf16(value: f32) -> f32 {
+    let bits = value.to_bits();
+    let rounding = BF16_HALF + ((bits >> BF16_SHIFT) & 1);
+    f32::from_bits((bits + rounding) & BF16_MASK)
+}
+
 /// `scores` replaced by their softmax, the exponentials summed in their order.
 pub fn softmax(scores: &mut [f32]) {
     let max = Active::maximum(scores);
@@ -265,15 +278,20 @@ pub fn attend<'cache>(
         |j| key_value(j).0,
         |j, dot| scores[j] = dot * scale,
     );
+    weigh(scores, |j| key_value(j).1, out);
+}
+
+/// `scores` replaced by their softmax, and `out` the sum of `value(j)` times score `j`.
+pub fn weigh<'cache>(scores: &mut [f32], value: impl Fn(usize) -> &'cache [f32], out: &mut [f32]) {
     softmax(scores);
     out.fill(0.0);
     let (blocks, rest) = scores.as_chunks::<DOTS>();
     for (block, weights) in blocks.iter().enumerate() {
-        let values = std::array::from_fn(|offset| key_value(block * DOTS + offset).1);
+        let values = std::array::from_fn(|offset| value(block * DOTS + offset));
         Active::axpy_f32_many(out, *weights, values);
     }
     for (j, weight) in (blocks.len() * DOTS..).zip(rest) {
-        for (output, component) in out.iter_mut().zip(key_value(j).1) {
+        for (output, component) in out.iter_mut().zip(value(j)) {
             *output += weight * component;
         }
     }
@@ -283,6 +301,7 @@ pub fn attend<'cache>(
 mod tests {
     use super::{
         Exponentials, elu, exp, exp_fast, gelu_erf, gelu_tanh, gelu_tanh_lanes, layer_norm,
+        round_bf16,
     };
     use crate::arch::{Active, Backend, DOTS};
 
@@ -429,6 +448,19 @@ mod tests {
         let want = [-1.0, -2.0, 2.0, 1.0];
         for (got, want) in out.iter().zip(want) {
             assert!((got - want).abs() < 1e-6, "{out:?}");
+        }
+    }
+
+    #[test]
+    fn round_bf16_rounds_to_nearest_ties_to_even() {
+        let cases = [
+            (1.0 + 1.0 / 256.0, 1.0),
+            (1.0 + 3.0 / 256.0, 1.015_625),
+            (1.005, 1.007_812_5),
+            (-3.3, -3.296_875),
+        ];
+        for (value, rounded) in cases {
+            assert_eq!(round_bf16(value), rounded, "{value}");
         }
     }
 }

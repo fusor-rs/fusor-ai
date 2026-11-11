@@ -9,7 +9,8 @@
 //! their mean first (SageAttention's smoothing): that shifts all of a query's scores alike,
 //! which the softmax ignores, and leaves the quantization a smaller range. `attend` splits
 //! (image, head, block of `QUERY_BLOCK` queries) units over the team; a thread quantizes a head
-//! once for its consecutive units.
+//! once for its consecutive units. Models attend on their own buffers with it too (Iris's
+//! transformer).
 
 use std::ops::Range;
 
@@ -23,31 +24,31 @@ const QUERY_BLOCK: usize = BLOCK;
 /// The rows of a query, key or value operand: head `h` of row `r` is the `head_dim` values at
 /// `r · stride + offset + h · head_dim`.
 #[derive(Clone, Copy)]
-pub(crate) struct Operand<'buf> {
-    pub(crate) values: &'buf [f32],
-    pub(crate) stride: usize,
-    pub(crate) offset: usize,
+pub struct Operand<'buf> {
+    pub values: &'buf [f32],
+    pub stride: usize,
+    pub offset: usize,
 }
 
 /// One attention: `images` images, each of `queries` query rows over `keys` key and value rows,
 /// in `heads` query heads of `head_dim` over `kv_heads` key and value heads, each shared by
 /// consecutive query heads.
-pub(crate) struct Call<'buf> {
-    pub(crate) heads: usize,
-    pub(crate) kv_heads: usize,
-    pub(crate) head_dim: usize,
-    pub(crate) images: usize,
-    pub(crate) queries: usize,
-    pub(crate) keys: usize,
-    pub(crate) query: Operand<'buf>,
-    pub(crate) key: Operand<'buf>,
-    pub(crate) value: Operand<'buf>,
-    pub(crate) exponentials: Exponentials,
+pub struct Call<'buf> {
+    pub heads: usize,
+    pub kv_heads: usize,
+    pub head_dim: usize,
+    pub images: usize,
+    pub queries: usize,
+    pub keys: usize,
+    pub query: Operand<'buf>,
+    pub key: Operand<'buf>,
+    pub value: Operand<'buf>,
+    pub exponentials: Exponentials,
 }
 
 /// One thread's working set.
 #[derive(Default)]
-pub(crate) struct Scratch {
+pub struct Scratch {
     /// The (image, key head) whose keys and values are quantized.
     head: Option<(usize, usize)>,
     keys: QuantizedMatrix,
@@ -77,7 +78,7 @@ fn padded(length: usize) -> usize {
 
 /// This thread's share of `call` into `out`, rows of `heads · head_dim` values, the scores
 /// scaled by `1/√head_dim`.
-pub(crate) fn attend(ctx: &Ctx, call: &Call, out: &SharedBuf, scratch: &mut Scratch) {
+pub fn attend(ctx: &Ctx, call: &Call, out: &SharedBuf, scratch: &mut Scratch) {
     let blocks = call.queries.div_ceil(QUERY_BLOCK);
     scratch.head = None;
     for unit in ctx.split(call.images * call.heads * blocks, 1) {

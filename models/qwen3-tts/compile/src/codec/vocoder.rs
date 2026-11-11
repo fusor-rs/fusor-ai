@@ -30,7 +30,7 @@ pub(crate) fn write(checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> 
         )?;
     }
     let decoder = format!("{SOURCE}.decoder");
-    tensors.conv1d(
+    tensors.conv(
         checkpoint,
         &format!("{TARGET}.input"),
         &format!("{decoder}.0.conv"),
@@ -66,7 +66,7 @@ pub(crate) fn write(checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> 
         tensors,
         (&format!("{decoder}.{last}"), &format!("{TARGET}.snake")),
     )?;
-    tensors.conv1d(
+    tensors.conv(
         checkpoint,
         &format!("{TARGET}.output"),
         &format!("{decoder}.{}.conv", last + 1),
@@ -87,7 +87,7 @@ fn residual_unit(
         )?;
     }
     for conv in ["conv1", "conv2"] {
-        tensors.conv1d(
+        tensors.conv(
             checkpoint,
             &format!("{target}.{conv}"),
             &format!("{source}.{conv}.conv"),

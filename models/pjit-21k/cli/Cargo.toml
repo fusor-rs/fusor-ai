@@ -1,0 +1,26 @@
+[package]
+name = "pjit-21k-cli"
+description = "The native P-JiT 21K host: compile the checkpoints, generate images, benchmark, and check parity with the reference goldens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "pjit-21k"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+pjit-21k = { workspace = true, features = ["threads"] }
+pjit-21k-compile.workspace = true
+harness.workspace = true
+bundle.workspace = true
+compile.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true

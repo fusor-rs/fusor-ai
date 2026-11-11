@@ -303,19 +303,19 @@ pub(crate) fn mimi(checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> R
 /// SEANet's layers as `blocks::seanet` causal-conv matrices.
 fn seanet(checkpoint: &Checkpoint, tensors: &mut Tensors<Profile>) -> Result<(), Error> {
     let first = format!("{SEANET}.{FIRST_CONV}.conv");
-    tensors.conv1d(checkpoint, "mimi.decoder.init", &first)?;
+    tensors.conv(checkpoint, "mimi.decoder.init", &first)?;
     for (stage, &ratio) in SEANET_SHAPE.ratios.iter().enumerate() {
         let elu = FIRST_CONV + 1 + stage * STAGE_LAYERS;
         let name = |part: &str| format!("mimi.decoder.stages.{stage}.{part}");
         let upsample = format!("{SEANET}.{}.convtr", elu + 1);
         tensors.transposed_conv1d(checkpoint, &name("upsample"), &upsample, ratio)?;
         let [first, second] = RESIDUAL_CONVS.map(|conv| format!("{SEANET}.{}.{conv}", elu + 2));
-        tensors.conv1d(checkpoint, &name("residual1"), &first)?;
-        tensors.conv1d(checkpoint, &name("residual2"), &second)?;
+        tensors.conv(checkpoint, &name("residual1"), &first)?;
+        tensors.conv(checkpoint, &name("residual2"), &second)?;
     }
     let last = FIRST_CONV + 1 + SEANET_SHAPE.ratios.len() * STAGE_LAYERS + 1;
     let last = format!("{SEANET}.{last}.conv");
-    tensors.conv1d(checkpoint, "mimi.decoder.final", &last)
+    tensors.conv(checkpoint, "mimi.decoder.final", &last)
 }
 
 /// The voices of `VOICES` through the speaker projection, `[VOICE_FRAMES, HIDDEN]` each.

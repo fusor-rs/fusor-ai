@@ -1,0 +1,22 @@
+[package]
+name = "fusor-ai-iris-compile"
+description = "Compiles Iris-3B (speridlabs/iris-3b) and its Qwen3-VL-4B text encoder into bundles: renamed and fused tensors, the patch embedding's columns in the runtime's order, the depth model's reducer folded into its last layer, the empty prompts and the dtype of every tensor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "iris_compile"
+
+[dependencies]
+iris.workspace = true
+bundle.workspace = true
+compile.workspace = true
+kernels.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

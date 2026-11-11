@@ -10,6 +10,11 @@
 //! `Conv2d::forward_upsampled` convolves the input repeated twice along both axes (nearest
 //! upsampling) without materializing it: the windows read it in place.
 //!
+//! `CausalConv3d` convolves a window of consecutive frames (the oldest first, a history before a
+//! video's first) and a `kernel × kernel` window of each at stride 1: one
+//! `[outputs, window · kernel² · inputs]` matrix, columns frame-major, then tap-major, each tap's
+//! inputs contiguous.
+//!
 //! `Depthwise2d` convolves each channel alone (in f32), by output pixels.
 //!
 //! `project_rows` and the convolutions give each thread whole rows when there are at least as
@@ -218,6 +223,12 @@ enum Rows<'input> {
         grid: Grid,
         scale: usize,
     },
+    /// The windows of a causal convolution over `frames`, each one image of `grid`.
+    Frames {
+        conv: &'input CausalConv3d,
+        frames: &'input [&'input [f32]],
+        grid: Grid,
+    },
 }
 
 impl Conv2d {
@@ -305,29 +316,136 @@ impl Conv2d {
         pixels: Range<usize>,
         out: &mut Vec<f32>,
     ) {
-        let channels = self.inputs();
-        let (height, width) = (scale * grid.height, scale * grid.width);
         let output = self.output_grid(Grid {
-            height,
-            width,
+            height: scale * grid.height,
+            width: scale * grid.width,
             ..grid
         });
-        let padding = self.kernel / 2;
         out.clear();
         for pixel in pixels {
             let image = pixel / output.area();
             let (row, column) = (pixel / output.width % output.height, pixel % output.width);
-            for tap in 0..self.kernel * self.kernel {
-                let source_row = (row * self.stride + tap / self.kernel).checked_sub(padding);
-                let source_column = (column * self.stride + tap % self.kernel).checked_sub(padding);
-                match source_row.zip(source_column) {
-                    Some((y, x)) if y < height && x < width => {
-                        let (y, x) = (y / scale, x / scale);
-                        let at = ((image * grid.height + y) * grid.width + x) * channels;
-                        out.extend_from_slice(&input[at..at + channels]);
-                    }
-                    _ => out.resize(out.len() + channels, 0.0),
-                }
+            let window = (self.kernel, self.stride, self.inputs());
+            push_window(out, (input, grid, scale), (image, row, column), window);
+        }
+    }
+}
+
+/// One output pixel's `kernel × kernel` window over `input` (rows of `grid` repeated `scale`
+/// times along both axes) laid end to end into `out`, zeros past the edges (the padding is
+/// `kernel / 2`).
+fn push_window(
+    out: &mut Vec<f32>,
+    (input, grid, scale): (&[f32], Grid, usize),
+    (image, row, column): (usize, usize, usize),
+    (kernel, stride, channels): (usize, usize, usize),
+) {
+    let (height, width) = (scale * grid.height, scale * grid.width);
+    let padding = kernel / 2;
+    for tap in 0..kernel * kernel {
+        let source_row = (row * stride + tap / kernel).checked_sub(padding);
+        let source_column = (column * stride + tap % kernel).checked_sub(padding);
+        match source_row.zip(source_column) {
+            Some((y, x)) if y < height && x < width => {
+                let (y, x) = (y / scale, x / scale);
+                let at = ((image * grid.height + y) * grid.width + x) * channels;
+                out.extend_from_slice(&input[at..at + channels]);
+            }
+            _ => out.resize(out.len() + channels, 0.0),
+        }
+    }
+}
+
+/// The dimensions of one causal 3-D convolution: `inputs` channels to `outputs` over `window`
+/// frames and a `kernel × kernel` window of each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CausalShape {
+    pub inputs: usize,
+    pub outputs: usize,
+    pub window: usize,
+    pub kernel: usize,
+}
+
+impl CausalShape {
+    /// The `[rows, cols]` of the convolution's matrix.
+    pub fn matrix(&self) -> [usize; 2] {
+        [
+            self.outputs,
+            self.window * self.kernel * self.kernel * self.inputs,
+        ]
+    }
+}
+
+/// A convolution over `window` consecutive frames and a `kernel × kernel` window of each, at
+/// stride 1.
+pub struct CausalConv3d {
+    linear: Linear,
+    window: usize,
+    kernel: usize,
+}
+
+impl CausalConv3d {
+    /// # Errors
+    /// When the weights' columns are not `window · kernel²` taps of whole inputs.
+    pub fn new(linear: Linear, window: usize, kernel: usize) -> Result<Self, Error> {
+        let cols = linear.matrix().cols;
+        let taps = window * kernel * kernel;
+        if taps == 0 || !cols.is_multiple_of(taps) {
+            return Err(Error::Format(format!(
+                "a convolution of {cols} columns over {window} frames of {kernel}-wide windows"
+            )));
+        }
+        Ok(Self {
+            linear,
+            window,
+            kernel,
+        })
+    }
+
+    pub fn outputs(&self) -> usize {
+        self.linear.matrix().rows
+    }
+
+    pub fn inputs(&self) -> usize {
+        self.linear.matrix().cols / (self.window * self.kernel * self.kernel)
+    }
+
+    pub fn window(&self) -> usize {
+        self.window
+    }
+
+    /// `store(pixel, channel, value)` for this thread's share of the output: output frame `f`
+    /// (of `frames.len() − window + 1`) from `frames[f..f + window]`, each one image of `grid`
+    /// (pixel-major rows of `inputs()` values); `pixel` counts the output frames' pixels in order.
+    ///
+    /// # Panics
+    /// When `grid` is not one frame, or there are fewer frames than the window.
+    pub fn forward(
+        &self,
+        ctx: &Ctx,
+        (frames, grid): (&[&[f32]], Grid),
+        patches: &mut Patches,
+        store: impl FnMut(usize, usize, f32),
+    ) {
+        assert_eq!(grid.images, 1, "`grid` is one frame");
+        let rows = (frames.len() + 1 - self.window) * grid.area();
+        let source = Rows::Frames {
+            conv: self,
+            frames,
+            grid,
+        };
+        project_chunks(ctx, &self.linear, (&source, rows), patches, store);
+    }
+
+    /// The windows of output pixels `pixels`, end to end, into `out`, over `frames`.
+    fn gather(&self, (frames, grid): (&[&[f32]], Grid), pixels: Range<usize>, out: &mut Vec<f32>) {
+        let window = (self.kernel, 1, self.inputs());
+        out.clear();
+        for pixel in pixels {
+            let frame = pixel / grid.area();
+            let (row, column) = (pixel / grid.width % grid.height, pixel % grid.width);
+            for input in &frames[frame..frame + self.window] {
+                push_window(out, (input, grid, 1), (0, row, column), window);
             }
         }
     }
@@ -350,6 +468,10 @@ impl Rows<'_> {
                 scale,
             } => {
                 conv.gather((input, *grid, *scale), range, out);
+                out
+            }
+            Rows::Frames { conv, frames, grid } => {
+                conv.gather((frames, *grid), range, out);
                 out
             }
         }
@@ -400,7 +522,7 @@ fn project_chunks(
 mod tests {
     use team::{SharedBuf, Team};
 
-    use super::{Conv2d, Grid, Patches};
+    use super::{CausalConv3d, Conv2d, Grid, Patches};
     use crate::linear::Linear;
     use crate::tensor::{DType, Table, Tensor, Vector};
 
@@ -458,5 +580,35 @@ mod tests {
             }
         );
         assert_eq!(got.read(), want);
+    }
+
+    /// A window of 2 frames of a 3 × 3 kernel over 1 channel at a single pixel: column 4 is frame
+    /// 0's centre tap, column 13 frame 1's, weighted 1 and 100 with a bias of 0.5.
+    #[test]
+    fn causal_frames_are_read_oldest_first_then_tap_by_tap() {
+        let (window, kernel) = (2, 3);
+        let columns = window * kernel * kernel;
+        let mut weights = vec![0.0; columns];
+        weights[4] = 1.0;
+        weights[13] = 100.0;
+        let weight = Tensor::encode(DType::F32, vec![1, columns], &weights).unwrap();
+        let bias = Tensor::encode(DType::F32, vec![1], &[0.5]).unwrap();
+        let bias = Vector::new(bias).unwrap();
+        let linear = Linear::new(Table::new(weight).unwrap(), Some(bias)).unwrap();
+        let conv = CausalConv3d::new(linear, window, kernel).unwrap();
+        let grid = Grid {
+            images: 1,
+            height: 1,
+            width: 1,
+        };
+        let frames: [&[f32]; 3] = [&[3.0], &[5.0], &[7.0]];
+        let got = SharedBuf::new(2);
+        Team::global().run(|ctx| {
+            let mut patches = Patches::default();
+            conv.forward(ctx, (&frames, grid), &mut patches, |pixel, _, value| {
+                got.set(pixel, value);
+            });
+        });
+        assert_eq!(got.read(), [503.5, 705.5]);
     }
 }

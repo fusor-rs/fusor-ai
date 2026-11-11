@@ -6,7 +6,9 @@
 //! built. wasm-bindgen exports no generic type, so a model's runtime crate names its engine once,
 //! `runtime::runtime!(Engine);`, which defines the exported `Runtime` with the shell's methods,
 //! and adds its own `#[wasm_bindgen] impl Runtime` (`start`, `step`, …) that reaches the engine
-//! through `self.shell.engine()?`.
+//! through `self.shell.engine()?`. A runtime may export several, one per engine
+//! (`runtime::runtime!(TextRuntime, TextEngine);`): each worker instantiates the module on its
+//! own memory and constructs one.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -110,20 +112,21 @@ impl<E: Engine> Shell<E> {
     }
 }
 
-/// Defines the exported `Runtime` over a [`Shell`] of `$engine`, with the methods every model's
-/// runtime has: the constructor (the manifest's JSON), the part protocol, `threads` and `cancel`.
+/// Defines the exported `$name`, `Runtime` unless named, over a [`Shell`] of `$engine`, with the
+/// methods every model's runtime has: the constructor (the manifest's JSON), the part protocol,
+/// `threads` and `cancel`.
 #[macro_export]
 macro_rules! runtime {
-    ($engine:ty) => {
+    ($name:ident, $engine:ty) => {
         #[$crate::wasm_bindgen::prelude::wasm_bindgen(wasm_bindgen = $crate::wasm_bindgen)]
-        pub struct Runtime {
+        pub struct $name {
             shell: $crate::Shell<$engine>,
         }
 
         #[$crate::wasm_bindgen::prelude::wasm_bindgen(wasm_bindgen = $crate::wasm_bindgen)]
-        impl Runtime {
+        impl $name {
             #[wasm_bindgen(constructor)]
-            pub fn new(manifest_json: &str) -> Result<Runtime, $crate::wasm_bindgen::JsError> {
+            pub fn new(manifest_json: &str) -> Result<$name, $crate::wasm_bindgen::JsError> {
                 Ok(Self {
                     shell: $crate::Shell::new(manifest_json)?,
                 })
@@ -161,5 +164,8 @@ macro_rules! runtime {
                 self.shell.cancel()
             }
         }
+    };
+    ($engine:ty) => {
+        $crate::runtime!(Runtime, $engine);
     };
 }

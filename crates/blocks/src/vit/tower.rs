@@ -7,7 +7,7 @@
 
 use bundle::{Load, Scope, Store};
 use kernels::{COLUMN_ALIGN, Linear, QuantizedRows, Table};
-use media::image::{Filter, Size, resize_bicubic, resize_bilinear, resize_bilinear_corners};
+use media::image::{Size, resize_bicubic, resize_bilinear, resize_bilinear_corners};
 use team::{Ctx, PerThread};
 
 use super::{Grid, Vit};
@@ -25,8 +25,10 @@ pub enum Ending {
 /// How the position grid is resampled to an image's grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Resample {
-    /// PyTorch's interpolation of that name, its corner cells within the image's.
-    Interpolate(Filter),
+    /// PyTorch's bilinear interpolation, its corner cells within the image's.
+    Bilinear,
+    /// PyTorch's bicubic interpolation, its corner cells within the image's.
+    Bicubic,
     /// Bilinearly, its corner cells on the image's corner patches (Qwen3-VL's).
     Corners,
 }
@@ -106,8 +108,8 @@ impl Tower {
             height: grid.rows,
         };
         let resize = match self.shape.resample {
-            Resample::Interpolate(Filter::Bilinear) => resize_bilinear,
-            Resample::Interpolate(Filter::Bicubic) => resize_bicubic,
+            Resample::Bilinear => resize_bilinear,
+            Resample::Bicubic => resize_bicubic,
             Resample::Corners => resize_bilinear_corners,
         };
         resize(&self.positions, side, to, self.shape.encoder.hidden)

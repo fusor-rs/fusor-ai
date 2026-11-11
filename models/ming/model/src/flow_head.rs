@@ -24,8 +24,8 @@ pub const DIT_SHAPE: dit::Shape = dit::Shape {
     head_dim: 64,
     feed_forward: 4096,
     depth: 8,
-    rope_base: 1e4,
     norm_eps: 1e-6,
+    kind: dit::Kind::Rotary { rope_base: 1e4 },
 };
 const FLOW_SEQUENCE: usize = 3;
 /// The tokens of a flow sequence, in order.

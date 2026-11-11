@@ -1,0 +1,116 @@
+{
+  "platform": "darwin-arm64",
+  "bundles": {
+    "dist/model/text": "sha256:f19aaa9fdf9c5851d996905ef44fa161320dd230c6240b9ae87eae210974f976",
+    "dist/model/video": "sha256:fd9efef53838ffc94dd5a11ce645fe405fb3ac4741d4d55840dd0699e04f1359",
+    "dist/model-f32/text": "sha256:6c1c8a8f75de1ff5697e2e7e17433e12287822ecc25f35a119e12a6279613311",
+    "dist/model-f32/video": "sha256:dff3de9309538e206af0491759b69f11be8de5ff45d5d0d9ecb6996d1169c890"
+  },
+  "parity": {
+    "status": 0,
+    "lines": [
+      "20×12 latents, 3 latent frames, 4 steps, guidance 5, shift 5",
+      "prompt: both prompts' tokens identical",
+      "text: 598016 values, rel 3.43e-2, max abs 1.13e-1",
+      "dit: 23040 values, rel 2.83e-3, max abs 2.11e-2",
+      "sampler: timesteps identical; levels: 5 values, rel 0.00e0, max abs 0.00e0; latents: 11520 values, rel 1.67e-1, max abs 9.45e-1",
+      "decode: 414720 values, rel 1.17e-4, max abs 2.35e-3"
+    ]
+  },
+  "smoke": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-single-relaxed.rgba": "sha256:341e8dd38cb5d562497d710192023a7199d2178396c879520bb4ab300eb0d94f",
+      "web-single.rgba": "sha256:6d97e34f0d65926f59a1e2eab871f0f565125f327a0acefaa68f8c8142e153bd"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "e2e": {
+    "statuses": [
+      0,
+      0
+    ],
+    "outputs": {
+      "web-threaded-relaxed/reference.rgba": "sha256:5e998af0f10a914b48af559a0dc6efcce071ad5142a8d99dcee73900c7839599",
+      "web-threaded-relaxed/video.rgba": "sha256:5e998af0f10a914b48af559a0dc6efcce071ad5142a8d99dcee73900c7839599",
+      "web-threaded/reference.rgba": "sha256:abc255707f70ec8ec45751b4da43c1b69a26c0833452a426c5cef3243629709e",
+      "web-threaded/video.rgba": "sha256:abc255707f70ec8ec45751b4da43c1b69a26c0833452a426c5cef3243629709e"
+    },
+    "metrics": [],
+    "unstable": {
+      "outputs": {},
+      "metrics": []
+    }
+  },
+  "timings": {
+    "bench/prompt": {
+      "value": 0.05,
+      "unit": "ms",
+      "spread": 0.4000000000000001
+    },
+    "bench/text": {
+      "value": 1274.96,
+      "unit": "ms",
+      "spread": 0.008431637070966932
+    },
+    "bench/dit": {
+      "value": 3545.21,
+      "unit": "ms",
+      "spread": 0.012639589756319075
+    },
+    "bench/sampler": {
+      "value": 7188.07,
+      "unit": "ms",
+      "spread": 0.039679635841053336
+    },
+    "bench/decode": {
+      "value": 9691.72,
+      "unit": "ms",
+      "spread": 0.011400453170335069
+    },
+    "bench/a generation of 20 steps at guidance 5": {
+      "value": 154700,
+      "unit": "ms",
+      "spread": 0.03749191984486102
+    },
+    "web-threaded/loadMs": {
+      "value": 180305,
+      "unit": "ms"
+    },
+    "web-threaded/metrics.time": {
+      "value": 23000,
+      "unit": "ms"
+    },
+    "web-threaded/metrics.per-step": {
+      "value": 3690,
+      "unit": "ms"
+    },
+    "web-threaded/revisitMs": {
+      "value": 4809,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/loadMs": {
+      "value": 71425,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/metrics.time": {
+      "value": 7200,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/metrics.per-step": {
+      "value": 1090,
+      "unit": "ms"
+    },
+    "web-threaded-relaxed/revisitMs": {
+      "value": 4949,
+      "unit": "ms"
+    }
+  }
+}
