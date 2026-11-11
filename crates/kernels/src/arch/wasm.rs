@@ -2,16 +2,15 @@
 
 use core::arch::wasm32::{
     f32x4, f32x4_abs, f32x4_add, f32x4_convert_i32x4, f32x4_div, f32x4_extract_lane, f32x4_max,
-    f32x4_min, f32x4_mul, f32x4_nearest, f32x4_splat, f32x4_sub, i8x16_narrow_i16x8,
-    i16x8_narrow_i32x4, i32x4_add, i32x4_extract_lane, i32x4_shl, i32x4_splat,
-    i32x4_trunc_sat_f32x4, u8x16_shr, u8x16_splat, v128, v128_and, v128_load, v128_load32_splat,
-    v128_store,
+    f32x4_min, f32x4_mul, f32x4_nearest, f32x4_splat, f32x4_sub, i8x16_shuffle, i16x8_shuffle,
+    i32x4_add, i32x4_extract_lane, i32x4_shl, i32x4_shuffle, i32x4_splat, i32x4_trunc_sat_f32x4,
+    u8x16_shr, u8x16_splat, v128, v128_and, v128_load, v128_load32_splat, v128_store,
 };
 #[cfg(target_feature = "relaxed-simd")]
 use core::arch::wasm32::{f32x4_relaxed_madd, i32x4_relaxed_dot_i8x16_i7x16_add};
 #[cfg(not(target_feature = "relaxed-simd"))]
 use core::arch::wasm32::{
-    i16x8_extmul_high_i8x16, i16x8_extmul_low_i8x16, i32x4_extadd_pairwise_i16x8, i32x4_shuffle,
+    i16x8_extmul_high_i8x16, i16x8_extmul_low_i8x16, i32x4_extadd_pairwise_i16x8,
 };
 
 use super::{Backend, DOTS, EXP_RUN, LANES};
@@ -73,10 +72,10 @@ impl super::Backend for Wasm {
         let max = lanes.iter().fold(f32x4_splat(0.0), |max, &lane| {
             f32x4_max(max, f32x4_abs(lane))
         });
-        f32x4_extract_lane::<0>(max)
-            .max(f32x4_extract_lane::<1>(max))
-            .max(f32x4_extract_lane::<2>(max))
-            .max(f32x4_extract_lane::<3>(max))
+        // Reduced as vectors: `f32::max` skips NaNs, a compare and a select per operand.
+        let pairs = f32x4_max(max, i32x4_shuffle::<2, 3, 2, 3>(max, max));
+        let all = f32x4_max(pairs, i32x4_shuffle::<1, 1, 1, 1>(pairs, pairs));
+        f32x4_extract_lane::<0>(all)
     }
 
     fn maximum(x: &[f32]) -> f32 {
@@ -104,10 +103,13 @@ impl super::Backend for Wasm {
                 let lane = v128_load(x.as_ptr().add(4 * i).cast());
                 i32x4_trunc_sat_f32x4(f32x4_nearest(f32x4_div(lane, f32x4_splat(scale))))
             });
+            // A level is within ±127 (`scale` is at least the block's largest magnitude over
+            // 127), so its low byte is the level: the even bytes of the even halves. Saturating
+            // narrows compile to two clamps per level before the same shuffles.
             let narrow = |quarter: &[v128]| {
-                i8x16_narrow_i16x8(
-                    i16x8_narrow_i32x4(quarter[0], quarter[1]),
-                    i16x8_narrow_i32x4(quarter[2], quarter[3]),
+                i8x16_shuffle::<0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30>(
+                    i16x8_shuffle::<0, 2, 4, 6, 8, 10, 12, 14>(quarter[0], quarter[1]),
+                    i16x8_shuffle::<0, 2, 4, 6, 8, 10, 12, 14>(quarter[2], quarter[3]),
                 )
             };
             v128_store(out.as_mut_ptr().cast(), narrow(&levels[..4]));
