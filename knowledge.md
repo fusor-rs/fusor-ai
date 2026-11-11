@@ -28,15 +28,33 @@ paddle-ocr-wasm's optimization ledger.
 
 ## The kernel is op-bound, not dot-bound
 
-- Relaxed SIMD's `i32x4.relaxed_dot_i8x16_i7x16_add_s` reaches 170 GMAC/s on one core; a
-  kernel reaches 115–130 only when the other operations per dot are few. Count every
-  operation per block (loads, broadcasts, seeds, scales, stores), not the dots: the quad
-  layout (one output column per lane, the weights of four rows interleaved) won because it
-  halved the broadcasts and shuffles per dot, not because of the dots.
-- A run-time trip count anywhere near the unrolled chunk loop costs 10–30 % on every shape,
-  even as a separate call site: LLVM outlines the shared closure, or the larger function
-  spills in V8. A partial last block (72 of 96 inputs) saved 25 % of the dots on paper and
-  lost on every shape in practice. Pad instead.
+- Relaxed SIMD's `i32x4.relaxed_dot_i8x16_i7x16_add_s` reaches 241 GMAC/s on one core (15
+  dots per ns) with twelve or more accumulators in flight; with eight it stops at 170, each
+  waiting three cycles for its own result. A kernel gets a fraction of that: count every
+  operation per block (broadcasts, seeds, scales), not the dots, and count the accumulators
+  in flight. The quad layout (one output column per lane, the weights of four rows
+  interleaved) won because it halved the broadcasts and shuffles per dot, not because of the
+  dots.
+- V8 runs wasm in the order it is written, and LLVM's wasm backend nests a value used once
+  into the expression that uses it: an unrolled chunk loop reaches V8 as each accumulator's
+  eight dots in one dependent chain, one accumulator after another, about six chains in
+  flight of sixteen. Keep the chunk step a real loop, with a trip count the compiler cannot
+  see (`quad_pass`'s `words`), so that every accumulator takes one dot per step.
+- V8 allocates 28 SIMD registers on arm64 (15 on x86-64). Sixteen accumulators, sixteen
+  float sums and a block's chunks and broadcasts do not fit: that pass stored 60 values and
+  reloaded 78 per 128 dots, accumulators in the middle of their dots among them. Keep the
+  float sums in memory behind a stride the compiler cannot see, loaded and stored once per
+  group. The loop and the sums together took Qwen3.5's prefill linears from 203–220 to
+  222–230 GOPS per worker on the page and the receipt's warm first token from 4.74 to 4.48 s
+  traced, bit-identical.
+- A `v128.load32_splat` is a SIMD operation (an add and an `ld1r`); a plain `v128.load` is
+  none. A full tile's activations broadcast once into a stack scratch and loaded in the dots
+  gave the same linears 231–243 GOPS and the first token 4.32 s, for rows up to 2048 wide
+  (`BROADCAST_COLS`: six rows of it are 49 KB, inside the first-level cache).
+- A partial last block (72 of 96 inputs, a run-time trip count on the unrolled chunk loop)
+  saved 25 % of the dots on paper and lost 10–30 % on every shape while the sums lived in
+  registers: LLVM outlined the shared closure, or the larger function spilled in V8. Pad
+  instead.
 - One row (decode) reads its weights once from memory: stream one quad per pass; four
   interleaved streams run at half the bandwidth.
 
@@ -63,10 +81,12 @@ paddle-ocr-wasm's optimization ledger.
   always-inlined method (`layer::Activation::apply`).
 - Scale in the store as a map over the quad (one vector multiply), not per value.
 
-- The vision ffn_up with the GELU store runs at 160 GOPS per worker against 205 for the
-  other linears of the same depth; the harness puts the GELU's arithmetic at 6 % of the
-  product and does not reproduce the rest. Unexplained; the next bit-exact lead on that
-  shape.
+- The vision ffn_up with the GELU store runs at 197 GOPS per worker against 233 for the qkv
+  projection of the same depth. Half the gap is the GELU's arithmetic. The other half is the
+  store: once it holds the activation's match LLVM outlines it, the quad goes to it through
+  memory (four scalar stores read back as one vector) and the bias is added a lane at a
+  time. Matching once and building a store per activation closes that half (200 → 212 GOPS
+  on the page) for 115 KB of module and 0.6 % of the first token: not kept.
 
 ## Plain Rust vectorizes only with constant lengths
 
@@ -75,6 +95,25 @@ paddle-ocr-wasm's optimization ledger.
   harness with a constant length showed it 24 % faster. Write such loops as explicit SIMD
   in `arch` (`axpy_f32_many`, `dot_f32_many`), and give the harness the page's run-time
   sizes before trusting it.
+
+## Read the generated code
+
+- `f32::max` skips NaNs: reducing a vector's lanes with it is a compare and a select per
+  operand. Reduce as vectors (`f32x4_max` of the shuffled halves) and extract one lane. LLVM
+  turns `i16x8.narrow_i32x4` and `i8x16.narrow_i16x8` into two clamps per value before the
+  same shuffles; where the values are known to fit (the activation quantizer's levels are
+  within ±127) take their low bytes with the shuffles alone. Both in the quantizer: 0.33 →
+  0.21 ns per value in the harness, its self time on Qwen3.5's vision tower 1.87 → 1.04 s
+  summed over the workers, bit-identical.
+- A reduction on one accumulator waits for itself at every step. The softmax's row maximum
+  on four maxima over runs of 16 values (a maximum is exact in any order) took 18 % off the
+  softmax's sweep on the page (1.88 → 1.54 s summed over the workers).
+- `--js-flags=--perf-prof --perf-prof-path=<dir>` makes release Chrome write its optimized
+  wasm code to `jit-<pid>.dump` (macOS included). The 2 MB log buffer is lost when the
+  renderer is killed: compile padded copies of the module until the functions wanted are on
+  disk, then disassemble with `llvm-mc`. The stores between the dots in that listing are
+  what showed the spills above; the wasm text shows neither the registers nor the order V8
+  keeps.
 
 ## Bit-exact or nothing
 
@@ -110,6 +149,19 @@ paddle-ocr-wasm's optimization ledger.
 - Reading activations another core quantized costs nothing measurable; streaming
   activations and outputs through 5–64 MB buffers costs ≤ 2 %. Do not reorganize splits for
   cache locality without a measurement.
+
+## Convolutions
+
+- Quantize a pixel once, not once per window over it (9 times in a 3 × 3 convolution, 27 in
+  a causal 3 × 3 × 3 one). Where the channels are whole groups of the weights' format, a
+  window's quantization groups are its pixels' and a padded tap is the group of zeros: each
+  thread quantizes the rows its windows read and gathers the windows in int8 with their
+  scales and corrections (`conv`'s `Band`). Realistic Vision's generation (8 steps at
+  512 × 512): 13.1 → 12.5 s over seven rotated rounds, bit-identical.
+- A GroupNorm takes all of a thread's groups of an image in one pass (each group's sum still
+  in the order of its pixels), not one strided pass per group, and normalizes a pixel a
+  group's run at a time, the mean, the deviation and the affine pair hoisted, so that the
+  activation's loop is vector code: 13.6 → 13.1 s on the same page.
 
 ## Measure in the page, explain with the harness
 
@@ -159,10 +211,11 @@ paddle-ocr-wasm's optimization ledger.
   tile kernels at full speed. What suffers is specific; trace per phase in a cold run
   (cold/warm ratio per layer) rather than assume.
 - Four quads per pass beside four rows is the register optimum too: six quads run 2 %
-  slower, eight at half the rate (32 accumulators spill). The pass's op mix, 32 loads, 32
-  broadcasts and 48 scaling operations per 128 dots, bounds the kernel at 108–122 GMAC/s per
-  core, and the page runs the prefill linears at 93 % of that. What is left is the format's
-  per-block scaling, not the loop.
+  slower, eight at half the rate (32 accumulators spill). With the sums in memory and the
+  activations broadcast, a pass is 128 dots and 48 scaling operations (11 SIMD operations
+  per 8 dots), and the page runs the prefill linears at 115–121 GMAC/s per worker with every
+  core busy; the harness gives the same kernel 113–134 on eight pages at once and 131–144
+  alone. What is left is the format's per-block scaling.
 
 ## What did not matter
 
@@ -180,14 +233,17 @@ paddle-ocr-wasm's optimization ledger.
 
 ## This machine (M4 Pro, Chrome 156), for scaling expectations
 
-- `relaxed_dot_i8x16_i7x16_add_s`: 170 GMAC/s per core, 3 per cycle. f32 multiply and add
-  without fused ops: ~28 GMAC/s per core. The vector `exp`: ~14 cycles per four lanes (30
+- `relaxed_dot_i8x16_i7x16_add_s`: 241 GMAC/s per core with twelve or more accumulators in
+  flight (170 with eight), about 15 G SIMD operations per second in all. f32 multiply and
+  add without fused ops: ~28 GMAC/s per core. The vector `exp`: ~14 cycles per four lanes (30
   operations, two dependent chains). Built with the pinned `nightly-2026-10-20`, the page
-  runs Qwen3.5's prefill linears at 203–215 GOPS (100–108 GMAC/s) per worker and the vision
-  QK/PV at 178/220 GOPS; 85–96 GMAC/s per worker was `nightly-2025-11-15`'s code.
+  runs Qwen3.5's prefill linears at 230–242 GOPS (115–121 GMAC/s) per worker and the vision
+  QK/PV at 187/237 GOPS; 85–96 GMAC/s per worker was `nightly-2025-11-15`'s code.
 - Decode is bound by the 361 MB of weights per token; the layer matmuls stream at 25–30 GB/s
-  per worker, the language model head at ~3 GB/s per worker, unexplained and the next lead
-  if tokens per second ever matters.
+  per worker, PaddleOCR-VL's language model head at ~3 GB/s per worker, unexplained and the
+  next lead if tokens per second ever matters. Qwen3.5's head streams at 29 GB/s like its
+  layers, and eight native threads reading private buffers get 27 GB/s each (216 in all):
+  its decode sits on the memory's bandwidth.
 
 - Workers against cores (10 performance and 4 efficiency, 14 reported; the page's default is
   8): a pool of 10 cuts the receipt's warm first token 10–12 % (the vision and the prefill
