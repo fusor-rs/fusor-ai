@@ -54,26 +54,36 @@ impl QuantizedMatrix {
     /// Appends `row`, `cols` values.
     pub fn push(&mut self, row: &[f32]) {
         assert_eq!(row.len(), self.cols, "a row of the matrix's width");
-        let format = QuantFormat::Q7b32;
-        let (quad, lane) = (self.rows / QUAD, self.rows % QUAD);
-        let blocks = self.cols / BLOCK;
-        let quad_bytes = format.quant_bytes(QUAD * BLOCK);
-        if lane == 0 {
-            self.quants.resize((quad + 1) * blocks * quad_bytes, 0);
-            self.scales.resize((quad + 1) * blocks * QUAD, 0.0);
-        }
+        let index = self.rows;
+        self.extend(1);
         for (block, values) in row.as_chunks::<BLOCK>().0.iter().enumerate() {
-            let index = quad * blocks + block;
-            self.scales[index * QUAD + lane] = format.quantize(values, &mut self.codes);
-            let at = index * quad_bytes;
-            pack_lane(
-                format,
-                lane,
-                &self.codes,
-                &mut self.quants[at..at + quad_bytes],
-            );
+            self.set_block(index, block, values);
         }
-        self.rows += 1;
+    }
+
+    /// Appends `rows` rows, every block of which `set_block` then writes once.
+    pub fn extend(&mut self, rows: usize) {
+        self.rows += rows;
+        let blocks = self.rows.div_ceil(QUAD) * (self.cols / BLOCK);
+        let quad_bytes = QuantFormat::Q7b32.quant_bytes(QUAD * BLOCK);
+        self.quants.resize(blocks * quad_bytes, 0);
+        self.scales.resize(blocks * QUAD, 0.0);
+    }
+
+    /// Writes block `block` of row `row`, once since the row was appended.
+    pub fn set_block(&mut self, row: usize, block: usize, values: &[f32; BLOCK]) {
+        let format = QuantFormat::Q7b32;
+        let (quad, lane) = (row / QUAD, row % QUAD);
+        let quad_bytes = format.quant_bytes(QUAD * BLOCK);
+        let index = quad * (self.cols / BLOCK) + block;
+        self.scales[index * QUAD + lane] = format.quantize(values, &mut self.codes);
+        let at = index * quad_bytes;
+        pack_lane(
+            format,
+            lane,
+            &self.codes,
+            &mut self.quants[at..at + quad_bytes],
+        );
     }
 
     pub fn matrix(&self) -> Matrix<'_> {

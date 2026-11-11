@@ -122,15 +122,29 @@ impl Scratch {
             self.keys.push(&self.row);
         }
         self.values.reset(padded(keys));
-        self.row.clear();
-        self.row.resize(padded(keys), 0.0);
-        for channel in 0..head_dim {
-            for (key, slot) in self.row[..keys].iter_mut().enumerate() {
-                *slot = call.value.head(first + key, head, head_dim)[channel];
+        self.values.extend(head_dim);
+        for (block, start) in (0..keys).step_by(BLOCK).enumerate() {
+            let rows = first + start..first + (start + BLOCK).min(keys);
+            self.transpose(call, head, rows);
+            for (channel, values) in self.row.as_chunks::<BLOCK>().0.iter().enumerate() {
+                self.values.set_block(channel, block, values);
             }
-            self.values.push(&self.row);
         }
         self.head = Some((image, head));
+    }
+
+    /// `row` = one block of the transposed values: each channel's values at the keys `rows` (at
+    /// most a block of them, zeros past them). A key's values are read where they lie, once,
+    /// and not a channel at a time across every key's row.
+    fn transpose(&mut self, call: &Call, head: usize, rows: Range<usize>) {
+        self.row.clear();
+        self.row.resize(call.head_dim * BLOCK, 0.0);
+        for (column, key) in rows.enumerate() {
+            let value = call.value.head(key, head, call.head_dim);
+            for (channel, component) in value.iter().enumerate() {
+                self.row[channel * BLOCK + column] = *component;
+            }
+        }
     }
 
     /// The attention of `queries` of `(image, head)` into `out`.
