@@ -79,13 +79,20 @@ impl super::Backend for Wasm {
     }
 
     fn maximum(x: &[f32]) -> f32 {
-        let (chunks, rest) = x.as_chunks::<4>();
-        let mut max = f32x4_splat(f32::NEG_INFINITY);
-        for chunk in chunks {
-            // SAFETY: four readable f32s; v128.load is unaligned.
-            max = f32x4_max(max, unsafe { v128_load(chunk.as_ptr().cast()) });
+        // Four maxima in flight: one would wait for itself at every load.
+        let (runs, rest) = x.as_chunks::<16>();
+        let mut maxima = [f32x4_splat(f32::NEG_INFINITY); 4];
+        for run in runs {
+            for (max, quad) in maxima.iter_mut().zip(run.as_chunks::<4>().0) {
+                // SAFETY: four readable f32s; v128.load is unaligned.
+                *max = f32x4_max(*max, unsafe { v128_load(quad.as_ptr().cast()) });
+            }
         }
-        let lanes = Self::lanes(max);
+        let [first, second, third, fourth] = maxima;
+        let lanes = Self::lanes(f32x4_max(
+            f32x4_max(first, second),
+            f32x4_max(third, fourth),
+        ));
         rest.iter()
             .chain(&lanes)
             .fold(f32::NEG_INFINITY, |max, &value| max.max(value))
