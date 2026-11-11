@@ -20,7 +20,9 @@
 //! `project_rows` and the convolutions give each thread whole rows when there are at least as
 //! many rows as outputs, so each thread quantizes only its own rows; otherwise every thread takes
 //! every row and a share of the output columns. Rows are gathered and quantized `CHUNK_ROWS` at
-//! a time.
+//! a time. Where the weights are quantized in groups that a pixel's channels are whole numbers
+//! of, a window's groups are its pixels': a thread quantizes the pixels its windows read once
+//! and gathers the windows in int8.
 
 use std::ops::Range;
 
@@ -28,8 +30,8 @@ use team::Ctx;
 
 use crate::Error;
 use crate::linear::{COLUMN_ALIGN, Linear};
-use crate::matmul::QuantizedRows;
-use crate::tensor::{Table, Vector};
+use crate::matmul::{Input, Quantized, QuantizedRows};
+use crate::tensor::{Matrix, MatrixStorage, Table, Vector};
 
 /// Rows a thread gathers and quantizes at a time: its working set.
 const CHUNK_ROWS: usize = 64;
@@ -106,11 +108,13 @@ pub struct Conv2d {
     stride: usize,
 }
 
-/// One thread's rows on their way into a product: gathered windows, then their int8 form.
+/// One thread's rows on their way into a product: gathered windows and their int8 form, or the
+/// pixels its windows read in int8 (`band`) and the windows gathered from those.
 #[derive(Default)]
 pub struct Patches {
     gathered: Vec<f32>,
     quant: QuantizedRows,
+    band: QuantizedRows,
 }
 
 /// A depthwise convolution's channels, `height × width` window and stride.
@@ -215,20 +219,111 @@ impl Depthwise2d {
 enum Rows<'input> {
     /// Consecutive rows of the matrix's width.
     Dense(&'input [f32]),
-    /// The windows of a convolution over `input`, pixel-major rows of `grid` repeated `scale`
-    /// times along both axes.
+    /// A convolution's windows over `images`.
     Windows {
-        conv: &'input Conv2d,
-        input: &'input [f32],
-        grid: Grid,
-        scale: usize,
+        windows: Windows,
+        images: Images<'input>,
     },
-    /// The windows of a causal convolution over `frames`, each one image of `grid`.
-    Frames {
-        conv: &'input CausalConv3d,
-        frames: &'input [&'input [f32]],
-        grid: Grid,
-    },
+}
+
+/// A convolution's input: pixel-major images of one grid.
+#[derive(Clone, Copy)]
+enum Images<'input> {
+    /// One after another.
+    Batch(&'input [f32]),
+    Frames(&'input [&'input [f32]]),
+}
+
+impl<'input> Images<'input> {
+    /// Image `index`, of `len` values.
+    fn image(self, index: usize, len: usize) -> &'input [f32] {
+        match self {
+            Images::Batch(input) => &input[index * len..(index + 1) * len],
+            Images::Frames(frames) => frames[index],
+        }
+    }
+}
+
+/// How a convolution's windows lie over its input: an output pixel of image `i` of `output`
+/// reads the `kernel × kernel` windows, `stride` apart, of images `i..i + frames`, each of
+/// `grid` repeated `scale` times along both axes with `channels` values a pixel; zeros past the
+/// edges (the padding is `kernel / 2`).
+#[derive(Clone, Copy)]
+struct Windows {
+    grid: Grid,
+    output: Grid,
+    scale: usize,
+    kernel: usize,
+    stride: usize,
+    frames: usize,
+    channels: usize,
+}
+
+impl Windows {
+    /// The image and the pixel of it under every tap of the windows of output pixels `pixels`,
+    /// in the order of the matrix's columns; `None` past an image's edges.
+    fn taps(self, pixels: Range<usize>) -> impl Iterator<Item = Option<(usize, usize)>> {
+        pixels.flat_map(move |pixel| {
+            let first = pixel / self.output.area();
+            let row = pixel / self.output.width % self.output.height;
+            let window = move |image| self.window(image, (row, pixel % self.output.width));
+            (first..first + self.frames).flat_map(window)
+        })
+    }
+
+    /// The pixel of `image` under each tap of the window of the output pixel at
+    /// (`row`, `column`).
+    fn window(
+        self,
+        image: usize,
+        (row, column): (usize, usize),
+    ) -> impl Iterator<Item = Option<(usize, usize)>> {
+        let (height, width) = (self.scale * self.grid.height, self.scale * self.grid.width);
+        let padding = self.kernel / 2;
+        (0..self.kernel * self.kernel).map(move |tap| {
+            let y = (row * self.stride + tap / self.kernel).checked_sub(padding)?;
+            let x = (column * self.stride + tap % self.kernel).checked_sub(padding)?;
+            let pixel = y / self.scale * self.grid.width + x / self.scale;
+            (y < height && x < width).then_some((image, pixel))
+        })
+    }
+
+    /// The images, and the pixels of each (whole rows), that hold every pixel the windows of
+    /// output pixels `pixels`, at least one, read.
+    fn band(self, pixels: &Range<usize>) -> (Range<usize>, Range<usize>) {
+        let (first, last) = (pixels.start, pixels.end - 1);
+        let images = first / self.output.area()..last / self.output.area() + self.frames;
+        let rows = if images.len() > self.frames {
+            0..self.grid.height
+        } else {
+            let row = |pixel: usize| pixel / self.output.width % self.output.height * self.stride;
+            let padding = self.kernel / 2;
+            let top = row(first).saturating_sub(padding) / self.scale;
+            let bottom = (row(last) + self.kernel - 1 - padding) / self.scale;
+            top..(bottom + 1).min(self.grid.height)
+        };
+        let width = self.grid.width;
+        (images, rows.start * width..rows.end * width)
+    }
+}
+
+/// The pixels one thread's windows read, in int8: `pixels` of each image from `first_image` on.
+struct Band<'rows> {
+    rows: Quantized<'rows>,
+    windows: Windows,
+    first_image: usize,
+    pixels: Range<usize>,
+}
+
+impl Band<'_> {
+    /// The windows of output pixels `range`, end to end in `out`.
+    fn chunk<'out>(&self, range: Range<usize>, out: &'out mut QuantizedRows) -> Input<'out> {
+        let taps = self.windows.taps(range).map(|tap| {
+            let (image, pixel) = tap?;
+            Some((image - self.first_image) * self.pixels.len() + pixel - self.pixels.start)
+        });
+        Input::Quant(out.gather(&self.rows, self.windows.channels, taps))
+    }
 }
 
 impl Conv2d {
@@ -279,12 +374,7 @@ impl Conv2d {
         let source = if self.kernel == 1 && self.stride == 1 {
             Rows::Dense(&input[..rows * self.inputs()])
         } else {
-            Rows::Windows {
-                conv: self,
-                input,
-                grid,
-                scale: 1,
-            }
+            self.windows((input, grid), 1)
         };
         project_chunks(ctx, &self.linear, (&source, rows), patches, store);
     }
@@ -298,60 +388,29 @@ impl Conv2d {
         patches: &mut Patches,
         store: impl FnMut(usize, usize, f32),
     ) {
-        let source = Rows::Windows {
-            conv: self,
-            input,
-            grid,
-            scale: UPSAMPLING,
-        };
+        let source = self.windows((input, grid), UPSAMPLING);
         let rows = self.output_grid(grid.doubled()).pixels();
         project_chunks(ctx, &self.linear, (&source, rows), patches, store);
     }
 
-    /// The windows of output pixels `pixels`, end to end, into `out`, over `input` (rows of
-    /// `grid`) repeated `scale` times along both axes.
-    fn gather(
-        &self,
-        (input, grid, scale): (&[f32], Grid, usize),
-        pixels: Range<usize>,
-        out: &mut Vec<f32>,
-    ) {
-        let output = self.output_grid(Grid {
+    /// The windows over `input`, rows of `grid` repeated `scale` times along both axes.
+    fn windows<'input>(&self, (input, grid): (&'input [f32], Grid), scale: usize) -> Rows<'input> {
+        let repeated = Grid {
             height: scale * grid.height,
             width: scale * grid.width,
             ..grid
-        });
-        out.clear();
-        for pixel in pixels {
-            let image = pixel / output.area();
-            let (row, column) = (pixel / output.width % output.height, pixel % output.width);
-            let window = (self.kernel, self.stride, self.inputs());
-            push_window(out, (input, grid, scale), (image, row, column), window);
-        }
-    }
-}
-
-/// One output pixel's `kernel × kernel` window over `input` (rows of `grid` repeated `scale`
-/// times along both axes) laid end to end into `out`, zeros past the edges (the padding is
-/// `kernel / 2`).
-fn push_window(
-    out: &mut Vec<f32>,
-    (input, grid, scale): (&[f32], Grid, usize),
-    (image, row, column): (usize, usize, usize),
-    (kernel, stride, channels): (usize, usize, usize),
-) {
-    let (height, width) = (scale * grid.height, scale * grid.width);
-    let padding = kernel / 2;
-    for tap in 0..kernel * kernel {
-        let source_row = (row * stride + tap / kernel).checked_sub(padding);
-        let source_column = (column * stride + tap % kernel).checked_sub(padding);
-        match source_row.zip(source_column) {
-            Some((y, x)) if y < height && x < width => {
-                let (y, x) = (y / scale, x / scale);
-                let at = ((image * grid.height + y) * grid.width + x) * channels;
-                out.extend_from_slice(&input[at..at + channels]);
-            }
-            _ => out.resize(out.len() + channels, 0.0),
+        };
+        Rows::Windows {
+            windows: Windows {
+                grid,
+                output: self.output_grid(repeated),
+                scale,
+                kernel: self.kernel,
+                stride: self.stride,
+                frames: 1,
+                channels: self.inputs(),
+            },
+            images: Images::Batch(input),
         }
     }
 }
@@ -429,25 +488,19 @@ impl CausalConv3d {
     ) {
         assert_eq!(grid.images, 1, "`grid` is one frame");
         let rows = (frames.len() + 1 - self.window) * grid.area();
-        let source = Rows::Frames {
-            conv: self,
-            frames,
-            grid,
+        let source = Rows::Windows {
+            windows: Windows {
+                grid,
+                output: grid,
+                scale: 1,
+                kernel: self.kernel,
+                stride: 1,
+                frames: self.window,
+                channels: self.inputs(),
+            },
+            images: Images::Frames(frames),
         };
         project_chunks(ctx, &self.linear, (&source, rows), patches, store);
-    }
-
-    /// The windows of output pixels `pixels`, end to end, into `out`, over `frames`.
-    fn gather(&self, (frames, grid): (&[&[f32]], Grid), pixels: Range<usize>, out: &mut Vec<f32>) {
-        let window = (self.kernel, 1, self.inputs());
-        out.clear();
-        for pixel in pixels {
-            let frame = pixel / grid.area();
-            let (row, column) = (pixel / grid.width % grid.height, pixel % grid.width);
-            for input in &frames[frame..frame + self.window] {
-                push_window(out, (input, grid, 1), (0, row, column), window);
-            }
-        }
     }
 }
 
@@ -459,22 +512,49 @@ impl Rows<'_> {
         range: Range<usize>,
         out: &'out mut Vec<f32>,
     ) -> &'out [f32] {
-        match self {
-            Rows::Dense(values) => &values[range.start * width..range.end * width],
-            Rows::Windows {
-                conv,
-                input,
-                grid,
-                scale,
-            } => {
-                conv.gather((input, *grid, *scale), range, out);
-                out
+        let (windows, images) = match self {
+            Rows::Dense(values) => return &values[range.start * width..range.end * width],
+            Rows::Windows { windows, images } => (windows, images),
+        };
+        let channels = windows.channels;
+        out.clear();
+        windows.taps(range).for_each(|tap| match tap {
+            Some((image, pixel)) => {
+                let image = images.image(image, windows.grid.area() * channels);
+                out.extend_from_slice(&image[pixel * channels..(pixel + 1) * channels]);
             }
-            Rows::Frames { conv, frames, grid } => {
-                conv.gather((frames, *grid), range, out);
-                out
-            }
+            None => out.resize(out.len() + channels, 0.0),
+        });
+        out
+    }
+
+    /// The pixels the windows of rows `rows` read, in int8 in `out`, where a window's groups
+    /// are its pixels': each is then quantized once, not once per window over it.
+    fn band<'out>(
+        &self,
+        weights: &Matrix,
+        rows: &Range<usize>,
+        out: &'out mut QuantizedRows,
+    ) -> Option<Band<'out>> {
+        let Rows::Windows { windows, images } = self else {
+            return None;
+        };
+        let MatrixStorage::Quant { format, .. } = weights.storage else {
+            return None;
+        };
+        let channels = windows.channels;
+        if rows.is_empty() || !channels.is_multiple_of(format.group()) {
+            return None;
         }
+        let (band_images, pixels) = windows.band(rows);
+        let values = pixels.start * channels..pixels.end * channels;
+        let image = |index| &images.image(index, windows.grid.area() * channels)[values.clone()];
+        Some(Band {
+            rows: out.quantize(format, band_images.clone().map(image)),
+            windows: *windows,
+            first_image: band_images.start,
+            pixels,
+        })
     }
 }
 
@@ -507,11 +587,18 @@ fn project_chunks(
     } else {
         (0..rows, ctx.split(outputs, COLUMN_ALIGN))
     };
-    let Patches { gathered, quant } = patches;
+    let Patches {
+        gathered,
+        quant,
+        band,
+    } = patches;
+    let band = source.band(&matrix, &mine, band);
     for start in mine.clone().step_by(CHUNK_ROWS) {
         let chunk = start..(start + CHUNK_ROWS).min(mine.end);
-        let values = source.chunk(matrix.cols, chunk, gathered);
-        let input = quant.input(&matrix, values);
+        let input = match &band {
+            Some(band) => band.chunk(chunk, quant),
+            None => quant.input(&matrix, source.chunk(matrix.cols, chunk, gathered)),
+        };
         linear.project(&input, cols.clone(), |row, col, value| {
             store(start + row, col, value);
         });

@@ -136,23 +136,75 @@ impl QuantizedRows {
         let MatrixStorage::Quant { format, .. } = weights.storage else {
             return Input::F32(x);
         };
-        let groups = x.len() / format.group();
-        self.quants.resize(x.len(), 0);
-        self.scales.resize(groups, 0.0);
-        self.corrections.resize(groups, 0);
-        quantize_rows(
-            x,
-            format,
-            &mut self.quants,
-            &mut self.scales,
-            &mut self.corrections,
-        );
-        Input::Quant(Quantized {
+        Input::Quant(self.quantize(format, std::iter::once(x)))
+    }
+
+    /// `slabs`, each whole groups of `format`, end to end in int8.
+    pub(crate) fn quantize<'slab>(
+        &mut self,
+        format: QuantFormat,
+        slabs: impl Iterator<Item = &'slab [f32]> + Clone,
+    ) -> Quantized<'_> {
+        let group = format.group();
+        let values: usize = slabs.clone().map(<[f32]>::len).sum();
+        self.quants.resize(values, 0);
+        self.scales.resize(values / group, 0.0);
+        self.corrections.resize(values / group, 0);
+        let mut at = 0;
+        for slab in slabs {
+            let groups = at / group..(at + slab.len()) / group;
+            quantize_rows(
+                slab,
+                format,
+                &mut self.quants[at..at + slab.len()],
+                &mut self.scales[groups.clone()],
+                &mut self.corrections[groups],
+            );
+            at += slab.len();
+        }
+        self.view(format)
+    }
+
+    /// Rows `taps` of `rows`, each `width` values (whole groups), end to end; `None` is a row
+    /// of zeros as `quantize` writes one.
+    pub(crate) fn gather(
+        &mut self,
+        rows: &Quantized,
+        width: usize,
+        taps: impl Iterator<Item = Option<usize>>,
+    ) -> Quantized<'_> {
+        let groups = width / rows.format.group();
+        self.quants.clear();
+        self.scales.clear();
+        self.corrections.clear();
+        taps.for_each(|tap| match tap {
+            Some(row) => {
+                let (values, groups) = (
+                    row * width..(row + 1) * width,
+                    row * groups..(row + 1) * groups,
+                );
+                self.quants.extend_from_slice(&rows.quants[values]);
+                self.scales.extend_from_slice(&rows.scales[groups.clone()]);
+                self.corrections
+                    .extend_from_slice(&rows.corrections[groups]);
+            }
+            None => {
+                self.quants.resize(self.quants.len() + width, 0);
+                self.scales
+                    .resize(self.scales.len() + groups, activation_scale(0.0));
+                self.corrections.resize(self.scales.len(), 0);
+            }
+        });
+        self.view(rows.format)
+    }
+
+    fn view(&self, format: QuantFormat) -> Quantized<'_> {
+        Quantized {
             format,
             quants: &self.quants,
             scales: &self.scales,
             corrections: &self.corrections,
-        })
+        }
     }
 }
 
