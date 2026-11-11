@@ -13,10 +13,11 @@
     reason = "unchecked block loads after one bounds assertion per call"
 )]
 
+use std::hint::black_box;
 use std::ops::Range;
 
 use crate::arch::{Active, Backend, CHUNKS, activation_scale, dot_f32_each_with};
-use crate::quant::{BLOCK, CHUNK_INPUTS, QUAD, QuantFormat, TERNARY_GROUP, pack_lane};
+use crate::quant::{BLOCK, CHUNK_INPUTS, QUAD, QuantFormat, TERNARY_GROUP, WORD, pack_lane};
 use crate::tensor::{Matrix, MatrixStorage};
 
 /// Rows of activations quantized for one weight format.
@@ -295,13 +296,15 @@ fn quant_matmul<B: Backend>(
 
 /// How one quantized format stores a quad's block of 32 weights.
 trait Format {
-    const QUAD_BYTES: usize;
+    /// Words of a quad block, each holding the codes of `CHUNKS / WORDS` chunks: chunk `c`'s
+    /// are part `c / WORDS` of word `c % WORDS`.
+    const WORDS: usize;
+    const QUAD_BYTES: usize = Self::WORDS * WORD;
     /// Blocks along a row that share one weight scale (and one activation scale): a group.
-    const BLOCKS_PER_GROUP: usize;
+    const BLOCKS_PER_GROUP: usize = 1;
 
-    /// # Safety
-    /// `QUAD_BYTES` readable bytes at `at`.
-    unsafe fn load<B: Backend>(at: *const u8) -> [B::Chunk; CHUNKS];
+    /// The codes of chunk `part` of `word`.
+    fn chunk<B: Backend>(word: B::Chunk, part: usize) -> B::Chunk;
 }
 
 struct Q7;
@@ -309,35 +312,30 @@ struct Q4;
 struct T2;
 
 impl Format for Q7 {
-    const QUAD_BYTES: usize = QUAD * BLOCK;
-    const BLOCKS_PER_GROUP: usize = 1;
+    const WORDS: usize = CHUNKS;
 
     #[inline(always)]
-    unsafe fn load<B: Backend>(at: *const u8) -> [B::Chunk; CHUNKS] {
-        // SAFETY: forwarded from the caller.
-        unsafe { B::load_q7(at) }
+    fn chunk<B: Backend>(word: B::Chunk, _part: usize) -> B::Chunk {
+        word
     }
 }
 
 impl Format for Q4 {
-    const QUAD_BYTES: usize = QUAD * BLOCK / 2;
-    const BLOCKS_PER_GROUP: usize = 1;
+    const WORDS: usize = CHUNKS / 2;
 
     #[inline(always)]
-    unsafe fn load<B: Backend>(at: *const u8) -> [B::Chunk; CHUNKS] {
-        // SAFETY: forwarded from the caller.
-        unsafe { B::load_q4(at) }
+    fn chunk<B: Backend>(word: B::Chunk, part: usize) -> B::Chunk {
+        B::nibbles(word, part)
     }
 }
 
 impl Format for T2 {
-    const QUAD_BYTES: usize = QUAD * BLOCK / 4;
+    const WORDS: usize = CHUNKS / 4;
     const BLOCKS_PER_GROUP: usize = TERNARY_GROUP / BLOCK;
 
     #[inline(always)]
-    unsafe fn load<B: Backend>(at: *const u8) -> [B::Chunk; CHUNKS] {
-        // SAFETY: forwarded from the caller.
-        unsafe { B::load_t2(at) }
+    fn chunk<B: Backend>(word: B::Chunk, part: usize) -> B::Chunk {
+        B::bit_pairs(word, part)
     }
 }
 
@@ -369,6 +367,7 @@ fn quant_tiles<F: Format, B: Backend>(
             && x.corrections.len() >= rows.end * groups,
         "activations cover the rows"
     );
+    let one = black_box(1);
     for start in rows.clone().step_by(B::TILE) {
         let tile = (rows.end - start).min(B::TILE);
         let mut store_tile =
@@ -376,6 +375,7 @@ fn quant_tiles<F: Format, B: Backend>(
         let span = TileSpan {
             first_row: start,
             cols: cols.clone(),
+            one,
         };
         macro_rules! dispatch {
             ($($rows:literal)*) => {
@@ -393,6 +393,8 @@ fn quant_tiles<F: Format, B: Backend>(
 struct TileSpan {
     first_row: usize,
     cols: Range<usize>,
+    /// 1, as the compiler cannot see it: its multiples are run-time values to the tile's loops.
+    one: usize,
 }
 
 /// One tile: `QUADS` quads per pass, then the quads left over one at a time. A single row
@@ -419,8 +421,8 @@ fn quant_tile<const ROWS: usize, F: Format, B: Backend>(
     }
 }
 
-/// `ROWS` activation rows against `PASS` quads from `first_quad`, every chunk loaded once for
-/// all the rows; each group's blocks add up as integers before one scaling.
+/// `ROWS` activation rows against `PASS` quads from `first_quad`; each group's blocks add up as
+/// integers before one scaling.
 #[inline(always)]
 fn quad_pass<const ROWS: usize, const PASS: usize, F: Format, B: Backend>(
     weights: &QuantWeights,
@@ -435,11 +437,6 @@ fn quad_pass<const ROWS: usize, const PASS: usize, F: Format, B: Backend>(
     // `blocks` blocks and group scales) and the activations `rows · blocks` blocks and their
     // group scales and corrections; here `first_row + ROWS ≤ rows`, `first_quad + PASS ≤
     // cols.end / 4`, `block < blocks` and `group < groups`.
-    let load = |quad: usize, block: usize| {
-        let offset = (quad * blocks + block) * F::QUAD_BYTES;
-        // SAFETY: the quad block lies within the asserted weight bytes (above).
-        unsafe { F::load::<B>(weights.quants.as_ptr().add(offset)) }
-    };
     let load_scales = |quad: usize, group: usize| {
         let index = (quad * groups + group) * QUAD;
         // SAFETY: the quad's scales lie within the asserted weight scales (above).
@@ -447,52 +444,115 @@ fn quad_pass<const ROWS: usize, const PASS: usize, F: Format, B: Backend>(
     };
     let activation = |row: usize, group: usize| (span.first_row + row) * groups + group;
     let mut sums = [[B::zero(); PASS]; ROWS];
+    // The sums live in memory between groups, behind a row stride the compiler cannot see: two
+    // rows' sums may then alias, so each is loaded where it is used and stored where it is
+    // made. As locals they are `ROWS · PASS` more vectors than V8 has registers for beside the
+    // accumulators, and it spills accumulators in the middle of their dots to make room.
+    let stride = PASS * span.one;
+    let sums_at: *mut B::Sums = sums.as_mut_ptr().cast();
+    // A trip count the compiler cannot see keeps `accumulate`'s words a loop, in which every
+    // accumulator takes one dot per word and part. Unrolled, the wasm backend nests each
+    // accumulator's dots into one expression and V8 runs them as written: one dependent chain
+    // after another, with a whole block's chunks and broadcasts live in registers it does not
+    // have. A single row is one chain per quad either way, and unrolled it does without the
+    // loop's overhead.
+    let words = if ROWS == 1 {
+        F::WORDS
+    } else {
+        F::WORDS * span.one
+    };
     for group in 0..groups {
         let mut dots: [[B::Dots; PASS]; ROWS] = std::array::from_fn(|row| {
             // SAFETY: the correction lies within the asserted activation corrections (above).
             [B::seed(unsafe { *x.corrections.get_unchecked(activation(row, group)) }); PASS]
         });
         for block in group * F::BLOCKS_PER_GROUP..(group + 1) * F::BLOCKS_PER_GROUP {
-            let chunks: [[B::Chunk; CHUNKS]; PASS] =
-                std::array::from_fn(|quad| load(first_quad + quad, block));
-            let first_block = (span.first_row * blocks + block) * BLOCK;
-            accumulate::<ROWS, PASS, B>(&mut dots, &chunks, x.quants, first_block, blocks);
+            // SAFETY: the blocks lie within the asserted weight and activation bytes (above).
+            let (quads, rows) = unsafe {
+                let quad = weights
+                    .quants
+                    .as_ptr()
+                    .add((first_quad * blocks + block) * F::QUAD_BYTES);
+                let row = x
+                    .quants
+                    .as_ptr()
+                    .add((span.first_row * blocks + block) * BLOCK);
+                let quads = Strided {
+                    first: quad,
+                    stride: blocks * F::QUAD_BYTES,
+                };
+                let rows = Strided {
+                    first: row,
+                    stride: weights.cols,
+                };
+                (quads, rows)
+            };
+            accumulate::<ROWS, PASS, F, B>(&mut dots, quads, rows, words);
         }
         let column_scales: [B::Sums; PASS] =
             std::array::from_fn(|quad| load_scales(first_quad + quad, group));
-        for (row, (row_sums, row_dots)) in sums.iter_mut().zip(&dots).enumerate() {
+        for (row, row_dots) in dots.iter().enumerate() {
             // SAFETY: the scale lies within the asserted activation scales (above).
             let row_scale = unsafe { *x.scales.get_unchecked(activation(row, group)) };
-            for ((sum, dot), scales) in row_sums.iter_mut().zip(row_dots).zip(&column_scales) {
-                *sum = B::scale(*sum, *dot, *scales, row_scale);
+            for (quad, (dot, scales)) in row_dots.iter().zip(&column_scales).enumerate() {
+                // SAFETY: `row < ROWS`, `quad < PASS` and `stride` is `PASS`: within `sums`.
+                unsafe {
+                    let sum = sums_at.add(row * stride + quad);
+                    *sum = B::scale(*sum, *dot, *scales, row_scale);
+                }
             }
         }
     }
-    for (row, row_sums) in sums.iter().enumerate() {
-        for (quad, quad_sums) in row_sums.iter().enumerate() {
-            store(row, (first_quad + quad) * QUAD, B::lanes(*quad_sums));
+    for row in 0..ROWS {
+        for quad in 0..PASS {
+            // SAFETY: `row < ROWS`, `quad < PASS` and `stride` is `PASS`: within `sums`.
+            let sum = unsafe { *sums_at.add(row * stride + quad) };
+            store(row, (first_quad + quad) * QUAD, B::lanes(sum));
         }
     }
 }
 
-/// `dots[row][quad] += Σ` over one block, every row's activations (from `first_block`, rows
-/// `blocks` blocks apart) against every quad's chunks.
+/// One block's operands, `stride` bytes apart from `first`: a pass's quads of weights, or a
+/// tile's rows of activations.
+#[derive(Clone, Copy)]
+struct Strided<T> {
+    first: *const T,
+    stride: usize,
+}
+
+impl<T> Strided<T> {
+    /// Operand `index`, `offset` bytes in.
+    ///
+    /// # Safety
+    /// The bytes read there lie within the operands' allocation.
+    unsafe fn at(self, index: usize, offset: usize) -> *const T {
+        // SAFETY: forwarded from the caller.
+        unsafe { self.first.byte_add(index * self.stride + offset) }
+    }
+}
+
+/// `dots[row][quad] += Σ` over one block, a word of every quad at a time (`words`, the
+/// format's `WORDS`): each of its chunks against every row's same four activations.
 #[inline(always)]
-fn accumulate<const ROWS: usize, const PASS: usize, B: Backend>(
+fn accumulate<const ROWS: usize, const PASS: usize, F: Format, B: Backend>(
     dots: &mut [[B::Dots; PASS]; ROWS],
-    chunks: &[[B::Chunk; CHUNKS]; PASS],
-    activations: &[i8],
-    first_block: usize,
-    blocks: usize,
+    quads: Strided<u8>,
+    rows: Strided<i8>,
+    words: usize,
 ) {
-    for (row, dots) in dots.iter_mut().enumerate() {
-        let start = first_block + row * blocks * BLOCK;
-        for chunk in 0..CHUNKS {
-            // SAFETY: the chunk lies within the activation bytes `quant_tiles` asserted.
-            let broadcast =
-                unsafe { B::broadcast(activations.as_ptr().add(start + chunk * CHUNK_INPUTS)) };
-            for (dot, chunks) in dots.iter_mut().zip(chunks) {
-                *dot = B::dot(*dot, broadcast, chunks[chunk]);
+    for word in 0..words {
+        // SAFETY: the word lies within the weight bytes `quant_tiles` asserted.
+        let codes: [B::Chunk; PASS] =
+            std::array::from_fn(|quad| unsafe { B::load_word(quads.at(quad, word * WORD)) });
+        for part in 0..CHUNKS / F::WORDS {
+            let chunks = codes.map(|codes| F::chunk::<B>(codes, part));
+            let inputs = (part * F::WORDS + word) * CHUNK_INPUTS;
+            for (row, dots) in dots.iter_mut().enumerate() {
+                // SAFETY: the chunk lies within the activation bytes `quant_tiles` asserted.
+                let broadcast = unsafe { B::broadcast(rows.at(row, inputs)) };
+                for (dot, chunk) in dots.iter_mut().zip(chunks) {
+                    *dot = B::dot(*dot, broadcast, chunk);
+                }
             }
         }
     }

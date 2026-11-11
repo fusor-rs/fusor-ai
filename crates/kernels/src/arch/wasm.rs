@@ -14,7 +14,7 @@ use core::arch::wasm32::{
     i16x8_extmul_high_i8x16, i16x8_extmul_low_i8x16, i32x4_extadd_pairwise_i16x8, i32x4_shuffle,
 };
 
-use super::{Backend, CHUNKS, DOTS, EXP_RUN, LANES};
+use super::{Backend, DOTS, EXP_RUN, LANES};
 use crate::ops::{
     EXP_BIAS, EXP_MAX, EXP_MIN, EXP_POLYNOMIAL, EXP_TAYLOR, GELU_TANH_CUBIC, GELU_TANH_SCALE,
     LN2_HIGH, LN2_LOW,
@@ -29,37 +29,23 @@ impl super::Backend for Wasm {
     const TILE: usize = 4;
 
     #[inline(always)]
-    unsafe fn load_q7(at: *const u8) -> [v128; CHUNKS] {
-        // SAFETY: the caller guarantees 128 readable bytes; v128.load is unaligned.
-        std::array::from_fn(|chunk| unsafe { v128_load(at.add(16 * chunk).cast()) })
+    unsafe fn load_word(at: *const u8) -> v128 {
+        // SAFETY: the caller guarantees 16 readable bytes; v128.load is unaligned.
+        unsafe { v128_load(at.cast()) }
     }
 
     #[inline(always)]
-    unsafe fn load_q4(at: *const u8) -> [v128; CHUNKS] {
-        // SAFETY: the caller guarantees 64 readable bytes; v128.load is unaligned.
-        let words: [v128; CHUNKS / 2] =
-            std::array::from_fn(|word| unsafe { v128_load(at.add(16 * word).cast()) });
-        std::array::from_fn(|chunk| {
-            if chunk < CHUNKS / 2 {
-                v128_and(words[chunk], u8x16_splat(0x0f))
-            } else {
-                u8x16_shr(words[chunk - CHUNKS / 2], 4)
-            }
-        })
+    fn nibbles(word: v128, part: usize) -> v128 {
+        if part == 0 {
+            v128_and(word, u8x16_splat(0x0f))
+        } else {
+            u8x16_shr(word, 4)
+        }
     }
 
     #[inline(always)]
-    unsafe fn load_t2(at: *const u8) -> [v128; CHUNKS] {
-        // SAFETY: the caller guarantees 32 readable bytes; v128.load is unaligned.
-        let words: [v128; CHUNKS / 4] =
-            std::array::from_fn(|word| unsafe { v128_load(at.add(16 * word).cast()) });
-        std::array::from_fn(|chunk| {
-            let shift = 2 * (chunk / words.len()) as u32;
-            v128_and(
-                u8x16_shr(words[chunk % words.len()], shift),
-                u8x16_splat(0b11),
-            )
-        })
+    fn bit_pairs(word: v128, part: usize) -> v128 {
+        v128_and(u8x16_shr(word, 2 * part as u32), u8x16_splat(0b11))
     }
 
     #[inline(always)]
