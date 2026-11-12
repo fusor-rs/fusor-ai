@@ -17,8 +17,8 @@ use core::arch::wasm32::{
 
 use super::{Backend, DOTS, EXP_RUN, LANES};
 use crate::ops::{
-    EXP_BIAS, EXP_MAX, EXP_MIN, EXP_POLYNOMIAL, EXP_TAYLOR, GELU_TANH_CUBIC, GELU_TANH_SCALE,
-    LN2_HIGH, LN2_LOW,
+    EXP_MAX, EXP_MIN, EXP_POLYNOMIAL, EXP_TAYLOR, GELU_TANH_CUBIC, GELU_TANH_SCALE, LN2_HIGH,
+    LN2_LOW,
 };
 use crate::quant::BLOCK;
 
@@ -366,7 +366,7 @@ fn exp(x: v128) -> v128 {
     }
     let poly = f32x4_mul(f32x4_mul(poly, remainder), remainder);
     let poly = f32x4_add(f32x4_add(poly, remainder), f32x4_splat(1.0));
-    f32x4_mul(poly, power_of_two(exponent, i32x4_splat(EXP_BIAS)))
+    times_power_of_two(poly, exponent)
 }
 
 /// `ops::exp_fast`'s constants on four lanes, as values the compiler cannot see: V8 keeps a
@@ -377,7 +377,6 @@ struct FastExp {
     log2_e: v128,
     minus_ln_2: v128,
     taylor: [v128; EXP_TAYLOR.len()],
-    bias: v128,
 }
 
 impl FastExp {
@@ -390,7 +389,6 @@ impl FastExp {
             log2_e,
             minus_ln_2,
             taylor: black_box(EXP_TAYLOR).map(|value| f32x4_splat(value)),
-            bias: i32x4_splat(black_box(EXP_BIAS)),
         }
     }
 
@@ -404,7 +402,7 @@ impl FastExp {
         for &coefficient in &self.taylor[1..] {
             poly = multiply_add(poly, remainder, coefficient);
         }
-        f32x4_mul(poly, power_of_two(exponent, self.bias))
+        times_power_of_two(poly, exponent)
     }
 }
 
@@ -418,7 +416,9 @@ fn multiply_add(left: v128, right: v128, addend: v128) -> v128 {
     f32x4_add(f32x4_mul(left, right), addend)
 }
 
-// The lanes of `exponent` are integral; `bias` is `EXP_BIAS` on every lane.
-fn power_of_two(exponent: v128, bias: v128) -> v128 {
-    i32x4_shl(i32x4_add(i32x4_trunc_sat_f32x4(exponent), bias), 23)
+/// `value · 2^exponent` (the lanes of `exponent` integral) as the addition of `exponent` to
+/// `value`'s own: the product's bits where both are normal, as the exponentials' clamps keep
+/// them (`e⁻⁸⁷` is above the smallest normal f32 and `e⁸⁸` below the largest).
+fn times_power_of_two(value: v128, exponent: v128) -> v128 {
+    i32x4_add(value, i32x4_shl(i32x4_trunc_sat_f32x4(exponent), 23))
 }
