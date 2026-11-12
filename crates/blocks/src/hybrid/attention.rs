@@ -11,6 +11,8 @@
 //! `mix` is two phases: the projection by heads, each head normed and rotated or through its
 //! sigmoid, the keys and values kept; then attention and its gate, by query heads.
 
+use std::ops::Range;
+
 use bundle::{Scope, Store};
 use kernels::ops::{rms_norm, rope_half, sigmoid};
 use kernels::{Input, Linear, QUAD, Vector};
@@ -161,7 +163,24 @@ impl Weights {
 
     /// This thread's heads of the projection: queries and keys normed and rotated, gates through
     /// their sigmoid, keys and values kept.
+    /// The keys and values of the pass's rows into the cache, then a barrier: all a later row
+    /// needs of rows whose own outputs nothing reads.
+    pub(crate) fn keep(&self, pass: &Pass, input: &Input, call: &Call) {
+        let Shape {
+            heads, head_dim, ..
+        } = self.shape;
+        let kept = (heads + self.shape.gate_heads()) * head_dim..self.shape.head_columns();
+        self.project_heads(pass, input, call, kept);
+        pass.ctx.barrier();
+    }
+
     fn project(&self, pass: &Pass, input: &Input, call: &Call) {
+        self.project_heads(pass, input, call, 0..self.shape.head_columns());
+        self.project_head_gates(pass, input);
+    }
+
+    /// The heads in `columns` (whole heads) of this thread's share, each as its role leaves it.
+    fn project_heads(&self, pass: &Pass, input: &Input, call: &Call, columns: Range<usize>) {
         let Shape {
             head_dim,
             rotary_dim,
@@ -169,13 +188,13 @@ impl Weights {
         } = self.shape;
         let (buffers, width) = (pass.buffers, self.shape.qkv());
         let scratch = buffers.scratch.get(pass.ctx);
-        let units = pass.ctx.split(self.shape.head_columns(), head_dim);
+        let share = pass.ctx.split(columns.len(), head_dim);
+        let units = columns.start + share.start..columns.start + share.end;
         self.qkv
             .project_quads(input, units.clone(), |row, first, values| {
                 let at = row * width + first;
                 buffers.qkv.part(at..at + QUAD).copy_from_slice(&values);
             });
-        self.project_head_gates(pass, input);
         scratch.cos.resize(rotary_dim / 2, 0.0);
         scratch.sin.resize(rotary_dim / 2, 0.0);
         scratch.head.resize(head_dim, 0.0);

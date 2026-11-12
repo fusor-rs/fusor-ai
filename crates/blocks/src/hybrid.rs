@@ -268,6 +268,62 @@ impl Hybrid {
     }
 }
 
+impl Hybrid {
+    /// `forward` of rows of which only the last's hidden state is read afterwards (a prompt
+    /// before its reply): where the last layer attends and the mask is causal, the rows before
+    /// the last leave it only their keys and values, and the layer runs on the last row alone.
+    /// Their own outputs there, most of a layer's work, are nobody's input. Only the last row
+    /// of `buffers.stack.hidden` is the stack's output when it returns.
+    pub fn forward_to_last(&self, ctx: &Ctx, state: &State, buffers: &Buffers, rows: &Rows) {
+        let last_layer = self.layers.len() - 1;
+        let count = rows.positions.len();
+        let layer = &self.layers[last_layer];
+        let (Mixer::Attention(weights), Mask::Causal, true) = (&layer.mixer, rows.mask, count > 1)
+        else {
+            self.forward(ctx, state, buffers, rows);
+            return;
+        };
+        self.forward_layers(ctx, state, buffers, (rows, 0..last_layer));
+        let pass = Pass {
+            ctx,
+            buffers: &buffers.stack,
+            rows: count,
+            heads: self.shape.attention.heads(),
+        };
+        prepare(&pass, Source::Normed(&layer.norm1), &weights.qkv);
+        ctx.barrier();
+        let normed = input(&pass, Source::Normed(&layer.norm1), &weights.qkv);
+        let call = attention::Call {
+            cache: &state.cache,
+            slot: self.shape.slot(last_layer),
+            span: Span {
+                rows: count,
+                first: rows.first,
+                mask: rows.mask,
+            },
+            positions: rows.positions,
+        };
+        weights.keep(&pass, &normed, &call);
+        let last = Rows {
+            first: rows.first + count - 1,
+            positions: &rows.positions[count - 1..],
+            mask: rows.mask,
+        };
+        self.move_row(ctx, buffers, count - 1, 0);
+        self.forward_layers(ctx, state, buffers, (&last, last_layer..last_layer + 1));
+        self.move_row(ctx, buffers, 0, count - 1);
+    }
+
+    /// `hidden[to] = hidden[from]` for this thread's columns, then a barrier.
+    fn move_row(&self, ctx: &Ctx, buffers: &Buffers, from: usize, to: usize) {
+        let (hidden, width) = (&buffers.stack.hidden, self.shape.hidden);
+        for column in ctx.split(width, 1) {
+            hidden.set(to * width + column, hidden.get(from * width + column));
+        }
+        ctx.barrier();
+    }
+}
+
 impl Load for Hybrid {
     type Shape = Shape;
 

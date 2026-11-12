@@ -548,7 +548,7 @@ impl Engine {
             self.team.threads()
         };
         self.team.run_on(threads, |ctx| {
-            language.stack.forward(ctx, state, buffers, rows);
+            language.stack.forward_to_last(ctx, state, buffers, rows);
             let hidden = &buffers.stack.hidden.read()[last * HIDDEN..(last + 1) * HIDDEN];
             let norm = (&language.norm, NORM_EPS);
             prediction.predict(ctx, hidden, norm, &language.head);
