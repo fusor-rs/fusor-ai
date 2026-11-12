@@ -66,8 +66,13 @@ paddle-ocr-wasm's optimization ledger.
   −9 % traced. It is not free: int8 activations per 128 values lose the language model's
   outlier channels (parity's hidden-state errors +50 %, a next-token count down), and on
   the vision tower alone the merged tokens' error grows 27 % and a reply drifts from the
-  reference's. Parked with its patch in qwen3-5's ledger; a cheaper scaling needs a format
-  that keeps the activations' resolution.
+  reference's. Parked with its patch in qwen3-5's ledger. The loss is two of the same size
+  (Qwen3.5's parity, each half emulated alone inside `Q7b32`): the weights' scale per 128
+  alone moves the merged tokens' error by 15 % and costs a next token, the activations' alone
+  by 12 %. The activations' half has a cure (the group's largest step shared only among the
+  blocks within 25 % of it: +1 %); the weights' has none short of a better quantizer, a row's
+  largest of 128 weights being 0.26 bit above its largest of 32. Halving the activations'
+  levels multiplies the error by 1.36: the weights' rounding is about 72 % of its power.
 
 ## The store is part of the kernel
 
@@ -87,6 +92,18 @@ paddle-ocr-wasm's optimization ledger.
   memory (four scalar stores read back as one vector) and the bias is added a lane at a
   time. Matching once and building a store per activation closes that half (200 → 212 GOPS
   on the page) for 115 KB of module and 0.6 % of the first token: not kept.
+
+- A store's state goes in by value. A closure that reaches its buffer, a width and a scale
+  through references loads each of them again at every store, since the store before may
+  have written them: the attention's score store spent 33 scalar instructions on a store of
+  four values. As a `move` closure over a slice and the two scalars its state sits in the
+  environment the kernel holds uniquely, and the loads leave the loop: the vision `Q·Kᵀ` went
+  from 186 to 216 GOPS per worker on the page together with the next entry.
+- A pass's fixed costs are a tenth of a pass over two blocks. Its sums zeroed as an array are
+  a `memory.fill`, which V8 calls out of line (3.6 ns for 256 bytes); zeroed by volatile
+  stores in a loop they are stores. Under 1 % on rows of 1024 and more, it was a third of
+  what the two changes gained on `Q·Kᵀ`. Together they took 2.5 % off Qwen3.5's first token
+  (4.25 → 4.14 s traced), bit-identical.
 
 ## Plain Rust vectorizes only with constant lengths
 
@@ -108,6 +125,12 @@ paddle-ocr-wasm's optimization ledger.
 - A reduction on one accumulator waits for itself at every step. The softmax's row maximum
   on four maxima over runs of 16 values (a maximum is exact in any order) took 18 % off the
   softmax's sweep on the page (1.88 → 1.54 s summed over the workers).
+- V8 keeps a value in a register across a loop and builds a constant again where it is
+  used: the fast exponential's sweep made seven vector constants per iteration (6 `dup`,
+  4 `movk`, 1 `movi` of 104 instructions). The same constants as values the compiler cannot
+  see (`black_box` once per sweep) stay in registers: the softmax's sweep 1.56 → 1.43 s
+  summed over the workers on the page, bit-identical. Count the registers first: a value
+  V8 has no register for is spilled, a constant is only rebuilt.
 - `--js-flags=--perf-prof --perf-prof-path=<dir>` makes release Chrome write its optimized
   wasm code to `jit-<pid>.dump` (macOS included). The 2 MB log buffer is lost when the
   renderer is killed: compile padded copies of the module until the functions wanted are on
@@ -255,6 +278,22 @@ paddle-ocr-wasm's optimization ledger.
   −32 % decode. The session's first image gains nothing at 10: each worker's isolate
   compiles its optimized code during that read, and ten compile at once. The default count
   is the host's: the web reports 14 cores without saying which are performance cores.
+- Past the fast cores, static shares cost more than the cores add. The same page at 8, 10,
+  12 and 14 workers reads the receipt's first token in 4.41, 3.95, 6.77 and 7.18 s, while
+  the kernel's capacity at 14 busy cores is 28–34 % above 8 (the harness in 14 pages): every
+  phase waits at its barrier for the share of a thread on an efficiency core, a third as
+  fast for a kernel, and the system rotates all the threads over those cores, so no thread
+  is the slow one for long. A page's default worker count is past the fast cores on any
+  processor with fewer of them than workers. What to find is a count, not a set of threads:
+  with as many threads as fast cores the system keeps them there.
+- That count cannot be had from a race inside the sealed runtime. A race of counting loops
+  before or after a run, short enough to be free (10 µs), is shorter than the scheduler's
+  jitter: with more runnable threads than cores some count nothing, twelve races in a row
+  kept 7 to 12 of 14 threads, and a wrong verdict costs a whole run (reads of 6.2–6.7 s at
+  8 workers, where there was nothing to drop). A loop of integer steps also reads an
+  efficiency core at two thirds of a fast one, a loop of float additions at half, the
+  kernels at a third. The page has a clock; the runtime does not.
+
 ## Keep the harness in the repository
 
 - A page that replays `kernels::matmul` and `ops::attend` with the page's exact store
