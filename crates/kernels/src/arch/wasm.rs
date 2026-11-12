@@ -20,8 +20,14 @@ use crate::ops::{
     EXP_BIAS, EXP_MAX, EXP_MIN, EXP_POLYNOMIAL, EXP_TAYLOR, GELU_TANH_CUBIC, GELU_TANH_SCALE,
     LN2_HIGH, LN2_LOW,
 };
+use crate::quant::BLOCK;
 
 pub(crate) struct Wasm;
+
+/// `1.5 · 2²³`: f32s from `2²³` to `2²⁴` are the integers, so adding it to a value within
+/// `±2²²` rounds the value to its nearest integer, ties to even, and leaves that integer in
+/// the sum's low bits.
+const ROUNDING: f32 = 12_582_912.0;
 
 impl super::Backend for Wasm {
     type Chunk = v128;
@@ -108,13 +114,17 @@ impl super::Backend for Wasm {
         // SAFETY: 32 readable f32s and 32 writable bytes (asserted); v128 loads and stores are
         // unaligned.
         unsafe {
+            // A quotient plus `ROUNDING` is `ROUNDING` plus the quotient's nearest integer, ties
+            // to even (floats are a unit apart there): its bits are `ROUNDING`'s plus the level,
+            // one addition where rounding and converting are two.
             let levels: [v128; 8] = std::array::from_fn(|i| {
                 let lane = v128_load(x.as_ptr().add(4 * i).cast());
-                i32x4_trunc_sat_f32x4(f32x4_nearest(f32x4_div(lane, f32x4_splat(scale))))
+                f32x4_add(f32x4_div(lane, f32x4_splat(scale)), f32x4_splat(ROUNDING))
             });
             // A level is within ±127 (`scale` is at least the block's largest magnitude over
-            // 127), so its low byte is the level: the even bytes of the even halves. Saturating
-            // narrows compile to two clamps per level before the same shuffles.
+            // 127) and `ROUNDING`'s low byte is zero, so the low byte of the bits is the level:
+            // the even bytes of the even halves. Saturating narrows compile to two clamps per
+            // level before the same shuffles.
             let narrow = |quarter: &[v128]| {
                 i8x16_shuffle::<0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30>(
                     i16x8_shuffle::<0, 2, 4, 6, 8, 10, 12, 14>(quarter[0], quarter[1]),
@@ -126,10 +136,11 @@ impl super::Backend for Wasm {
             let sums = levels
                 .iter()
                 .fold(i32x4_splat(0), |sums, &level| i32x4_add(sums, level));
-            i32x4_extract_lane::<0>(sums)
-                + i32x4_extract_lane::<1>(sums)
-                + i32x4_extract_lane::<2>(sums)
-                + i32x4_extract_lane::<3>(sums)
+            let bits = i32x4_extract_lane::<0>(sums)
+                .wrapping_add(i32x4_extract_lane::<1>(sums))
+                .wrapping_add(i32x4_extract_lane::<2>(sums))
+                .wrapping_add(i32x4_extract_lane::<3>(sums));
+            bits.wrapping_sub((ROUNDING.to_bits() as i32).wrapping_mul(BLOCK as i32))
         }
     }
 
