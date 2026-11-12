@@ -188,7 +188,8 @@ paddle-ocr-wasm's optimization ledger.
   its last multiply-add stands for the exponential, the division and the rounding, a block's
   scale is one `exp_fast(m − M) / 127`, and the row's normalizer is its levels' own sum. On
   the page the scores' way to int8 went 2.24 → 1.47 s summed and the receipt's first token
-  −2.9 % traced, −3.3 % in rounds; every reply stayed byte-identical and the tower's parity
+  −2.9 % traced, −3.3 % in rounds (2 % in cool reads on a later base: 3.62 → 3.54 s cold,
+  3.58 → 3.52 s warm); every reply stayed byte-identical and the tower's parity
   errors moved −17 % to +10 %, their mean −4 % (the exact exponential alone moves them −10 %
   to +3.5 %: that is the noise). The exponentials' own sum does not go with it: the clamped
   polynomial counts 0.47 of a level for every key below `m − 5.6`, and that normalizer was
@@ -244,6 +245,11 @@ paddle-ocr-wasm's optimization ledger.
   every read (under 2.8 on this machine, about a minute): six sites read that way repeated
   to 0.01–0.05 s over two rounds and put five commits of 0.01–0.03 s each in their traced
   order (3.73, 3.71, 3.69, 3.68, 3.65 s), which heated rounds could not tell apart.
+- Cool reads repeat within a session, less between two. One commit read 4.01 and 4.18 s in a
+  session and 3.98 and 3.96 s five hours later, while another read 3.62–3.65 s in both: the
+  same change was 10.9 % by the first session and 8.8 % by the second. Read both ends in the
+  same session, give a session's figure with the other's beside it, and take a third read of
+  an end whose two differ by more than the change's own size.
 - The traced build's barrier waits are not the page's. Its clock worker spins on a core
   beside the eight workers and the engine thread, so on ten performance cores a worker is
   displaced at every phase: 0.9 s of waits per worker on an 8.3 s traced read of Qwen3.5,
@@ -297,6 +303,13 @@ paddle-ocr-wasm's optimization ledger.
   on the 64-row block gained 5 %, the small block with four dots 27 %, both 55 %: a chain's
   bound shows only once the data is near. Rows of 4096 values lose with eight in flight
   (nine rows of 16 KB are past the cache) and keep four.
+- Eight in flight is not a rule. The delta rule's step dots a head's 128 memory rows (64 KB,
+  in the cache) against a key, updates them and dots them against a query, four rows at a
+  time; eight took 4 % off its span on the receipt (0.896 → 0.859 s summed, where its chains'
+  latency promised 15–22 %) and nothing off the page. The step already ran at 1.6 times what
+  its chains alone account for: find what a loop waits on before widening it. The harness had
+  said as much (5 % at that length; the cached attention's scores slower with eight, 13.0 →
+  13.9 ns a key).
 - An attention's keys and values, quantized at run time, went through the formats' scalar
   quantizer and a packing that works out a code's position per code: 3.4 ns a value where
   the activations' quantizer takes 0.15. Through the backends' `absmax` and `quantize_block`
