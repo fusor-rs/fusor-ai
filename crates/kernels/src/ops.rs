@@ -15,19 +15,54 @@ pub fn rms_norm(x: &[f32], weight: &[f32], eps: f32, out: &mut [f32]) {
     }
 }
 
+/// Rows `layer_norm` takes the sums of together.
+pub const NORM_ROWS: usize = 8;
+
 /// `out = (x − mean(x)) · rsqrt(var(x) + eps) · weight + bias` for every row of `x` (rows of
 /// `weight.len()`; the variance is the biased one, as `nn.LayerNorm`).
 pub fn layer_norm(x: &[f32], weight: &[f32], bias: &[f32], eps: f32, out: &mut [f32]) {
     let dim = weight.len();
-    for (row, out_row) in x.chunks_exact(dim).zip(out.chunks_exact_mut(dim)) {
-        let mean = row.iter().sum::<f32>() / dim as f32;
-        let variance = row.iter().map(|value| (value - mean).powi(2)).sum::<f32>() / dim as f32;
-        let inverse = 1.0 / (variance + eps).sqrt();
-        let affine = weight.iter().zip(bias);
-        for ((output, value), (scale, shift)) in out_row.iter_mut().zip(row).zip(affine) {
-            *output = (value - mean) * inverse * scale + shift;
+    let groups = x.chunks(NORM_ROWS * dim);
+    for (rows, out_rows) in groups.zip(out.chunks_mut(NORM_ROWS * dim)) {
+        let mut statistics = [(0.0, 0.0); NORM_ROWS];
+        if rows.len() == NORM_ROWS * dim {
+            statistics = moments(std::array::from_fn(|row| &rows[row * dim..][..dim]));
+        } else {
+            for (statistic, row) in statistics.iter_mut().zip(rows.chunks_exact(dim)) {
+                [*statistic] = moments([row]);
+            }
+        }
+        let rows = rows.chunks_exact(dim).zip(out_rows.chunks_exact_mut(dim));
+        for ((row, out_row), (mean, variance)) in rows.zip(statistics) {
+            let inverse = 1.0 / (variance + eps).sqrt();
+            let affine = weight.iter().zip(bias);
+            for ((output, value), (scale, shift)) in out_row.iter_mut().zip(row).zip(affine) {
+                *output = (value - mean) * inverse * scale + shift;
+            }
         }
     }
+}
+
+/// The mean and the biased variance of each of `rows`, of one length. A sum is a chain of
+/// additions, each waiting for the one before: the rows' chains are interleaved, each row's
+/// values added in their order from the `−0.0` a float sum starts at.
+fn moments<const ROWS: usize>(rows: [&[f32]; ROWS]) -> [(f32, f32); ROWS] {
+    let dim = rows[0].len();
+    let rows = rows.map(|row| &row[..dim]);
+    let mut sums = [-0.0; ROWS];
+    for index in 0..dim {
+        for (sum, row) in sums.iter_mut().zip(rows) {
+            *sum += row[index];
+        }
+    }
+    let means = sums.map(|sum| sum / dim as f32);
+    let mut squares = [-0.0; ROWS];
+    for index in 0..dim {
+        for ((sum, row), mean) in squares.iter_mut().zip(rows).zip(means) {
+            *sum += (row[index] - mean).powi(2);
+        }
+    }
+    std::array::from_fn(|row| (means[row], squares[row] / dim as f32))
 }
 
 /// RoPE frequencies `base^(−2i/head_dim)` for `i < head_dim / 2`, computed in f32 like
@@ -309,8 +344,8 @@ pub fn weigh<'cache>(scores: &mut [f32], value: impl Fn(usize) -> &'cache [f32],
 #[cfg(test)]
 mod tests {
     use super::{
-        Exponentials, elu, exp, exp_fast, gelu_erf, gelu_tanh, gelu_tanh_sweep, layer_norm,
-        round_bf16, silu, silu_sweep,
+        Exponentials, NORM_ROWS, elu, exp, exp_fast, gelu_erf, gelu_tanh, gelu_tanh_sweep,
+        layer_norm, round_bf16, silu, silu_sweep,
     };
     use crate::arch::{Active, Backend, DOTS};
 
@@ -450,18 +485,27 @@ mod tests {
     }
 
     #[test]
-    fn layer_norm_centers_scales_and_shifts() {
-        let mut out = [0.0; 4];
+    fn layer_norm_centers_scales_and_shifts_each_row() {
+        let rows = NORM_ROWS + 1;
+        let patterns = [
+            ([0.0, 0.0, 2.0, 2.0], [-1.0, -2.0, 2.0, 1.0]),
+            ([3.0, 3.0, 1.0, 1.0], [1.0, 2.0, 0.0, -1.0]),
+        ];
+        let x: Vec<f32> = (0..rows)
+            .flat_map(|row| patterns[row % 2].0.map(|value| value * (row + 1) as f32))
+            .collect();
+        let mut out = vec![0.0; x.len()];
         layer_norm(
-            &[0.0, 0.0, 2.0, 2.0],
+            &x,
             &[1.0, 2.0, 1.0, 1.0],
             &[0.0, 0.0, 1.0, 0.0],
             0.0,
             &mut out,
         );
-        let want = [-1.0, -2.0, 2.0, 1.0];
-        for (got, want) in out.iter().zip(want) {
-            assert!((got - want).abs() < 1e-6, "{out:?}");
+        for (row, got) in out.as_chunks::<4>().0.iter().enumerate() {
+            for (got, want) in got.iter().zip(patterns[row % 2].1) {
+                assert!((got - want).abs() < 1e-6, "row {row}: {out:?}");
+            }
         }
     }
 
