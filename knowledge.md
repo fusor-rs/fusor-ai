@@ -17,6 +17,14 @@ paddle-ocr-wasm's optimization ledger.
   calls short: `quant_matmul` calls `quant_tiles` per `ROWS_PER_CALL` (64) rows, so an
   image's first product spends the budget on its first rows and runs the rest optimized.
   That made a session's first read cost what a warm one does (10.1 → 8.7 s).
+- A function with one caller joins it, generics included. The f32 product's dots, made
+  generic over how many run together and instantiated at eight for the product alone, were
+  inlined with their callers into the product itself, which a patch embedding enters once
+  per image and worker: the whole embedding ran in baseline code and the receipt's first
+  token went from 4.22 to 4.41 s, while the traced build, whose spans hold those functions
+  apart, showed the embedding improved (0.34 → 0.22 s summed). With the block of rows out of
+  line (`f32_block`, called per block): 4.14 s. After a change to how a hot loop is reached,
+  measure the uninstrumented page.
 - `wasm-opt -O3` undoes `#[inline(never)]`: its one-caller inlining is unbounded by default
   and folds the kernel back into its caller. `build-runtime.sh` passes `-ocimfs=20`.
 - The threaded builds' toolchain sets the kernels' speed: `nightly-2025-11-15` generated the
@@ -81,17 +89,23 @@ paddle-ocr-wasm's optimization ledger.
   96-deep one. Harness, GMAC/s on the QK shape: copy 90, scaled per value 68, scaled as a
   map over the quad 77, per-value adapter 48, adapter with a GELU through a function
   pointer 21. `Linear::project_quads` is the primitive; `project` is its per-value adapter.
-- Never call through a function pointer per value or per quad in a store. Activations are
-  applied four lanes at a time (`gelu_tanh_lanes`) and chosen by an enum matched inside an
-  always-inlined method (`layer::Activation::apply`).
+- Never call through a function pointer per value or per quad in a store.
 - Scale in the store as a map over the quad (one vector multiply), not per value.
 
-- The vision ffn_up with the GELU store runs at 197 GOPS per worker against 233 for the qkv
-  projection of the same depth. Half the gap is the GELU's arithmetic. The other half is the
-  store: once it holds the activation's match LLVM outlines it, the quad goes to it through
-  memory (four scalar stores read back as one vector) and the bias is added a lane at a
-  time. Matching once and building a store per activation closes that half (200 → 212 GOPS
-  on the page) for 115 KB of module and 0.6 % of the first token: not kept.
+- An activation does not go in a store. With its GELU in the store the vision ffn_up ran at
+  197–201 GOPS per worker against 233 for the qkv projection of the same depth. Half the gap
+  was the GELU's arithmetic. The other half was the store: once it holds the activation's
+  match LLVM outlines it, the quad goes to it through memory (four scalar stores read back
+  as one vector) and the bias is added a lane at a time. A store built per activation closed
+  that half (200 → 212 GOPS on the page) for 115 KB of module: not kept. With a copying
+  store and the activation swept over each block of `ROWS_PER_CALL` rows after its projection
+  (`gelu_tanh_sweep`, `silu_sweep`), the product runs at 235 GOPS and the sweep costs 0.25 s
+  summed over the workers (3.48 → 2.96 + 0.25 s on the receipt); the gated feed-forward's
+  product went from 229 to 239.
+- A sweep is its own `#[inline(never)]` function with its constants held as values. The same
+  GELU as a lane function inlined into the layer's feed-forward, which is entered once a
+  layer, ran in baseline code and built fifteen constants again at every quad: 0.42 s where
+  the sweep takes 0.25, and a cold read 1.5 % longer.
 
 - A store's state goes in by value. A closure that reaches its buffer, a width and a scale
   through references loads each of them again at every store, since the store before may
@@ -150,6 +164,11 @@ paddle-ocr-wasm's optimization ledger.
   this way.
 - A softmax's sum stays in index order (`scores.iter().sum()` after the vector exp); the
   per-lane partial sums the sweep returns are a different association.
+- Two identities are the same bits for fewer operations. `poly · 2ⁿ` is the addition of `n`
+  to the float's exponent bits where the result is normal, as the exponentials' clamps keep
+  it; `trunc(nearest(q))` for a level within an int8 is the low byte of `q + 1.5 · 2²³`
+  (floats are a unit apart there, so the sum is the level rounded to even). On the receipt
+  the softmax's sweep went 1.43 → 1.34 s summed and the activations' quantizer 1.06 → 0.92 s.
 - Fusing the softmax's maximum, exponentials and int8 quantization into one sweep gained
   nothing: the row sits in L1 and the exp polynomial is the cost. Fewer passes over L1 data
   is not a win by itself.
@@ -163,6 +182,17 @@ paddle-ocr-wasm's optimization ledger.
   choice (`Exponentials::Fast` on its tower's shape), backed by that model's evidence; the
   f32 softmaxes keep the exact exp. SIMD128 has no fused form and lands up to 64 ulp away,
   within the same bound; on x86-64 the scalar backend's fused multiply-add is a library call.
+- The step after that one moves outputs, and is a candidate, not merged (`kernel-candidates`).
+  A block's levels are `round(127 · e^(score − m))`, `m` its largest score: a function of the
+  scores alone, zero below `m − 5.6`. One degree-7 polynomial with the rounding constant in
+  its last multiply-add stands for the exponential, the division and the rounding, a block's
+  scale is one `exp_fast(m − M) / 127`, and the row's normalizer is its levels' own sum. On
+  the page the scores' way to int8 went 2.24 → 1.47 s summed and the receipt's first token
+  −2.9 % traced, −3.3 % in rounds; every reply stayed byte-identical and the tower's parity
+  errors moved −17 % to +10 %, their mean −4 % (the exact exponential alone moves them −10 %
+  to +3.5 %: that is the noise). The exponentials' own sum does not go with it: the clamped
+  polynomial counts 0.47 of a level for every key below `m − 5.6`, and that normalizer was
+  40–65 % worse.
 
 ## Shared preparation, split by group
 
@@ -202,6 +232,18 @@ paddle-ocr-wasm's optimization ledger.
   accepted build's, character for character.
 - Barrier waits summed over threads are the load indicator: they tripled with other work on
   the machine while no kernel changed.
+- The traced build is another build. Its spans are calls the compiler does not inline
+  through, so a loop can sit in a function of its own there and in a caller entered once on
+  the page (the f32 product above: its span −35 %, the page +4.5 %). A kept change is
+  measured in rotated rounds on the uninstrumented site as well as by its span: the span
+  says where the time went, the page whether it went.
+- The machine heats within a run of reads. Eight reads back to back gave the same sites'
+  first token as 4.00, 4.10, 4.20, 4.31, 4.41, 4.40, 4.44 and 4.53 s whatever the site (the
+  load from 3 to 8): 12 %, more than most changes, and the site read first always wins.
+  Rotate the order every round and discard a preheating read; or let the load fall before
+  every read (under 2.8 on this machine, about a minute): six sites read that way repeated
+  to 0.01–0.05 s over two rounds and put five commits of 0.01–0.03 s each in their traced
+  order (3.73, 3.71, 3.69, 3.68, 3.65 s), which heated rounds could not tell apart.
 - The traced build's barrier waits are not the page's. Its clock worker spins on a core
   beside the eight workers and the engine thread, so on ten performance cores a worker is
   displaced at every phase: 0.9 s of waits per worker on an 8.3 s traced read of Qwen3.5,
@@ -240,6 +282,43 @@ paddle-ocr-wasm's optimization ledger.
   core busy; the harness gives the same kernel 113–134 on eight pages at once and 131–144
   alone. What is left is the format's per-block scaling.
 
+## Sums are chains, and a block fits a cache
+
+- A scalar sum is a chain too. `layer_norm`'s mean and variance are two sums over a row,
+  1024 additions each waiting three cycles for the last: 1.4 µs a row, 0.24 s summed over the
+  workers on Qwen3.5's receipt. Eight rows' sums interleaved (eight accumulators in plain
+  Rust, each row's values added in their order from the `−0.0` a float sum starts at) are
+  the same operations at the adder's throughput: 0.066 s, bit-identical.
+- The f32 product wants its block of rows in the first-level cache and eight dots in flight,
+  and neither alone. A column at a time across all the rows streamed a receipt's 21 MB of
+  patches again for each of a worker's 128 columns: 23.5 GOPS per worker. Blocks of 64 rows
+  (393 KB): 32. Blocks of the eight rows that fit 64 KB, eight dots against one row of
+  weights: 49, the patch embedding 0.47 → 0.22 s summed. In the harness eight dots in flight
+  on the 64-row block gained 5 %, the small block with four dots 27 %, both 55 %: a chain's
+  bound shows only once the data is near. Rows of 4096 values lose with eight in flight
+  (nine rows of 16 KB are past the cache) and keep four.
+- An attention's keys and values, quantized at run time, went through the formats' scalar
+  quantizer and a packing that works out a code's position per code: 3.4 ns a value where
+  the activations' quantizer takes 0.15. Through the backends' `absmax` and `quantize_block`
+  (the same scale, the same levels; the format's clamp never acts) and a chunk's four codes
+  at a time, `attn.quantize_kv` went 0.58 → 0.36 s summed on the receipt. What is left is
+  three passes over an image's rows 12 KB apart.
+- A call's rotary angles are computed once, not per thread, layer and row: into a shared
+  buffer before the layers (`Stack::turn`), the vision `qkv_rope` phase's own time went
+  0.26 → 0.10 s summed.
+- The delta rule's convolution a tap of every channel at a time (the taps stored tap-major,
+  the sums started at `−0.0`, the SiLU swept after) where it went a channel of every tap:
+  0.49 → 0.165 s summed, bit-identical.
+
+## Work nobody reads
+
+- Of a prompt's last layer one row's output is read; the rows before it matter to later
+  tokens only as that layer's keys and values. Projecting just those (a fifth of the
+  projection's columns) for them and running the layer on the last row alone took 4 % of the
+  prefill's products (10.40 → 10.11 s summed) and a sixth of its cached attention (0.68 →
+  0.57 s): the receipt's first token −1.5 % traced, bit-identical, since a row's arithmetic
+  does not depend on the rows computed with it (`Hybrid::forward_to_last`).
+
 ## What did not matter
 
 - Cache locality of the activations (which core quantized them), streaming outputs through
@@ -260,8 +339,9 @@ paddle-ocr-wasm's optimization ledger.
   flight (170 with eight), about 15 G SIMD operations per second in all. f32 multiply and
   add without fused ops: ~28 GMAC/s per core. The vector `exp`: ~14 cycles per four lanes (30
   operations, two dependent chains). Built with the pinned `nightly-2026-10-20`, the page
-  runs Qwen3.5's prefill linears at 230–242 GOPS (115–121 GMAC/s) per worker and the vision
-  QK/PV at 187/237 GOPS; 85–96 GMAC/s per worker was `nightly-2025-11-15`'s code.
+  runs Qwen3.5's prefill linears at 230–242 GOPS (115–121 GMAC/s) per worker, the vision
+  QK/PV at 216/237 GOPS and its f32 patch embedding at 49 (24.6 GMAC/s); 85–96 GMAC/s per
+  worker was `nightly-2025-11-15`'s code.
 - Decode is bound by the 361 MB of weights per token; the layer matmuls stream at 25–30 GB/s
   per worker, PaddleOCR-VL's language model head at ~3 GB/s per worker, unexplained and the
   next lead if tokens per second ever matters. Qwen3.5's head streams at 29 GB/s like its
