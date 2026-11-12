@@ -1,5 +1,7 @@
 #![expect(unsafe_code, reason = "SIMD loads and stores through raw pointers")]
 
+use std::hint::black_box;
+
 use core::arch::wasm32::{
     f32x4, f32x4_abs, f32x4_add, f32x4_convert_i32x4, f32x4_div, f32x4_extract_lane, f32x4_max,
     f32x4_min, f32x4_mul, f32x4_nearest, f32x4_splat, f32x4_sub, i8x16_shuffle, i16x8_shuffle,
@@ -185,7 +187,8 @@ impl super::Backend for Wasm {
     }
 
     fn exp_sweep_fast(x: &mut [f32], shift: f32) -> [f32; EXP_RUN] {
-        sweep(x, shift, exp_fast)
+        let exponential = FastExp::new();
+        sweep(x, shift, |lanes| exponential.of(lanes))
     }
 
     fn gelu_tanh(x: [f32; LANES]) -> [f32; LANES] {
@@ -352,18 +355,46 @@ fn exp(x: v128) -> v128 {
     }
     let poly = f32x4_mul(f32x4_mul(poly, remainder), remainder);
     let poly = f32x4_add(f32x4_add(poly, remainder), f32x4_splat(1.0));
-    f32x4_mul(poly, power_of_two(exponent))
+    f32x4_mul(poly, power_of_two(exponent, i32x4_splat(EXP_BIAS)))
 }
 
-fn exp_fast(x: v128) -> v128 {
-    let x = f32x4_max(x, f32x4_splat(EXP_MIN));
-    let exponent = f32x4_nearest(f32x4_mul(x, f32x4_splat(std::f32::consts::LOG2_E)));
-    let remainder = multiply_add(exponent, f32x4_splat(-std::f32::consts::LN_2), x);
-    let mut poly = f32x4_splat(EXP_TAYLOR[0]);
-    for &coefficient in &EXP_TAYLOR[1..] {
-        poly = multiply_add(poly, remainder, f32x4_splat(coefficient));
+/// `ops::exp_fast`'s constants on four lanes, as values the compiler cannot see: V8 keeps a
+/// value in a register across a loop, and builds a constant again where it is used (seven
+/// times an iteration of the sweep).
+struct FastExp {
+    min: v128,
+    log2_e: v128,
+    minus_ln_2: v128,
+    taylor: [v128; EXP_TAYLOR.len()],
+    bias: v128,
+}
+
+impl FastExp {
+    fn new() -> Self {
+        let [min, log2_e, minus_ln_2] =
+            black_box([EXP_MIN, std::f32::consts::LOG2_E, -std::f32::consts::LN_2])
+                .map(|value| f32x4_splat(value));
+        Self {
+            min,
+            log2_e,
+            minus_ln_2,
+            taylor: black_box(EXP_TAYLOR).map(|value| f32x4_splat(value)),
+            bias: i32x4_splat(black_box(EXP_BIAS)),
+        }
     }
-    f32x4_mul(poly, power_of_two(exponent))
+
+    /// `ops::exp_fast` of each lane, operation for operation.
+    #[inline(always)]
+    fn of(&self, x: v128) -> v128 {
+        let x = f32x4_max(x, self.min);
+        let exponent = f32x4_nearest(f32x4_mul(x, self.log2_e));
+        let remainder = multiply_add(exponent, self.minus_ln_2, x);
+        let mut poly = self.taylor[0];
+        for &coefficient in &self.taylor[1..] {
+            poly = multiply_add(poly, remainder, coefficient);
+        }
+        f32x4_mul(poly, power_of_two(exponent, self.bias))
+    }
 }
 
 #[cfg(target_feature = "relaxed-simd")]
@@ -376,10 +407,7 @@ fn multiply_add(left: v128, right: v128, addend: v128) -> v128 {
     f32x4_add(f32x4_mul(left, right), addend)
 }
 
-// The lanes of `exponent` are integral.
-fn power_of_two(exponent: v128) -> v128 {
-    i32x4_shl(
-        i32x4_add(i32x4_trunc_sat_f32x4(exponent), i32x4_splat(EXP_BIAS)),
-        23,
-    )
+// The lanes of `exponent` are integral; `bias` is `EXP_BIAS` on every lane.
+fn power_of_two(exponent: v128, bias: v128) -> v128 {
+    i32x4_shl(i32x4_add(i32x4_trunc_sat_f32x4(exponent), bias), 23)
 }
