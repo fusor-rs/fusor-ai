@@ -3,9 +3,9 @@
     reason = "block loads through raw pointers, as on the SIMD targets"
 )]
 
-use super::{ACTIVATION_MAX, CHUNKS, EXP_RUN, LANES};
+use super::{ACTIVATION_MAX, EXP_RUN, LANES};
 use crate::ops::{exp, exp_fast, gelu_tanh};
-use crate::quant::{BLOCK, CHUNK_INPUTS, QuantFormat, absmax, unpack_lane};
+use crate::quant::{BLOCK, CHUNK_INPUTS, WORD, absmax};
 
 pub(crate) struct Scalar;
 
@@ -15,19 +15,18 @@ impl super::Backend for Scalar {
     type Sums = [f32; LANES];
     const TILE: usize = 4;
 
-    unsafe fn load_q7(at: *const u8) -> [Self::Chunk; CHUNKS] {
-        // SAFETY: the caller guarantees a quad block's bytes.
-        unsafe { load_quad(QuantFormat::Q7b32, at) }
+    unsafe fn load_word(at: *const u8) -> Self::Chunk {
+        // SAFETY: the caller guarantees 16 readable bytes.
+        let bytes = unsafe { std::slice::from_raw_parts(at, WORD) };
+        std::array::from_fn(|i| i32::from(bytes[i]))
     }
 
-    unsafe fn load_q4(at: *const u8) -> [Self::Chunk; CHUNKS] {
-        // SAFETY: the caller guarantees a quad block's bytes.
-        unsafe { load_quad(QuantFormat::Q4b32, at) }
+    fn nibbles(word: Self::Chunk, part: usize) -> Self::Chunk {
+        word.map(|byte| (byte >> (4 * part)) & 0x0f)
     }
 
-    unsafe fn load_t2(at: *const u8) -> [Self::Chunk; CHUNKS] {
-        // SAFETY: the caller guarantees a quad block's bytes.
-        unsafe { load_quad(QuantFormat::T2b128, at) }
+    fn bit_pairs(word: Self::Chunk, part: usize) -> Self::Chunk {
+        word.map(|byte| (byte >> (2 * part)) & 0b11)
     }
 
     unsafe fn broadcast(at: *const i8) -> Self::Chunk {
@@ -120,20 +119,4 @@ fn sweep(x: &mut [f32], shift: f32, exponential: impl Fn(f32) -> f32) -> [f32; E
         }
     }
     sums
-}
-
-/// The chunks of one stored quad block of `format`, widened: chunk `c` holds inputs
-/// `4c..4c + 4` of each of the quad's four rows in turn.
-///
-/// # Safety
-/// `format.quant_bytes(LANES · BLOCK)` readable bytes at `at`.
-unsafe fn load_quad(format: QuantFormat, at: *const u8) -> [[i32; 16]; CHUNKS] {
-    // SAFETY: forwarded from the caller.
-    let stored = unsafe { std::slice::from_raw_parts(at, format.quant_bytes(LANES * BLOCK)) };
-    let rows: [[u8; BLOCK]; LANES] = std::array::from_fn(|lane| unpack_lane(format, stored, lane));
-    std::array::from_fn(|chunk| {
-        std::array::from_fn(|i| {
-            i32::from(rows[i / CHUNK_INPUTS][chunk * CHUNK_INPUTS + i % CHUNK_INPUTS])
-        })
-    })
 }

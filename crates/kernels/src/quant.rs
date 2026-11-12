@@ -21,8 +21,8 @@ pub const TERNARY_GROUP: usize = 128;
 pub const QUAD: usize = 4;
 /// Consecutive inputs of one row in a chunk.
 pub(crate) const CHUNK_INPUTS: usize = 16 / QUAD;
-/// Bytes holding one chunk's codes (with those of the chunks sharing their bytes).
-const WORD: usize = QUAD * CHUNK_INPUTS;
+/// Bytes holding one chunk's codes (with those of the chunks sharing their bytes): a word.
+pub(crate) const WORD: usize = QUAD * CHUNK_INPUTS;
 
 const Q7_MAX: f32 = 63.0;
 const NIBBLE_MASK: u8 = 0x0f;

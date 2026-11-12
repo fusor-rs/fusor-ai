@@ -1,15 +1,16 @@
 #![expect(unsafe_code, reason = "NEON intrinsics and loads through raw pointers")]
 
 use std::arch::aarch64::{
-    float32x4_t, int8x16_t, int32x4_t, uint8x16_t, vabsq_f32, vaddq_f32, vaddq_s32, vaddvq_f32,
-    vaddvq_s32, vandq_u8, vcombine_s8, vcombine_s16, vcvtq_f32_s32, vcvtq_s32_f32, vdivq_f32,
-    vdotq_s32, vdupq_n_f32, vdupq_n_s32, vdupq_n_u8, vfmaq_f32, vfmsq_f32, vgetq_lane_f32,
-    vld1q_dup_s32, vld1q_f32, vld1q_s8, vld1q_u8, vmaxq_f32, vmaxvq_f32, vminq_f32, vmulq_f32,
-    vmulq_n_f32, vqmovn_s16, vqmovn_s32, vreinterpretq_f32_s32, vreinterpretq_s8_s32,
-    vreinterpretq_s8_u8, vrndnq_f32, vshlq_n_s32, vshrq_n_u8, vst1q_f32, vst1q_s8, vsubq_f32,
+    float32x4_t, int8x16_t, int32x4_t, vabsq_f32, vaddq_f32, vaddq_s32, vaddvq_f32, vaddvq_s32,
+    vandq_u8, vcombine_s8, vcombine_s16, vcvtq_f32_s32, vcvtq_s32_f32, vdivq_f32, vdotq_s32,
+    vdupq_n_f32, vdupq_n_s8, vdupq_n_s32, vdupq_n_u8, vfmaq_f32, vfmsq_f32, vgetq_lane_f32,
+    vld1q_dup_s32, vld1q_f32, vld1q_s8, vmaxq_f32, vmaxvq_f32, vminq_f32, vmulq_f32, vmulq_n_f32,
+    vqmovn_s16, vqmovn_s32, vreinterpretq_f32_s32, vreinterpretq_s8_s32, vreinterpretq_s8_u8,
+    vreinterpretq_u8_s8, vrndnq_f32, vshlq_n_s32, vshlq_u8, vshrq_n_u8, vst1q_f32, vst1q_s8,
+    vsubq_f32,
 };
 
-use super::{Backend, CHUNKS, DOTS, EXP_RUN, LANES};
+use super::{Backend, DOTS, EXP_RUN, LANES};
 use crate::ops::{
     EXP_BIAS, EXP_MAX, EXP_MIN, EXP_POLYNOMIAL, EXP_TAYLOR, GELU_TANH_CUBIC, GELU_TANH_SCALE,
     LN2_HIGH, LN2_LOW,
@@ -24,45 +25,31 @@ impl super::Backend for Neon {
     const TILE: usize = 6;
 
     #[inline(always)]
-    unsafe fn load_q7(at: *const u8) -> [int8x16_t; CHUNKS] {
-        // SAFETY: the caller guarantees 128 readable bytes; NEON loads are unaligned. Stored
-        // codes are ≤ 127, so reading them as i8 keeps them.
-        std::array::from_fn(|chunk| unsafe { vld1q_s8(at.add(16 * chunk).cast()) })
+    unsafe fn load_word(at: *const u8) -> int8x16_t {
+        // SAFETY: the caller guarantees 16 readable bytes; NEON loads are unaligned.
+        unsafe { vld1q_s8(at.cast()) }
     }
 
     #[inline(always)]
-    unsafe fn load_q4(at: *const u8) -> [int8x16_t; CHUNKS] {
-        // SAFETY: the caller guarantees 64 readable bytes; NEON loads are unaligned.
+    fn nibbles(word: int8x16_t, part: usize) -> int8x16_t {
+        // SAFETY: NEON is always available on aarch64; no memory is accessed.
         unsafe {
-            let words: [uint8x16_t; CHUNKS / 2] =
-                std::array::from_fn(|word| vld1q_u8(at.add(16 * word)));
-            std::array::from_fn(|chunk| {
-                vreinterpretq_s8_u8(if chunk < CHUNKS / 2 {
-                    vandq_u8(words[chunk], vdupq_n_u8(0x0f))
-                } else {
-                    vshrq_n_u8::<4>(words[chunk - CHUNKS / 2])
-                })
+            let word = vreinterpretq_u8_s8(word);
+            vreinterpretq_s8_u8(if part == 0 {
+                vandq_u8(word, vdupq_n_u8(0x0f))
+            } else {
+                vshrq_n_u8::<4>(word)
             })
         }
     }
 
     #[inline(always)]
-    unsafe fn load_t2(at: *const u8) -> [int8x16_t; CHUNKS] {
-        // SAFETY: the caller guarantees 32 readable bytes; NEON loads are unaligned.
+    fn bit_pairs(word: int8x16_t, part: usize) -> int8x16_t {
+        // SAFETY: NEON is always available on aarch64; no memory is accessed. A negative count
+        // shifts right.
         unsafe {
-            let (first, second) = (vld1q_u8(at), vld1q_u8(at.add(16)));
-            let codes =
-                |shifted: uint8x16_t| vreinterpretq_s8_u8(vandq_u8(shifted, vdupq_n_u8(0b11)));
-            [
-                codes(first),
-                codes(second),
-                codes(vshrq_n_u8::<2>(first)),
-                codes(vshrq_n_u8::<2>(second)),
-                codes(vshrq_n_u8::<4>(first)),
-                codes(vshrq_n_u8::<4>(second)),
-                codes(vshrq_n_u8::<6>(first)),
-                codes(vshrq_n_u8::<6>(second)),
-            ]
+            let shifted = vshlq_u8(vreinterpretq_u8_s8(word), vdupq_n_s8(-2 * part as i8));
+            vreinterpretq_s8_u8(vandq_u8(shifted, vdupq_n_u8(0b11)))
         }
     }
 

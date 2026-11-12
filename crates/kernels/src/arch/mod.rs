@@ -60,17 +60,18 @@ pub(crate) trait Backend {
     /// many as the target keeps in registers, measured per instruction set (at most 6).
     const TILE: usize;
 
+    /// A word of a stored quad block: the codes of one chunk (`Q7b32`), or of the chunks that
+    /// share its bytes.
+    ///
     /// # Safety
-    /// 128 readable bytes at `at`.
-    unsafe fn load_q7(at: *const u8) -> [Self::Chunk; CHUNKS];
+    /// 16 readable bytes at `at`.
+    unsafe fn load_word(at: *const u8) -> Self::Chunk;
 
-    /// # Safety
-    /// 64 readable bytes at `at`.
-    unsafe fn load_q4(at: *const u8) -> [Self::Chunk; CHUNKS];
+    /// The codes of a `Q4b32` word's chunk `part`: its low nibbles (0) or its high ones (1).
+    fn nibbles(word: Self::Chunk, part: usize) -> Self::Chunk;
 
-    /// # Safety
-    /// 32 readable bytes at `at`.
-    unsafe fn load_t2(at: *const u8) -> [Self::Chunk; CHUNKS];
+    /// The codes of a `T2b128` word's chunk `part`: bit pair `part` of every byte, lowest first.
+    fn bit_pairs(word: Self::Chunk, part: usize) -> Self::Chunk;
 
     /// Four activations, broadcast to every lane.
     ///
