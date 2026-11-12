@@ -161,8 +161,6 @@ impl Weights {
         pass.ctx.barrier();
     }
 
-    /// This thread's heads of the projection: queries and keys normed and rotated, gates through
-    /// their sigmoid, keys and values kept.
     /// The keys and values of the pass's rows into the cache, then a barrier: all a later row
     /// needs of rows whose own outputs nothing reads.
     pub(crate) fn keep(&self, pass: &Pass, input: &Input, call: &Call) {
@@ -174,6 +172,8 @@ impl Weights {
         pass.ctx.barrier();
     }
 
+    /// This thread's heads of the projection: queries and keys normed and rotated, gates through
+    /// their sigmoid, keys and values kept.
     fn project(&self, pass: &Pass, input: &Input, call: &Call) {
         self.project_heads(pass, input, call, 0..self.shape.head_columns());
         self.project_head_gates(pass, input);
