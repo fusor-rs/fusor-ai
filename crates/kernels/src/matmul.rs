@@ -578,13 +578,19 @@ fn quad_pass<const ROWS: usize, const PASS: usize, A: Activations<B>, F: Format,
         unsafe { B::load_scales(weights.scales.as_ptr().add(index)) }
     };
     let activation = |row: usize, group: usize| (span.first_row + row) * groups + group;
-    let mut sums = [[B::zero(); PASS]; ROWS];
+    let mut sums = [[MaybeUninit::<B::Sums>::uninit(); PASS]; ROWS];
     // The sums live in memory between groups, behind a row stride the compiler cannot see: two
     // rows' sums may then alias, so each is loaded where it is used and stored where it is
     // made. As locals they are `ROWS · PASS` more vectors than V8 has registers for beside the
     // accumulators, and it spills accumulators in the middle of their dots to make room.
     let stride = PASS * span.one;
     let sums_at: *mut B::Sums = sums.as_mut_ptr().cast();
+    for index in 0..ROWS * stride {
+        // Volatile: plain, the stores become one bulk fill, which V8 calls out of line for
+        // (3.6 ns a pass, a tenth of a pass over two blocks).
+        // SAFETY: `stride` is `PASS`: within `sums`.
+        unsafe { sums_at.add(index).write_volatile(B::zero()) };
+    }
     // A trip count the compiler cannot see keeps `accumulate`'s words a loop, in which every
     // accumulator takes one dot per word and part. Unrolled, the wasm backend nests each
     // accumulator's dots into one expression and V8 runs them as written: one dependent chain
