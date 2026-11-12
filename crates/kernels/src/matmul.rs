@@ -364,6 +364,10 @@ fn f32_blocks<B: Backend, const WIDE: usize>(
 }
 
 /// `f32_matmul` of `x`, at most `ROWS_PER_CALL` rows.
+///
+/// Never inlined, as `quant_tiles`: the dots are inlined into it, and a product is entered once
+/// per image.
+#[inline(never)]
 fn f32_block<B: Backend, const WIDE: usize>(
     weights: &F32Weights,
     x: &[f32],
