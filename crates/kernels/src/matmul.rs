@@ -18,7 +18,9 @@ use std::mem::MaybeUninit;
 use std::ops::Range;
 
 use crate::arch::{Active, Backend, CHUNKS, activation_scale, dot_f32_each_with};
-use crate::quant::{BLOCK, CHUNK_INPUTS, QUAD, QuantFormat, TERNARY_GROUP, WORD, pack_lane};
+use crate::quant::{
+    BLOCK, CHUNK_INPUTS, QUAD, QuantFormat, TERNARY_GROUP, WORD, pack_lane, q7_scale,
+};
 use crate::tensor::{Matrix, MatrixStorage};
 
 /// Rows of activations quantized for one weight format.
@@ -38,7 +40,6 @@ pub struct QuantizedMatrix {
     scales: Vec<f32>,
     cols: usize,
     rows: usize,
-    codes: [u8; BLOCK],
 }
 
 impl QuantizedMatrix {
@@ -70,20 +71,21 @@ impl QuantizedMatrix {
         self.scales.resize(blocks * QUAD, 0.0);
     }
 
-    /// Writes block `block` of row `row`, once since the row was appended.
+    /// Writes block `block` of row `row`, once since the row was appended: the codes and the
+    /// scale `QuantFormat::quantize` gives it, by the backend's sweeps (the same division and
+    /// rounding; a level is within ±63 by the scale, so the format's clamp never acts).
     pub fn set_block(&mut self, row: usize, block: usize, values: &[f32; BLOCK]) {
         let format = QuantFormat::Q7b32;
         let (quad, lane) = (row / QUAD, row % QUAD);
         let quad_bytes = format.quant_bytes(QUAD * BLOCK);
         let index = quad * (self.cols / BLOCK) + block;
-        self.scales[index * QUAD + lane] = format.quantize(values, &mut self.codes);
+        let scale = q7_scale(Active::absmax(values));
+        let mut levels = [0; BLOCK];
+        Active::quantize_block(values, scale, &mut levels);
+        self.scales[index * QUAD + lane] = scale;
+        let codes = levels.map(|level| (i32::from(level) + format.zero_point()) as u8);
         let at = index * quad_bytes;
-        pack_lane(
-            format,
-            lane,
-            &self.codes,
-            &mut self.quants[at..at + quad_bytes],
-        );
+        pack_lane(format, lane, &codes, &mut self.quants[at..at + quad_bytes]);
     }
 
     pub fn matrix(&self) -> Matrix<'_> {
