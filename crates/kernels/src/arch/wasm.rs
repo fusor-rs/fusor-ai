@@ -297,12 +297,12 @@ impl super::Backend for Wasm {
         }
     }
 
-    fn dot_f32_many(left: &[f32], rights: [&[f32]; DOTS]) -> [f32; DOTS] {
+    fn dot_f32_many<const N: usize>(left: &[f32], rights: [&[f32]; N]) -> [f32; N] {
         assert!(
             rights.iter().all(|right| right.len() == left.len()),
             "dot products of equal lengths"
         );
-        let mut sums = [f32x4_splat(0.0); DOTS];
+        let mut sums = [f32x4_splat(0.0); N];
         let chunks = left.len() / 4;
         for i in 0..chunks {
             // SAFETY: i·4 + 4 ≤ len for every slice (asserted equal); v128.load is unaligned.
@@ -313,7 +313,7 @@ impl super::Backend for Wasm {
                 *sum = f32x4_add(*sum, f32x4_mul(x, y));
             }
         }
-        let mut out = [0.0; DOTS];
+        let mut out = [0.0; N];
         for ((value, sum), right) in out.iter_mut().zip(sums).zip(rights) {
             let tail = left[chunks * 4..].iter().zip(&right[chunks * 4..]);
             *value = horizontal(sum) + tail.map(|(x, y)| x * y).sum::<f32>();

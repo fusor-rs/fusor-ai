@@ -22,6 +22,8 @@ mod scalar;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
+use std::ops::Range;
+
 use crate::quant::{BLOCK, CHUNK_INPUTS, QUAD, group_scale};
 
 #[cfg(all(target_arch = "aarch64", target_feature = "dotprod"))]
@@ -130,7 +132,7 @@ pub(crate) trait Backend {
     fn dot_f32(left: &[f32], right: &[f32]) -> f32;
 
     /// `dot_f32(left, right)` for each of `rights`, each summed in exactly its order.
-    fn dot_f32_many(left: &[f32], rights: [&[f32]; DOTS]) -> [f32; DOTS] {
+    fn dot_f32_many<const N: usize>(left: &[f32], rights: [&[f32]; N]) -> [f32; N] {
         rights.map(|right| Self::dot_f32(left, right))
     }
 
@@ -183,25 +185,39 @@ pub fn dot_f32_each<'rows>(
     right: impl Fn(usize) -> &'rows [f32],
     each: impl FnMut(usize, f32),
 ) {
-    dot_f32_each_with::<Active>(left, count, right, each);
+    dot_f32_each_with::<Active, DOTS>(left, count, right, each);
 }
 
-pub(crate) fn dot_f32_each_with<'rows, B: Backend>(
+/// `dot_f32_each` taking `WIDE` dot products at a time while that many are left, then `DOTS`,
+/// then one.
+pub(crate) fn dot_f32_each_with<'rows, B: Backend, const WIDE: usize>(
     left: &[f32],
     count: usize,
     right: impl Fn(usize) -> &'rows [f32],
     mut each: impl FnMut(usize, f32),
 ) {
-    let grouped = count - count % DOTS;
-    for first in (0..grouped).step_by(DOTS) {
-        let rights = std::array::from_fn(|offset| right(first + offset));
+    let done = dot_f32_groups::<B, WIDE>(left, 0..count, &right, &mut each);
+    let done = dot_f32_groups::<B, DOTS>(left, done..count, &right, &mut each);
+    for index in done..count {
+        each(index, B::dot_f32(left, right(index)));
+    }
+}
+
+/// `dot_f32_each` over the whole groups of `N` of `range`; returns where they end.
+fn dot_f32_groups<'rows, B: Backend, const N: usize>(
+    left: &[f32],
+    range: Range<usize>,
+    right: &impl Fn(usize) -> &'rows [f32],
+    each: &mut impl FnMut(usize, f32),
+) -> usize {
+    let end = range.end - range.len() % N;
+    for first in (range.start..end).step_by(N) {
+        let rights: [&[f32]; N] = std::array::from_fn(|offset| right(first + offset));
         for (offset, value) in B::dot_f32_many(left, rights).into_iter().enumerate() {
             each(first + offset, value);
         }
     }
-    for index in grouped..count {
-        each(index, B::dot_f32(left, right(index)));
-    }
+    end
 }
 
 const ACTIVATION_MAX: f32 = 127.0;

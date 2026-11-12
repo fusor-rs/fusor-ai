@@ -17,7 +17,7 @@ use std::hint::black_box;
 use std::mem::MaybeUninit;
 use std::ops::Range;
 
-use crate::arch::{Active, Backend, CHUNKS, activation_scale, dot_f32_each_with};
+use crate::arch::{Active, Backend, CHUNKS, DOTS, activation_scale, dot_f32_each_with};
 use crate::quant::{
     BLOCK, CHUNK_INPUTS, QUAD, QuantFormat, TERNARY_GROUP, WORD, pack_lane, q7_scale,
 };
@@ -288,7 +288,7 @@ fn matmul_with<B: Backend>(
                 values,
                 cols: weights.cols,
             };
-            f32_matmul::<B>(&dense, x, rows, cols, store);
+            f32_matmul::<B>(&dense, x, cols, store);
         }
         (
             MatrixStorage::Quant {
@@ -321,26 +321,50 @@ struct F32Weights<'tensor> {
     cols: usize,
 }
 
-/// A block of rows at a time: its activations stay in cache while every column passes over
-/// them, where a column at a time across all the rows streams them from memory again for each.
+/// Dot products of the f32 product in flight: a dot is one chain of additions, and four chains
+/// leave the adder idle between their turns where eight keep it busy.
+const F32_DOTS: usize = 8;
+
+/// Values of a block of rows of the f32 product: 64 KB, what a core's first-level cache holds
+/// beside a row of weights.
+const F32_BLOCK: usize = 16 << 10;
+
+/// A block of rows at a time: its activations stay in the first-level cache while every column
+/// passes over them, where a column at a time across all the rows streams them from memory
+/// again for each. A block is the whole groups of `F32_DOTS` rows that fit it. Rows of which
+/// not one group fits go `DOTS` at a time, `ROWS_PER_CALL` to a block: eight of them and a row
+/// of weights are past the cache, where four and the weights are within it.
 fn f32_matmul<B: Backend>(
     weights: &F32Weights,
     x: &[f32],
-    rows: usize,
+    cols: Range<usize>,
+    store: impl FnMut(usize, usize, [f32; QUAD]),
+) {
+    let fitting = F32_BLOCK / weights.cols / F32_DOTS * F32_DOTS;
+    if fitting == 0 {
+        f32_blocks::<B, DOTS>(weights, (x, ROWS_PER_CALL), cols, store);
+    } else {
+        f32_blocks::<B, F32_DOTS>(weights, (x, fitting.min(ROWS_PER_CALL)), cols, store);
+    }
+}
+
+/// `f32_matmul` of `x`, `block_rows` rows at a time, `WIDE` dot products in flight.
+fn f32_blocks<B: Backend, const WIDE: usize>(
+    weights: &F32Weights,
+    (x, block_rows): (&[f32], usize),
     cols: Range<usize>,
     mut store: impl FnMut(usize, usize, [f32; QUAD]),
 ) {
-    let width = weights.cols;
-    for start in (0..rows).step_by(ROWS_PER_CALL) {
-        let block = &x[start * width..(start + ROWS_PER_CALL).min(rows) * width];
-        f32_block::<B>(weights, block, cols.clone(), |row, col, values| {
+    for (index, block) in x.chunks(block_rows * weights.cols).enumerate() {
+        let start = index * block_rows;
+        f32_block::<B, WIDE>(weights, block, cols.clone(), |row, col, values| {
             store(start + row, col, values);
         });
     }
 }
 
 /// `f32_matmul` of `x`, at most `ROWS_PER_CALL` rows.
-fn f32_block<B: Backend>(
+fn f32_block<B: Backend, const WIDE: usize>(
     weights: &F32Weights,
     x: &[f32],
     cols: Range<usize>,
@@ -356,7 +380,7 @@ fn f32_block<B: Backend>(
                 break;
             }
             let weight_row = &weights.values[col * width..(col + 1) * width];
-            dot_f32_each_with::<B>(weight_row, rows, activation, |row, value| {
+            dot_f32_each_with::<B, WIDE>(weight_row, rows, activation, |row, value| {
                 strip[row][lane] = value;
             });
         }
@@ -373,9 +397,9 @@ struct QuantWeights<'tensor> {
     cols: usize,
 }
 
-/// Rows per call of `quant_tiles` and of `f32_block`: V8 optimizes a function once a call has
-/// spent its tiering budget, so the first product of an image runs its first rows in baseline
-/// code and the rest optimized, rather than all of its thousands of rows.
+/// Rows per call of `quant_tiles`: V8 optimizes a function once a call has spent its tiering
+/// budget, so the first product of an image runs its first rows in baseline code and the
+/// rest optimized, rather than all of its thousands of rows.
 pub const ROWS_PER_CALL: usize = 64;
 
 fn quant_matmul<B: Backend>(

@@ -265,7 +265,7 @@ impl super::Backend for Neon {
         head + tail.map(|(x, y)| x * y).sum::<f32>()
     }
 
-    fn dot_f32_many(left: &[f32], rights: [&[f32]; DOTS]) -> [f32; DOTS] {
+    fn dot_f32_many<const N: usize>(left: &[f32], rights: [&[f32]; N]) -> [f32; N] {
         assert!(
             rights.iter().all(|right| right.len() == left.len()),
             "dot products of equal lengths"
@@ -273,7 +273,7 @@ impl super::Backend for Neon {
         let chunks = left.len() / 4;
         // SAFETY: i·4 + 4 ≤ len for every slice (asserted equal); NEON loads are unaligned.
         let heads = unsafe {
-            let mut sums = [vdupq_n_f32(0.0); DOTS];
+            let mut sums = [vdupq_n_f32(0.0); N];
             for i in 0..chunks {
                 let x = vld1q_f32(left.as_ptr().add(i * 4));
                 for (sum, right) in sums.iter_mut().zip(rights) {
@@ -282,7 +282,7 @@ impl super::Backend for Neon {
             }
             sums.map(|sum| vaddvq_f32(sum))
         };
-        let mut out = [0.0; DOTS];
+        let mut out = [0.0; N];
         for ((value, head), right) in out.iter_mut().zip(heads).zip(rights) {
             let tail = left[chunks * 4..].iter().zip(&right[chunks * 4..]);
             *value = head + tail.map(|(x, y)| x * y).sum::<f32>();
