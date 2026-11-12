@@ -124,6 +124,24 @@ impl Input<'_> {
             Input::Quant(rows) => rows.quants.len() / width,
         }
     }
+
+    /// Rows `rows` of an input of rows of `width` values.
+    pub fn block(&self, width: usize, rows: Range<usize>) -> Input<'_> {
+        let values = rows.start * width..rows.end * width;
+        match self {
+            Input::F32(all) => Input::F32(&all[values]),
+            Input::Quant(all) => {
+                let per_row = width / all.format.group();
+                let groups = rows.start * per_row..rows.end * per_row;
+                Input::Quant(Quantized {
+                    format: all.format,
+                    quants: &all.quants[values],
+                    scales: &all.scales[groups.clone()],
+                    corrections: &all.corrections[groups],
+                })
+            }
+        }
+    }
 }
 
 impl QuantizedRows {
@@ -338,7 +356,7 @@ struct QuantWeights<'tensor> {
 /// Rows per call of `quant_tiles`: V8 optimizes a function once a call has spent its tiering
 /// budget, so the first product of an image runs its first rows in baseline code and the
 /// rest optimized, rather than all of its thousands of rows.
-const ROWS_PER_CALL: usize = 64;
+pub const ROWS_PER_CALL: usize = 64;
 
 fn quant_matmul<B: Backend>(
     weights: &QuantWeights,

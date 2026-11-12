@@ -2,7 +2,6 @@
 //! attention and bfloat16 rounding.
 
 use crate::arch::{Active, Backend, DOTS, EXP_RUN, dot_f32, dot_f32_each};
-use crate::quant::QUAD;
 
 /// `out = x · rsqrt(mean(x²) + eps) · weight` for every row of `x` (rows of `weight.len()`).
 pub fn rms_norm(x: &[f32], weight: &[f32], eps: f32, out: &mut [f32]) {
@@ -168,9 +167,13 @@ pub fn gelu_tanh(x: f32) -> f32 {
     x / (1.0 + exp(-2.0 * inner))
 }
 
-/// `gelu_tanh` of four values at once, each bit for bit the scalar's.
-pub fn gelu_tanh_lanes(x: [f32; QUAD]) -> [f32; QUAD] {
-    Active::gelu_tanh(x)
+/// `gelu_tanh` of every value of `values`, in place, each bit for bit the scalar's.
+///
+/// Never inlined, as `silu_sweep`: V8 optimizes a wasm function on a later call, never a loop
+/// already running, and a caller sweeps a row at a time from a function a layer enters once.
+#[inline(never)]
+pub fn gelu_tanh_sweep(values: &mut [f32]) {
+    Active::gelu_tanh_sweep(values);
 }
 
 /// `erf(x)` within about 2e-7 absolute, branch-free: the odd rational approximation on
@@ -233,6 +236,12 @@ pub fn hard_swish(x: f32) -> f32 {
 #[inline(always)]
 pub fn silu(x: f32) -> f32 {
     x / (1.0 + exp(-x))
+}
+
+/// `silu` of every value of `values`, in place, each bit for bit the scalar's.
+#[inline(never)]
+pub fn silu_sweep(values: &mut [f32]) {
+    Active::silu_sweep(values);
 }
 
 #[inline(always)]
@@ -300,8 +309,8 @@ pub fn weigh<'cache>(scores: &mut [f32], value: impl Fn(usize) -> &'cache [f32],
 #[cfg(test)]
 mod tests {
     use super::{
-        Exponentials, elu, exp, exp_fast, gelu_erf, gelu_tanh, gelu_tanh_lanes, layer_norm,
-        round_bf16,
+        Exponentials, elu, exp, exp_fast, gelu_erf, gelu_tanh, gelu_tanh_sweep, layer_norm,
+        round_bf16, silu, silu_sweep,
     };
     use crate::arch::{Active, Backend, DOTS};
 
@@ -390,15 +399,20 @@ mod tests {
     }
 
     #[test]
-    fn gelu_tanh_lanes_are_the_scalar_gelu_bit_for_bit() {
-        for i in (-2000..=2000).step_by(4) {
-            let x = [i, i + 1, i + 2, i + 3].map(|i| i as f32 / 100.0);
-            let want = x.map(gelu_tanh).map(f32::to_bits);
-            assert_eq!(
-                gelu_tanh_lanes(x).map(f32::to_bits),
-                want,
-                "gelu_tanh({x:?})"
-            );
+    fn activation_sweeps_are_the_scalar_activations_bit_for_bit() {
+        let sweeps = [
+            (
+                gelu_tanh_sweep as fn(&mut [f32]),
+                gelu_tanh as fn(f32) -> f32,
+            ),
+            (silu_sweep, silu),
+        ];
+        for (index, (sweep, scalar)) in sweeps.into_iter().enumerate() {
+            let mut values: Vec<f32> = (-2000..=2000).map(|i| i as f32 / 100.0).collect();
+            let want: Vec<u32> = values.iter().map(|&x| scalar(x).to_bits()).collect();
+            sweep(&mut values);
+            let got: Vec<u32> = values.iter().map(|x| x.to_bits()).collect();
+            assert_eq!(got, want, "activation {index}");
         }
     }
 

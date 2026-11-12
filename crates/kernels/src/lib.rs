@@ -24,7 +24,9 @@ pub use linear::{
     COLUMN_ALIGN, Linear, NARROW_COLUMN_ALIGN, SharedRows, project, project_input,
     project_residual, project_residual_input,
 };
-pub use matmul::{Input, Quantized, QuantizedMatrix, QuantizedRows, matmul, quantize_rows};
+pub use matmul::{
+    Input, Quantized, QuantizedMatrix, QuantizedRows, ROWS_PER_CALL, matmul, quantize_rows,
+};
 pub use quant::{BLOCK, QUAD, QuantFormat, TERNARY_GROUP};
 pub use tensor::{DType, Matrix, MatrixStorage, Table, Tensor, Vector};
 

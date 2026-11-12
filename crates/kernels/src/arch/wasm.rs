@@ -3,8 +3,8 @@
 use std::hint::black_box;
 
 use core::arch::wasm32::{
-    f32x4, f32x4_abs, f32x4_add, f32x4_convert_i32x4, f32x4_div, f32x4_extract_lane, f32x4_max,
-    f32x4_min, f32x4_mul, f32x4_nearest, f32x4_splat, f32x4_sub, i8x16_shuffle, i16x8_shuffle,
+    f32x4_abs, f32x4_add, f32x4_convert_i32x4, f32x4_div, f32x4_extract_lane, f32x4_max, f32x4_min,
+    f32x4_mul, f32x4_nearest, f32x4_neg, f32x4_splat, f32x4_sub, i8x16_shuffle, i16x8_shuffle,
     i32x4_add, i32x4_extract_lane, i32x4_shl, i32x4_shuffle, i32x4_splat, i32x4_trunc_sat_f32x4,
     u8x16_shr, u8x16_splat, v128, v128_and, v128_load, v128_load32_splat, v128_store,
 };
@@ -18,7 +18,7 @@ use core::arch::wasm32::{
 use super::{Backend, DOTS, EXP_RUN, LANES};
 use crate::ops::{
     EXP_MAX, EXP_MIN, EXP_POLYNOMIAL, EXP_TAYLOR, GELU_TANH_CUBIC, GELU_TANH_SCALE, LN2_HIGH,
-    LN2_LOW,
+    LN2_LOW, gelu_tanh, silu,
 };
 use crate::quant::BLOCK;
 
@@ -194,7 +194,8 @@ impl super::Backend for Wasm {
     }
 
     fn exp_sweep(x: &mut [f32], shift: f32) -> [f32; EXP_RUN] {
-        sweep(x, shift, exp)
+        let exponential = Exp::new();
+        sweep(x, shift, |lanes| exponential.of(lanes))
     }
 
     fn exp_sweep_fast(x: &mut [f32], shift: f32) -> [f32; EXP_RUN] {
@@ -202,12 +203,26 @@ impl super::Backend for Wasm {
         sweep(x, shift, |lanes| exponential.of(lanes))
     }
 
-    fn gelu_tanh(x: [f32; LANES]) -> [f32; LANES] {
-        let x = f32x4(x[0], x[1], x[2], x[3]);
-        let cubic = f32x4_mul(f32x4_mul(f32x4_mul(f32x4_splat(GELU_TANH_CUBIC), x), x), x);
-        let inner = f32x4_mul(f32x4_splat(GELU_TANH_SCALE), f32x4_add(x, cubic));
-        let exps = exp(f32x4_mul(f32x4_splat(-2.0), inner));
-        Self::lanes(f32x4_div(x, f32x4_add(f32x4_splat(1.0), exps)))
+    fn gelu_tanh_sweep(x: &mut [f32]) {
+        let exponential = Exp::new();
+        let scalars = black_box([GELU_TANH_CUBIC, GELU_TANH_SCALE, -2.0]);
+        let [cubic, scale, minus_two] = scalars.map(|value| f32x4_splat(value));
+        let gelu = |x: v128| {
+            let cube = f32x4_mul(f32x4_mul(f32x4_mul(cubic, x), x), x);
+            let inner = f32x4_mul(scale, f32x4_add(x, cube));
+            let exps = exponential.of(f32x4_mul(minus_two, inner));
+            f32x4_div(x, f32x4_add(exponential.one, exps))
+        };
+        activate(x, gelu, gelu_tanh);
+    }
+
+    fn silu_sweep(x: &mut [f32]) {
+        let exponential = Exp::new();
+        let silu_lanes = |x: v128| {
+            let exps = exponential.of(f32x4_neg(x));
+            f32x4_div(x, f32x4_add(exponential.one, exps))
+        };
+        activate(x, silu_lanes, silu);
     }
 
     fn dot_f32(left: &[f32], right: &[f32]) -> f32 {
@@ -354,19 +369,73 @@ fn exp_quads<const QUADS: usize>(
     })
 }
 
-/// `ops::exp` on four lanes, operation for operation.
-fn exp(x: v128) -> v128 {
-    let x = f32x4_max(f32x4_min(x, f32x4_splat(EXP_MAX)), f32x4_splat(EXP_MIN));
-    let exponent = f32x4_nearest(f32x4_mul(x, f32x4_splat(std::f32::consts::LOG2_E)));
-    let remainder = f32x4_sub(x, f32x4_mul(exponent, f32x4_splat(LN2_HIGH)));
-    let remainder = f32x4_sub(remainder, f32x4_mul(exponent, f32x4_splat(LN2_LOW)));
-    let mut poly = f32x4_splat(EXP_POLYNOMIAL[0]);
-    for &coefficient in &EXP_POLYNOMIAL[1..] {
-        poly = f32x4_add(f32x4_mul(poly, remainder), f32x4_splat(coefficient));
+/// `x[i] = scalar(x[i])`, four at a time through `lanes`, which is `scalar` on every lane.
+fn activate(x: &mut [f32], lanes: impl Fn(v128) -> v128, scalar: fn(f32) -> f32) {
+    let (quads, rest) = x.as_chunks_mut::<LANES>();
+    for quad in quads {
+        // SAFETY: the four f32s of `quad`, read then written; v128 loads and stores are
+        // unaligned.
+        unsafe {
+            let values = v128_load(quad.as_ptr().cast());
+            v128_store(quad.as_mut_ptr().cast(), lanes(values));
+        }
     }
-    let poly = f32x4_mul(f32x4_mul(poly, remainder), remainder);
-    let poly = f32x4_add(f32x4_add(poly, remainder), f32x4_splat(1.0));
-    times_power_of_two(poly, exponent)
+    for value in rest {
+        *value = scalar(*value);
+    }
+}
+
+/// `ops::exp`'s constants on four lanes, as values the compiler cannot see: V8 keeps a value
+/// in a register across a loop, and builds a constant again where it is used.
+struct Exp {
+    max: v128,
+    min: v128,
+    log2_e: v128,
+    ln2_high: v128,
+    ln2_low: v128,
+    polynomial: [v128; EXP_POLYNOMIAL.len()],
+    one: v128,
+}
+
+impl Exp {
+    fn new() -> Self {
+        let scalars = [
+            EXP_MAX,
+            EXP_MIN,
+            std::f32::consts::LOG2_E,
+            LN2_HIGH,
+            LN2_LOW,
+            1.0,
+        ];
+        let [max, min, log2_e, ln2_high, ln2_low, one] =
+            black_box(scalars).map(|value| f32x4_splat(value));
+        Self {
+            max,
+            min,
+            log2_e,
+            ln2_high,
+            ln2_low,
+            polynomial: black_box(EXP_POLYNOMIAL).map(|value| f32x4_splat(value)),
+            one,
+        }
+    }
+
+    /// `ops::exp` of each lane: its operations in its order, the last product as the
+    /// addition of the exponents.
+    #[inline(always)]
+    fn of(&self, x: v128) -> v128 {
+        let x = f32x4_max(f32x4_min(x, self.max), self.min);
+        let exponent = f32x4_nearest(f32x4_mul(x, self.log2_e));
+        let remainder = f32x4_sub(x, f32x4_mul(exponent, self.ln2_high));
+        let remainder = f32x4_sub(remainder, f32x4_mul(exponent, self.ln2_low));
+        let mut poly = self.polynomial[0];
+        for &coefficient in &self.polynomial[1..] {
+            poly = f32x4_add(f32x4_mul(poly, remainder), coefficient);
+        }
+        let poly = f32x4_mul(f32x4_mul(poly, remainder), remainder);
+        let poly = f32x4_add(f32x4_add(poly, remainder), self.one);
+        times_power_of_two(poly, exponent)
+    }
 }
 
 /// `ops::exp_fast`'s constants on four lanes, as values the compiler cannot see: V8 keeps a

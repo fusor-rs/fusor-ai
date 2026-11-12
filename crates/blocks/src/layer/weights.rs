@@ -1,8 +1,8 @@
 //! A layer's weights, loaded as its spec names and builds them.
 
 use bundle::{Scope, Store};
-use kernels::ops::{gelu_erf, gelu_tanh_lanes, quick_gelu, rms_norm, silu};
-use kernels::{Linear, QUAD, Vector};
+use kernels::ops::{gelu_erf, gelu_tanh_sweep, quick_gelu, rms_norm, silu_sweep};
+use kernels::{Linear, Vector};
 
 use super::{FeedForwardSpec, HeadNorm, LayerSpec, Widths};
 use crate::norm::LayerNorm;
@@ -47,15 +47,18 @@ pub enum Activation {
 }
 
 impl Activation {
-    /// Of four values at a time. Always inlined: a call through a function pointer per quad
-    /// of outputs would cost the projection's store a tenth of the kernel's time.
-    #[inline(always)]
-    pub(super) fn apply(self, values: [f32; QUAD]) -> [f32; QUAD] {
+    /// Of every value of `values`, in place.
+    ///
+    /// Never inlined: V8 optimizes a wasm function on a later call, never a loop already
+    /// running, and the feed-forward sweeps a row at a time from a function a layer enters
+    /// once.
+    #[inline(never)]
+    pub(super) fn sweep(self, values: &mut [f32]) {
         match self {
-            Activation::Silu => values.map(silu),
-            Activation::GeluTanh => gelu_tanh_lanes(values),
-            Activation::GeluErf => values.map(gelu_erf),
-            Activation::QuickGelu => values.map(quick_gelu),
+            Activation::Silu => silu_sweep(values),
+            Activation::GeluTanh => gelu_tanh_sweep(values),
+            Activation::GeluErf => values.iter_mut().for_each(|x| *x = gelu_erf(*x)),
+            Activation::QuickGelu => values.iter_mut().for_each(|x| *x = quick_gelu(*x)),
         }
     }
 }

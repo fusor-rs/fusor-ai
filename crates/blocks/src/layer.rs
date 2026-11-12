@@ -18,7 +18,9 @@ mod weights;
 use std::ops::Range;
 
 use kernels::ops::{rms_norm, rope_half, rope_interleaved};
-use kernels::{COLUMN_ALIGN, Input, Linear, QUAD, project_input, project_residual_input};
+use kernels::{
+    COLUMN_ALIGN, Input, Linear, QUAD, ROWS_PER_CALL, project_input, project_residual_input,
+};
 use team::Ctx;
 
 use crate::rotary::{Position, Rotary};
@@ -272,47 +274,52 @@ fn add_residual(pass: &Pass, linear: &Linear, input: &Input, post: Option<&Norm>
 }
 
 /// `inner[:, cols]`, the feed-forward of `norm(hidden)` before its last projection, for this
-/// thread's columns.
+/// thread's columns, the kernel's `ROWS_PER_CALL` rows at a time: a block's outputs are still
+/// in the cache when the activation sweeps them. The activation follows a block's projection
+/// and is not in its store: there the kernel calls it out of line for every quad, and V8
+/// builds its constants again at every call.
 fn inner(pass: &Pass, norm: &Norm, feed_forward: &FeedForward) {
     let up_share = &mut pass.buffers.scratch.get(pass.ctx).up_share;
     let input = input(pass, Source::Normed(norm), feed_forward.first());
     let inner = &pass.buffers.inner;
-    match feed_forward {
-        FeedForward::Plain { up, activation, .. } => {
-            let width = up.matrix().rows;
-            let cols = pass.ctx.split(width, COLUMN_ALIGN);
-            up.project_quads(&input, cols, |row, first, values| {
-                let at = row * width + first;
-                inner
-                    .part(at..at + QUAD)
-                    .copy_from_slice(&activation.apply(values));
-            });
-        }
-        FeedForward::Gated {
-            gate,
-            up,
-            activation,
-            ..
-        } => {
-            let width = gate.matrix().rows;
-            let cols = pass.ctx.split(width, COLUMN_ALIGN);
-            let share = cols.len();
-            gate.project_quads(&input, cols.clone(), |row, first, values| {
-                let at = row * width + first;
-                inner
-                    .part(at..at + QUAD)
-                    .copy_from_slice(&activation.apply(values));
-            });
-            up_share.resize(pass.rows * share, 0.0);
-            up.project_quads(&input, cols.clone(), |row, first, values| {
-                let at = row * share + first - cols.start;
-                up_share[at..at + QUAD].copy_from_slice(&values);
-            });
-            for row in 0..pass.rows {
-                let gated = inner.part(row * width + cols.start..row * width + cols.end);
-                let ups = &up_share[row * share..(row + 1) * share];
-                for (gated, up) in gated.iter_mut().zip(ups) {
-                    *gated *= up;
+    let matrix = feed_forward.first().matrix();
+    let width = matrix.rows;
+    let cols = pass.ctx.split(width, COLUMN_ALIGN);
+    let share = cols.len();
+    for start in (0..pass.rows).step_by(ROWS_PER_CALL) {
+        let rows = start..(start + ROWS_PER_CALL).min(pass.rows);
+        let block = input.block(matrix.cols, rows.clone());
+        let store = |row: usize, first: usize, values: [f32; QUAD]| {
+            let at = (start + row) * width + first;
+            inner.part(at..at + QUAD).copy_from_slice(&values);
+        };
+        let mine = |row: usize| inner.part(row * width + cols.start..row * width + cols.end);
+        match feed_forward {
+            FeedForward::Plain { up, activation, .. } => {
+                up.project_quads(&block, cols.clone(), store);
+                for row in rows {
+                    activation.sweep(mine(row));
+                }
+            }
+            FeedForward::Gated {
+                gate,
+                up,
+                activation,
+                ..
+            } => {
+                gate.project_quads(&block, cols.clone(), store);
+                up_share.resize(rows.len() * share, 0.0);
+                up.project_quads(&block, cols.clone(), |row, first, values| {
+                    let at = row * share + first - cols.start;
+                    up_share[at..at + QUAD].copy_from_slice(&values);
+                });
+                for row in rows {
+                    let gated = mine(row);
+                    activation.sweep(gated);
+                    let ups = &up_share[(row - start) * share..(row - start + 1) * share];
+                    for (gated, up) in gated.iter_mut().zip(ups) {
+                        *gated *= up;
+                    }
                 }
             }
         }

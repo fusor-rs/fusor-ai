@@ -5,15 +5,15 @@ use std::arch::aarch64::{
     vandq_u8, vcombine_s8, vcombine_s16, vcvtq_f32_s32, vcvtq_s32_f32, vdivq_f32, vdotq_s32,
     vdupq_n_f32, vdupq_n_s8, vdupq_n_s32, vdupq_n_u8, vfmaq_f32, vfmsq_f32, vgetq_lane_f32,
     vld1q_dup_s32, vld1q_f32, vld1q_s8, vmaxq_f32, vmaxvq_f32, vminq_f32, vmulq_f32, vmulq_n_f32,
-    vqmovn_s16, vqmovn_s32, vreinterpretq_f32_s32, vreinterpretq_s8_s32, vreinterpretq_s8_u8,
-    vreinterpretq_u8_s8, vrndnq_f32, vshlq_n_s32, vshlq_u8, vshrq_n_u8, vst1q_f32, vst1q_s8,
-    vsubq_f32,
+    vnegq_f32, vqmovn_s16, vqmovn_s32, vreinterpretq_f32_s32, vreinterpretq_s8_s32,
+    vreinterpretq_s8_u8, vreinterpretq_u8_s8, vrndnq_f32, vshlq_n_s32, vshlq_u8, vshrq_n_u8,
+    vst1q_f32, vst1q_s8, vsubq_f32,
 };
 
 use super::{Backend, DOTS, EXP_RUN, LANES};
 use crate::ops::{
     EXP_BIAS, EXP_MAX, EXP_MIN, EXP_POLYNOMIAL, EXP_TAYLOR, GELU_TANH_CUBIC, GELU_TANH_SCALE,
-    LN2_HIGH, LN2_LOW,
+    LN2_HIGH, LN2_LOW, gelu_tanh, silu,
 };
 
 pub(crate) struct Neon;
@@ -176,16 +176,25 @@ impl super::Backend for Neon {
         sweep(x, shift, |lanes| unsafe { exp_fast(lanes) })
     }
 
-    fn gelu_tanh(x: [f32; LANES]) -> [f32; LANES] {
-        // SAFETY: four readable f32s; NEON loads are unaligned. No fused multiply-add, so the
-        // rounding is the scalar's.
-        unsafe {
-            let x = vld1q_f32(x.as_ptr());
+    fn gelu_tanh_sweep(x: &mut [f32]) {
+        // SAFETY: NEON is always available on aarch64; no memory is accessed. No fused
+        // multiply-add, so the rounding is the scalar's.
+        let lanes = |x: float32x4_t| unsafe {
             let cubic = vmulq_f32(vmulq_f32(vmulq_n_f32(x, GELU_TANH_CUBIC), x), x);
             let inner = vmulq_n_f32(vaddq_f32(x, cubic), GELU_TANH_SCALE);
             let exps = exp(vmulq_n_f32(inner, -2.0));
-            Self::lanes(vdivq_f32(x, vaddq_f32(vdupq_n_f32(1.0), exps)))
-        }
+            vdivq_f32(x, vaddq_f32(vdupq_n_f32(1.0), exps))
+        };
+        activate(x, lanes, gelu_tanh);
+    }
+
+    fn silu_sweep(x: &mut [f32]) {
+        // SAFETY: NEON is always available on aarch64; no memory is accessed.
+        let lanes = |x: float32x4_t| unsafe {
+            let exps = exp(vnegq_f32(x));
+            vdivq_f32(x, vaddq_f32(vdupq_n_f32(1.0), exps))
+        };
+        activate(x, lanes, silu);
     }
 
     fn axpy_f32_many(out: &mut [f32], weights: [f32; DOTS], rights: [&[f32]; DOTS]) {
@@ -279,6 +288,19 @@ impl super::Backend for Neon {
             *value = head + tail.map(|(x, y)| x * y).sum::<f32>();
         }
         out
+    }
+}
+
+/// `x[i] = scalar(x[i])`, four at a time through `lanes`, which is `scalar` on every lane.
+fn activate(x: &mut [f32], lanes: impl Fn(float32x4_t) -> float32x4_t, scalar: fn(f32) -> f32) {
+    let (quads, rest) = x.as_chunks_mut::<LANES>();
+    for quad in quads {
+        // SAFETY: the four f32s of `quad`, read then written; NEON loads and stores are
+        // unaligned.
+        unsafe { vst1q_f32(quad.as_mut_ptr(), lanes(vld1q_f32(quad.as_ptr()))) };
+    }
+    for value in rest {
+        *value = scalar(*value);
     }
 }
 

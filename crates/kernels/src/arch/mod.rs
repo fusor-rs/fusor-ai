@@ -121,8 +121,11 @@ pub(crate) trait Backend {
     /// `exp_sweep` with `ops::exp_fast`'s arithmetic, for `x[i] − shift ≤ 0` at every `i`.
     fn exp_sweep_fast(x: &mut [f32], shift: f32) -> [f32; EXP_RUN];
 
-    /// `ops::gelu_tanh` of each value, with its arithmetic.
-    fn gelu_tanh(x: [f32; LANES]) -> [f32; LANES];
+    /// `x[i] = ops::gelu_tanh(x[i])`, with its arithmetic.
+    fn gelu_tanh_sweep(x: &mut [f32]);
+
+    /// `x[i] = ops::silu(x[i])`, with its arithmetic.
+    fn silu_sweep(x: &mut [f32]);
 
     fn dot_f32(left: &[f32], right: &[f32]) -> f32;
 

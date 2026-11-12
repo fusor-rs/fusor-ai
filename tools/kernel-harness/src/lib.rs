@@ -1109,11 +1109,11 @@ pub extern "C" fn real_matmul_residual_simd(slot: usize, repeats: u32) -> f32 {
 
 // ---- the GELU store on the real kernel ----
 
-/// As `real_matmul` with `gelu_tanh_lanes` applied to each quad before its store.
+/// As `real_matmul` with `gelu_tanh_sweep` over each quad before its store.
 #[unsafe(no_mangle)]
 pub extern "C" fn real_matmul_gelu(slot: usize, repeats: u32) -> f32 {
-    real_residual(slot, repeats, |out, at, values| {
-        let values = kernels::ops::gelu_tanh_lanes(values);
+    real_residual(slot, repeats, |out, at, mut values| {
+        kernels::ops::gelu_tanh_sweep(&mut values);
         out[at..][..4].copy_from_slice(&values);
     })
 }
