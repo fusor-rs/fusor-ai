@@ -17,8 +17,10 @@ use std::hint::black_box;
 use std::mem::MaybeUninit;
 use std::ops::Range;
 
-use crate::arch::{Active, Backend, CHUNKS, activation_scale, dot_f32_each_with};
-use crate::quant::{BLOCK, CHUNK_INPUTS, QUAD, QuantFormat, TERNARY_GROUP, WORD, pack_lane};
+use crate::arch::{Active, Backend, CHUNKS, DOTS, activation_scale, dot_f32_each_with};
+use crate::quant::{
+    BLOCK, CHUNK_INPUTS, QUAD, QuantFormat, TERNARY_GROUP, WORD, pack_lane, q7_code, q7_scale,
+};
 use crate::tensor::{Matrix, MatrixStorage};
 
 /// Rows of activations quantized for one weight format.
@@ -38,7 +40,6 @@ pub struct QuantizedMatrix {
     scales: Vec<f32>,
     cols: usize,
     rows: usize,
-    codes: [u8; BLOCK],
 }
 
 impl QuantizedMatrix {
@@ -70,20 +71,21 @@ impl QuantizedMatrix {
         self.scales.resize(blocks * QUAD, 0.0);
     }
 
-    /// Writes block `block` of row `row`, once since the row was appended.
+    /// Writes block `block` of row `row`, once since the row was appended: the codes and the
+    /// scale `QuantFormat::quantize` gives it, by the backend's sweeps (the same division and
+    /// rounding, then the format's clamp).
     pub fn set_block(&mut self, row: usize, block: usize, values: &[f32; BLOCK]) {
         let format = QuantFormat::Q7b32;
         let (quad, lane) = (row / QUAD, row % QUAD);
         let quad_bytes = format.quant_bytes(QUAD * BLOCK);
         let index = quad * (self.cols / BLOCK) + block;
-        self.scales[index * QUAD + lane] = format.quantize(values, &mut self.codes);
+        let scale = q7_scale(Active::absmax(values));
+        let mut levels = [0; BLOCK];
+        Active::quantize_block(values, scale, &mut levels);
+        self.scales[index * QUAD + lane] = scale;
+        let codes = levels.map(q7_code);
         let at = index * quad_bytes;
-        pack_lane(
-            format,
-            lane,
-            &self.codes,
-            &mut self.quants[at..at + quad_bytes],
-        );
+        pack_lane(format, lane, &codes, &mut self.quants[at..at + quad_bytes]);
     }
 
     pub fn matrix(&self) -> Matrix<'_> {
@@ -122,6 +124,24 @@ impl Input<'_> {
         match self {
             Input::F32(values) => values.len() / width,
             Input::Quant(rows) => rows.quants.len() / width,
+        }
+    }
+
+    /// Rows `rows` of an input of rows of `width` values.
+    pub fn block(&self, width: usize, rows: Range<usize>) -> Input<'_> {
+        let values = rows.start * width..rows.end * width;
+        match self {
+            Input::F32(all) => Input::F32(&all[values]),
+            Input::Quant(all) => {
+                let per_row = width / all.format.group();
+                let groups = rows.start * per_row..rows.end * per_row;
+                Input::Quant(Quantized {
+                    format: all.format,
+                    quants: &all.quants[values],
+                    scales: &all.scales[groups.clone()],
+                    corrections: &all.corrections[groups],
+                })
+            }
         }
     }
 }
@@ -268,7 +288,7 @@ fn matmul_with<B: Backend>(
                 values,
                 cols: weights.cols,
             };
-            f32_matmul::<B>(&dense, x, rows, cols, store);
+            f32_matmul::<B>(&dense, x, cols, store);
         }
         (
             MatrixStorage::Quant {
@@ -301,28 +321,74 @@ struct F32Weights<'tensor> {
     cols: usize,
 }
 
+/// Dot products of the f32 product in flight: a dot is one chain of additions, and four chains
+/// leave the adder idle between their turns where eight keep it busy.
+const F32_DOTS: usize = 8;
+
+/// Values of a block of rows of the f32 product: 64 KB, what a core's first-level cache holds
+/// beside a row of weights.
+const F32_BLOCK: usize = 16 << 10;
+
+/// A block of rows at a time: its activations stay in the first-level cache while every column
+/// passes over them, where a column at a time across all the rows streams them from memory
+/// again for each. A block is the whole groups of `F32_DOTS` rows that fit it. Rows of which
+/// not one group fits go `DOTS` at a time, `ROWS_PER_CALL` to a block: eight of them and a row
+/// of weights are past the cache, where four and the weights are within it.
 fn f32_matmul<B: Backend>(
     weights: &F32Weights,
     x: &[f32],
-    rows: usize,
+    cols: Range<usize>,
+    store: impl FnMut(usize, usize, [f32; QUAD]),
+) {
+    let fitting = F32_BLOCK / weights.cols / F32_DOTS * F32_DOTS;
+    if fitting == 0 {
+        f32_blocks::<B, DOTS>(weights, (x, ROWS_PER_CALL), cols, store);
+    } else {
+        f32_blocks::<B, F32_DOTS>(weights, (x, fitting.min(ROWS_PER_CALL)), cols, store);
+    }
+}
+
+/// `f32_matmul` of `x`, `block_rows` rows at a time, `WIDE` dot products in flight.
+fn f32_blocks<B: Backend, const WIDE: usize>(
+    weights: &F32Weights,
+    (x, block_rows): (&[f32], usize),
+    cols: Range<usize>,
+    mut store: impl FnMut(usize, usize, [f32; QUAD]),
+) {
+    for (index, block) in x.chunks(block_rows * weights.cols).enumerate() {
+        let start = index * block_rows;
+        f32_block::<B, WIDE>(weights, block, cols.clone(), |row, col, values| {
+            store(start + row, col, values);
+        });
+    }
+}
+
+/// `f32_matmul` of `x`, at most `ROWS_PER_CALL` rows.
+///
+/// Never inlined, as `quant_tiles`: the dots are inlined into it, and a product is entered once
+/// per image.
+#[inline(never)]
+fn f32_block<B: Backend, const WIDE: usize>(
+    weights: &F32Weights,
+    x: &[f32],
     cols: Range<usize>,
     mut store: impl FnMut(usize, usize, [f32; QUAD]),
 ) {
     let width = weights.cols;
-    let outputs = weights.values.len() / width;
+    let (outputs, rows) = (weights.values.len() / width, x.len() / width);
     let activation = |row: usize| &x[row * width..(row + 1) * width];
-    let mut strip = vec![[0.0; QUAD]; rows];
+    let mut strip = [[0.0; QUAD]; ROWS_PER_CALL];
     for first in cols.step_by(QUAD) {
         for (lane, col) in (first..first + QUAD).enumerate() {
             if col >= outputs {
                 break;
             }
             let weight_row = &weights.values[col * width..(col + 1) * width];
-            dot_f32_each_with::<B>(weight_row, rows, activation, |row, value| {
+            dot_f32_each_with::<B, WIDE>(weight_row, rows, activation, |row, value| {
                 strip[row][lane] = value;
             });
         }
-        for (row, values) in strip.iter().enumerate() {
+        for (row, values) in strip[..rows].iter().enumerate() {
             store(row, first, *values);
         }
     }
@@ -338,7 +404,7 @@ struct QuantWeights<'tensor> {
 /// Rows per call of `quant_tiles`: V8 optimizes a function once a call has spent its tiering
 /// budget, so the first product of an image runs its first rows in baseline code and the
 /// rest optimized, rather than all of its thousands of rows.
-const ROWS_PER_CALL: usize = 64;
+pub const ROWS_PER_CALL: usize = 64;
 
 fn quant_matmul<B: Backend>(
     weights: &QuantWeights,
@@ -578,13 +644,19 @@ fn quad_pass<const ROWS: usize, const PASS: usize, A: Activations<B>, F: Format,
         unsafe { B::load_scales(weights.scales.as_ptr().add(index)) }
     };
     let activation = |row: usize, group: usize| (span.first_row + row) * groups + group;
-    let mut sums = [[B::zero(); PASS]; ROWS];
+    let mut sums = [[MaybeUninit::<B::Sums>::uninit(); PASS]; ROWS];
     // The sums live in memory between groups, behind a row stride the compiler cannot see: two
     // rows' sums may then alias, so each is loaded where it is used and stored where it is
     // made. As locals they are `ROWS · PASS` more vectors than V8 has registers for beside the
     // accumulators, and it spills accumulators in the middle of their dots to make room.
     let stride = PASS * span.one;
     let sums_at: *mut B::Sums = sums.as_mut_ptr().cast();
+    for index in 0..ROWS * stride {
+        // Volatile: plain, the stores become one bulk fill, which V8 calls out of line for
+        // (3.6 ns a pass, a tenth of a pass over two blocks).
+        // SAFETY: `stride` is `PASS`: within `sums`.
+        unsafe { sums_at.add(index).write_volatile(B::zero()) };
+    }
     // A trip count the compiler cannot see keeps `accumulate`'s words a loop, in which every
     // accumulator takes one dot per word and part. Unrolled, the wasm backend nests each
     // accumulator's dots into one expression and V8 runs them as written: one dependent chain
@@ -692,10 +764,10 @@ fn accumulate<const ROWS: usize, const PASS: usize, A: Activations<B>, F: Format
 
 #[cfg(test)]
 mod tests {
-    use super::{QuantizedRows, matmul_with};
+    use super::{QuantizedMatrix, QuantizedRows, matmul_with};
     use crate::arch::{Active, Backend, Scalar};
-    use crate::quant::QUAD;
-    use crate::tensor::{DType, Matrix, Table, Tensor};
+    use crate::quant::{BLOCK, QUAD};
+    use crate::tensor::{DType, Matrix, MatrixStorage, Table, Tensor};
 
     fn pseudo_random(len: usize, seed: u32) -> Vec<f32> {
         let mut state = seed;
@@ -768,5 +840,18 @@ mod tests {
     fn every_backend_matches_the_dequantized_product() {
         assert_matches_dequantized_product::<Active>();
         assert_matches_dequantized_product::<Scalar>();
+    }
+
+    #[test]
+    fn a_row_of_subnormal_values_keeps_seven_bit_codes() {
+        let mut row = [0.0; BLOCK];
+        row[0] = f32::from_bits(94);
+        let mut matrix = QuantizedMatrix::default();
+        matrix.reset(BLOCK);
+        matrix.push(&row);
+        let MatrixStorage::Quant { quants, .. } = matrix.matrix().storage else {
+            panic!("a quantized matrix");
+        };
+        assert_eq!(quants[..2], [127, 64]);
     }
 }

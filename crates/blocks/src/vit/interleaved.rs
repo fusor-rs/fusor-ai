@@ -161,6 +161,7 @@ impl Tower {
             columns: grid.columns,
             exponentials: self.shape.exponentials,
         };
+        self.attention.turn(&pass, &attention);
         for layer in &self.layers {
             match layer {
                 Mixing::Attention(index) => self.attention.forward_layer(&pass, *index, &attention),

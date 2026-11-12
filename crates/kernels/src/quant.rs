@@ -97,9 +97,13 @@ fn code_position(format: QuantFormat, lane: usize, input: usize) -> (usize, u32)
 /// Sets row `lane` of a quad block of `format`, whose bits are still zero, to one block of
 /// `codes`.
 pub(crate) fn pack_lane(format: QuantFormat, lane: usize, codes: &[u8], quad: &mut [u8]) {
-    for (input, &code) in codes[..BLOCK].iter().enumerate() {
-        let (byte, shift) = code_position(format, lane, input);
-        quad[byte] |= code << shift;
+    let chunks = codes[..BLOCK].as_chunks::<CHUNK_INPUTS>().0;
+    for (chunk, codes) in chunks.iter().enumerate() {
+        // A chunk's codes are consecutive bytes at one shift.
+        let (first, shift) = code_position(format, lane, chunk * CHUNK_INPUTS);
+        for (byte, code) in quad[first..first + CHUNK_INPUTS].iter_mut().zip(codes) {
+            *byte |= code << shift;
+        }
     }
 }
 
@@ -123,13 +127,23 @@ pub(crate) fn group_scale(extreme: f32, level: f32) -> f32 {
     if extreme == 0.0 { 1.0 } else { extreme / level }
 }
 
+/// `d = absmax / 63` (1 for an all-zero block): a `Q7b32` block's scale.
+pub(crate) fn q7_scale(absmax: f32) -> f32 {
+    group_scale(absmax, Q7_MAX)
+}
+
+/// The code of a `Q7b32` level, clamped to ±63 as `quantize` clamps it: only a block of
+/// subnormal values, whose scale is too coarse a float, has a level past it.
+pub(crate) fn q7_code(level: i8) -> u8 {
+    let max = Q7_MAX as i8;
+    (i32::from(level.clamp(-max, max)) + QuantFormat::Q7b32.zero_point()) as u8
+}
+
 /// Symmetric 7-bit: `d = absmax / 63`, `q = round_ties_even(x / d)`.
 fn quantize_q7(block: &[f32], codes: &mut [u8]) -> f32 {
-    let scale = group_scale(absmax(block), Q7_MAX);
-    let zero_point = QuantFormat::Q7b32.zero_point();
+    let scale = q7_scale(absmax(block));
     for (code, x) in codes.iter_mut().zip(block) {
-        let level = (x / scale).round_ties_even().clamp(-Q7_MAX, Q7_MAX) as i32;
-        *code = (level + zero_point) as u8;
+        *code = q7_code((x / scale).round_ties_even() as i8);
     }
     scale
 }

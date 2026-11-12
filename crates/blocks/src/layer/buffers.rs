@@ -14,6 +14,8 @@ pub struct Buffers {
     pub hidden: SharedBuf,
     /// The token mixer's input projection (a fused QKV), `rows × mixer`.
     pub(crate) qkv: SharedBuf,
+    /// Each row's rotary angles, `rows × head_dim`: their cosines, then their sines.
+    pub(super) angles: SharedBuf,
     pub(crate) attention: SharedBuf,
     /// The feed-forward's inner activations.
     pub(super) inner: SharedBuf,
@@ -62,6 +64,7 @@ impl Buffers {
             hidden_width: widths.hidden,
             hidden: SharedBuf::new(rows * widths.hidden),
             qkv: SharedBuf::new(rows * widths.mixer),
+            angles: SharedBuf::new(rows * widths.heads.head_dim),
             attention: SharedBuf::new(rows * widths.heads.width()),
             inner: SharedBuf::new(rows * widths.feed_forward),
             normed: SharedBuf::new(rows * widths.hidden),
