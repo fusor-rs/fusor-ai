@@ -129,16 +129,35 @@ impl Stack {
             rows,
             heads: self.heads,
         };
+        self.turn(&pass, attention);
         for index in layers {
             self.forward_layer(&pass, index, attention);
         }
+    }
+
+    /// `buffers.angles` for this thread's rows, then a barrier: the cosines and sines every
+    /// layer of the call rotates its heads by, once and not per layer and thread.
+    pub(crate) fn turn(&self, pass: &Pass, attention: &impl Attention) {
+        if self.rope.is_none() {
+            return;
+        }
+        let head_dim = self.heads.head_dim;
+        for row in pass.ctx.split(pass.rows, 1) {
+            let angles = pass
+                .buffers
+                .angles
+                .part(row * head_dim..(row + 1) * head_dim);
+            let (cos, sin) = angles.split_at_mut(head_dim / 2);
+            self.rotary.angles(attention.rotary(row), cos, sin);
+        }
+        pass.ctx.barrier();
     }
 
     pub(crate) fn layers(&self) -> usize {
         self.layers.len()
     }
 
-    /// Runs layer `index` over the pass's rows of `buffers.hidden`.
+    /// Runs layer `index` over the pass's rows of `buffers.hidden`, after `turn`.
     pub(crate) fn forward_layer(&self, pass: &Pass, index: usize, attention: &impl Attention) {
         let layer = &self.layers[index];
         prepare(pass, Source::Normed(&layer.norm1), &layer.qkv);
@@ -171,47 +190,45 @@ impl Stack {
                 let at = row * width + first;
                 buffers.qkv.part(at..at + QUAD).copy_from_slice(&values);
             });
-        scratch.cos.resize(head_dim / 2, 0.0);
-        scratch.sin.resize(head_dim / 2, 0.0);
         scratch.head.resize(head_dim, 0.0);
         let rotated = self.heads.heads + self.heads.kv_heads;
+        let angles = buffers.angles.read();
         for row in 0..pass.rows {
             let position = attention.position(row);
-            if self.rope.is_some() {
-                let rotary = attention.rotary(row);
-                self.rotary
-                    .angles(rotary, &mut scratch.cos, &mut scratch.sin);
-            }
+            let turn = angles[row * head_dim..(row + 1) * head_dim].split_at(head_dim / 2);
             for start in units.clone().step_by(head_dim) {
                 let at = row * width + start;
                 let head = buffers.qkv.part(at..at + head_dim);
                 let unit = start / head_dim;
                 if unit < rotated {
-                    self.position(layer, unit, head, scratch);
+                    self.position(layer, unit, head, (&mut scratch.head, turn));
                 }
                 attention.keep(index, unit, position, head);
             }
         }
     }
 
-    /// Query or key head `unit` normed, where the layer norms heads, then rotated.
-    fn position(&self, layer: &Layer, unit: usize, head: &mut [f32], scratch: &mut Scratch) {
+    /// Query or key head `unit` normed through `copy`, where the layer norms heads, then
+    /// rotated by its row's cosines and sines.
+    fn position(
+        &self,
+        layer: &Layer,
+        unit: usize,
+        head: &mut [f32],
+        (copy, (cos, sin)): (&mut [f32], (&[f32], &[f32])),
+    ) {
         if let Some(norms) = &layer.head_norms {
             let weight = if unit < self.heads.heads {
                 &norms.query
             } else {
                 &norms.key
             };
-            scratch.head.copy_from_slice(head);
-            rms_norm(&scratch.head, weight.values(), norms.eps, head);
+            copy.copy_from_slice(head);
+            rms_norm(copy, weight.values(), norms.eps, head);
         }
-        self.rotate(head, scratch);
-    }
-
-    fn rotate(&self, head: &mut [f32], scratch: &Scratch) {
         match self.rope {
-            Some(Rope::Half) => rope_half(head, &scratch.cos, &scratch.sin),
-            Some(Rope::Interleaved) => rope_interleaved(head, &scratch.cos, &scratch.sin),
+            Some(Rope::Half) => rope_half(head, cos, sin),
+            Some(Rope::Interleaved) => rope_interleaved(head, cos, sin),
             None => {}
         }
     }
