@@ -13,7 +13,7 @@
 //! value heads, each running through the rows in order.
 
 use bundle::{Scope, Store};
-use kernels::ops::{rms_norm, sigmoid, silu};
+use kernels::ops::{rms_norm, sigmoid, silu_sweep};
 use kernels::{
     COLUMN_ALIGN, DOTS, Input, Linear, QUAD, Table, Vector, decay_rows, dot_f32, dot_f32_many,
 };
@@ -67,7 +67,7 @@ impl Shape {
 
 pub(super) struct Weights {
     pub(super) input: Linear,
-    /// The convolution's taps, `channels × kernel`.
+    /// The convolution's taps, `kernel × channels`: each tap's weights of every channel.
     taps: Vec<f32>,
     /// `−exp(a_log)`, one per value head.
     decay_rate: Vec<f32>,
@@ -104,12 +104,13 @@ impl State {
     }
 }
 
-/// One thread's query, key and reading of one head.
+/// One thread's query, key, reading and gates of one head.
 #[derive(Default)]
 pub(super) struct Scratch {
     query: Vec<f32>,
     key: Vec<f32>,
     reading: Vec<f32>,
+    gate: Vec<f32>,
 }
 
 /// One call's rule: layer `slot` of the state, and where the convolution's output goes.
@@ -133,7 +134,7 @@ impl Weights {
         let a_log: Vector = scope.load("a_log", shape.value_heads)?;
         Ok(Self {
             input: scope.load("input", [shape.input(), hidden])?,
-            taps: taps.dequantize(),
+            taps: by_tap(&taps.dequantize(), shape.kernel),
             decay_rate: a_log.values().iter().map(|a_log| -a_log.exp()).collect(),
             dt_bias: scope.load("dt_bias", shape.value_heads)?,
             norm: scope.load("norm", shape.value_dim)?,
@@ -160,7 +161,9 @@ impl Weights {
     }
 
     /// This thread's channels of `convolved`: the convolution over the kept inputs and the
-    /// call's rows, through SiLU; then the last inputs kept.
+    /// call's rows, through SiLU; then the last inputs kept. A row's sums are taken a tap of
+    /// every channel at a time and activated together,
+    /// its exponentials four lanes at a time; a channel at a time each is a scalar's.
     fn convolve(&self, pass: &Pass, call: &Call) {
         let (channels, width) = (self.shape.channels(), self.shape.input());
         let (kernel, history) = (self.shape.kernel, self.shape.history());
@@ -178,12 +181,21 @@ impl Weights {
         for row in 0..pass.rows {
             let at = row * channels;
             let out = call.convolved.part(at + mine.start..at + mine.end);
-            for (offset, channel) in mine.clone().enumerate() {
-                let taps = &self.taps[channel * kernel..(channel + 1) * kernel];
-                let kept = &kept[offset * history..(offset + 1) * history];
-                let sum = (0..kernel).map(|tap| taps[tap] * input(kept, channel, row + tap));
-                out[offset] = silu(sum.sum());
+            // Each sum in its taps' order from −0.0, as `Iterator::sum` starts.
+            out.fill(-0.0);
+            for tap in 0..kernel {
+                let weights = &self.taps[tap * channels + mine.start..tap * channels + mine.end];
+                match (row + tap).checked_sub(history) {
+                    Some(earlier) => {
+                        let values = &raw[earlier * width + mine.start..earlier * width + mine.end];
+                        add_products(out, weights, values.iter());
+                    }
+                    None => {
+                        add_products(out, weights, kept.iter().skip(row + tap).step_by(history))
+                    }
+                }
             }
+            silu_sweep(out);
         }
         for (offset, channel) in mine.enumerate() {
             let kept = &mut kept[offset * history..(offset + 1) * history];
@@ -236,9 +248,7 @@ impl Weights {
                 let out = pass.buffers.attention.part(at..at + value_dim);
                 rms_norm(&scratch.reading, self.norm.values(), self.eps, out);
                 let z = &gates[head * value_dim..(head + 1) * value_dim];
-                for (value, z) in out.iter_mut().zip(z) {
-                    *value *= silu(*z);
-                }
+                gate(out, z, &mut scratch.gate);
             }
         }
     }
@@ -261,6 +271,7 @@ impl Rule {
             query,
             key,
             reading,
+            ..
         } = scratch;
         let width = key.len();
         let groups = memory
@@ -279,6 +290,39 @@ impl Rule {
             *readings = dot_f32_many(query, [r0, r1, r2, r3]);
         }
     }
+}
+
+/// `sums[i] += weights[i] · values[i]`.
+///
+/// Never inlined: V8 optimizes a wasm function on a later call, never a loop already running,
+/// and `convolve` is entered once per layer.
+#[inline(never)]
+fn add_products<'values>(
+    sums: &mut [f32],
+    weights: &[f32],
+    values: impl Iterator<Item = &'values f32>,
+) {
+    for ((sum, weight), value) in sums.iter_mut().zip(weights).zip(values) {
+        *sum += weight * value;
+    }
+}
+
+/// `out[i] *= silu(z[i])`, the gates through `scratch`.
+fn gate(out: &mut [f32], z: &[f32], scratch: &mut Vec<f32>) {
+    scratch.clear();
+    scratch.extend_from_slice(z);
+    silu_sweep(scratch);
+    for (value, gate) in out.iter_mut().zip(scratch.iter()) {
+        *value *= gate;
+    }
+}
+
+/// `taps`, `channels × kernel`, as `kernel × channels`.
+fn by_tap(taps: &[f32], kernel: usize) -> Vec<f32> {
+    let channels = taps.len() / kernel;
+    (0..taps.len())
+        .map(|at| taps[at % channels * kernel + at / channels])
+        .collect()
 }
 
 /// `out = x / √(Σx² + ε) · scale`.
