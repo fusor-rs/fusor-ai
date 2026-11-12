@@ -186,9 +186,13 @@ impl Scratch {
         }
         let scale = 1.0 / (head_dim as f32).sqrt();
         let input = quant.input(&keys_matrix, padded_queries);
-        matmul(&keys_matrix, &input, 0..keys, |row, key, values| {
+        // Moved into the store, the scores as a slice: through references the product loads
+        // their pointer and length, the row's width and the scale again at each of its stores,
+        // any of which may be what the store before wrote.
+        let scaled_scores = scores.as_mut_slice();
+        matmul(&keys_matrix, &input, 0..keys, move |row, key, values| {
             let scaled = values.map(|value| value * scale);
-            scores[row * columns + key..][..QUAD].copy_from_slice(&scaled);
+            scaled_scores[row * columns + key..][..QUAD].copy_from_slice(&scaled);
         });
         sums.clear();
         let rows = scores.chunks_exact_mut(columns);
