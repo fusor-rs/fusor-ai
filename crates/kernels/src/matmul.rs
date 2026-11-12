@@ -321,6 +321,8 @@ struct F32Weights<'tensor> {
     cols: usize,
 }
 
+/// A block of rows at a time: its activations stay in cache while every column passes over
+/// them, where a column at a time across all the rows streams them from memory again for each.
 fn f32_matmul<B: Backend>(
     weights: &F32Weights,
     x: &[f32],
@@ -329,9 +331,25 @@ fn f32_matmul<B: Backend>(
     mut store: impl FnMut(usize, usize, [f32; QUAD]),
 ) {
     let width = weights.cols;
-    let outputs = weights.values.len() / width;
+    for start in (0..rows).step_by(ROWS_PER_CALL) {
+        let block = &x[start * width..(start + ROWS_PER_CALL).min(rows) * width];
+        f32_block::<B>(weights, block, cols.clone(), |row, col, values| {
+            store(start + row, col, values);
+        });
+    }
+}
+
+/// `f32_matmul` of `x`, at most `ROWS_PER_CALL` rows.
+fn f32_block<B: Backend>(
+    weights: &F32Weights,
+    x: &[f32],
+    cols: Range<usize>,
+    mut store: impl FnMut(usize, usize, [f32; QUAD]),
+) {
+    let width = weights.cols;
+    let (outputs, rows) = (weights.values.len() / width, x.len() / width);
     let activation = |row: usize| &x[row * width..(row + 1) * width];
-    let mut strip = vec![[0.0; QUAD]; rows];
+    let mut strip = [[0.0; QUAD]; ROWS_PER_CALL];
     for first in cols.step_by(QUAD) {
         for (lane, col) in (first..first + QUAD).enumerate() {
             if col >= outputs {
@@ -342,7 +360,7 @@ fn f32_matmul<B: Backend>(
                 strip[row][lane] = value;
             });
         }
-        for (row, values) in strip.iter().enumerate() {
+        for (row, values) in strip[..rows].iter().enumerate() {
             store(row, first, *values);
         }
     }
@@ -355,9 +373,9 @@ struct QuantWeights<'tensor> {
     cols: usize,
 }
 
-/// Rows per call of `quant_tiles`: V8 optimizes a function once a call has spent its tiering
-/// budget, so the first product of an image runs its first rows in baseline code and the
-/// rest optimized, rather than all of its thousands of rows.
+/// Rows per call of `quant_tiles` and of `f32_block`: V8 optimizes a function once a call has
+/// spent its tiering budget, so the first product of an image runs its first rows in baseline
+/// code and the rest optimized, rather than all of its thousands of rows.
 pub const ROWS_PER_CALL: usize = 64;
 
 fn quant_matmul<B: Backend>(
