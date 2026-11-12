@@ -19,7 +19,7 @@ use std::ops::Range;
 
 use crate::arch::{Active, Backend, CHUNKS, DOTS, activation_scale, dot_f32_each_with};
 use crate::quant::{
-    BLOCK, CHUNK_INPUTS, QUAD, QuantFormat, TERNARY_GROUP, WORD, pack_lane, q7_scale,
+    BLOCK, CHUNK_INPUTS, QUAD, QuantFormat, TERNARY_GROUP, WORD, pack_lane, q7_code, q7_scale,
 };
 use crate::tensor::{Matrix, MatrixStorage};
 
@@ -73,7 +73,7 @@ impl QuantizedMatrix {
 
     /// Writes block `block` of row `row`, once since the row was appended: the codes and the
     /// scale `QuantFormat::quantize` gives it, by the backend's sweeps (the same division and
-    /// rounding; a level is within ±63 by the scale, so the format's clamp never acts).
+    /// rounding, then the format's clamp).
     pub fn set_block(&mut self, row: usize, block: usize, values: &[f32; BLOCK]) {
         let format = QuantFormat::Q7b32;
         let (quad, lane) = (row / QUAD, row % QUAD);
@@ -83,7 +83,7 @@ impl QuantizedMatrix {
         let mut levels = [0; BLOCK];
         Active::quantize_block(values, scale, &mut levels);
         self.scales[index * QUAD + lane] = scale;
-        let codes = levels.map(|level| (i32::from(level) + format.zero_point()) as u8);
+        let codes = levels.map(q7_code);
         let at = index * quad_bytes;
         pack_lane(format, lane, &codes, &mut self.quants[at..at + quad_bytes]);
     }
@@ -764,10 +764,10 @@ fn accumulate<const ROWS: usize, const PASS: usize, A: Activations<B>, F: Format
 
 #[cfg(test)]
 mod tests {
-    use super::{QuantizedRows, matmul_with};
+    use super::{QuantizedMatrix, QuantizedRows, matmul_with};
     use crate::arch::{Active, Backend, Scalar};
-    use crate::quant::QUAD;
-    use crate::tensor::{DType, Matrix, Table, Tensor};
+    use crate::quant::{BLOCK, QUAD};
+    use crate::tensor::{DType, Matrix, MatrixStorage, Table, Tensor};
 
     fn pseudo_random(len: usize, seed: u32) -> Vec<f32> {
         let mut state = seed;
@@ -840,5 +840,18 @@ mod tests {
     fn every_backend_matches_the_dequantized_product() {
         assert_matches_dequantized_product::<Active>();
         assert_matches_dequantized_product::<Scalar>();
+    }
+
+    #[test]
+    fn a_row_of_subnormal_values_keeps_seven_bit_codes() {
+        let mut row = [0.0; BLOCK];
+        row[0] = f32::from_bits(94);
+        let mut matrix = QuantizedMatrix::default();
+        matrix.reset(BLOCK);
+        matrix.push(&row);
+        let MatrixStorage::Quant { quants, .. } = matrix.matrix().storage else {
+            panic!("a quantized matrix");
+        };
+        assert_eq!(quants[..2], [127, 64]);
     }
 }
